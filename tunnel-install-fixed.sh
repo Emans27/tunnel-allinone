@@ -55,6 +55,8 @@ if [[ "$OS" != "ubuntu" && "$OS" != "debian" ]]; then
   echo -e "${RED}Cuma support Ubuntu/Debian bos.${NC}"
   exit 1
 fi
+# ponytail: tested Ubuntu 18/20/22/24 + Debian 11/12 (dropbear/openvpn/haproxy auto-fallback)
+echo -e "${YELLOW}Versi: $OS $VER - melanjutkan...${NC}"
 
 echo -e "${GREEN}OS: $OS $VER${NC}"
 echo ""
@@ -319,6 +321,8 @@ echo ""
 # ---------- OPENVPN ----------
 echo -e "${CYAN}[5/14] Install OpenVPN TCP + UDP...${NC}"
 mkdir -p /etc/openvpn/server
+# detect pam plugin path (Ubuntu 18 vs 20+/Debian)
+PAM_PLUGIN=$(find /usr/lib -name openvpn-plugin-auth-pam.so 2>/dev/null | head -1); [ -z "$PAM_PLUGIN" ] && PAM_PLUGIN="/usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so"
 
 # Generate certificates
 cd /etc/openvpn/server
@@ -381,6 +385,7 @@ verb 3
 explicit-exit-notify
 OVPNUDP
 
+for f in /etc/openvpn/server/server-tcp.conf /etc/openvpn/server/server-udp.conf; do [ -f "$f" ] && sed -i "s|plugin .*openvpn-plugin-auth-pam.so|plugin $PAM_PLUGIN|g" "$f"; done
 systemctl enable openvpn-server@server-tcp >/dev/null 2>&1
 systemctl enable openvpn-server@server-udp >/dev/null 2>&1
 systemctl start openvpn-server@server-tcp >/dev/null 2>&1
@@ -544,8 +549,9 @@ echo -e "${CYAN}[9/14] Install Tunnelcore limit IP...${NC}"
 mkdir -p /etc/tunnelcore/limit/{ssh,trojan,vless,vmess,shadowsocks}/ip
 
 # Tunnelcore python module
-mkdir -p /usr/lib/python3/dist-packages/tunnelcore
-cat > /usr/lib/python3/dist-packages/tunnelcore/__init__.py << 'TUNNELCOREI'
+PYLIB=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null || echo /usr/lib/python3/dist-packages)
+mkdir -p "$PYLIB/tunnelcore"
+cat > "$PYLIB/tunnelcore/__init__.py" << 'TUNNELCOREI'
 # tunnelcore module - limit IP per protocol
 TUNNELCOREI
 
@@ -602,7 +608,7 @@ function con() {
 }
 while true; do
   sleep 5
-  data=($(cat /etc/vless.db 2>/dev/null; cat /etc/xray/config.json 2>/dev/null | grep '^#&' | cut -d ' ' -f 2) | sort -u)
+  data=($(cat /etc/vless.db 2>/dev/null; cat /etc/xray/config.json 2>/dev/null | grep '^#&' | cut -d ' ' -f 2 | sort -u))
   mkdir -p /etc/limit/vless
   for user in ${data[@]}; do
     downlink=$(xray api stats --server=127.0.0.1:10000 -name "user>>>${user}>>>traffic>>>downlink" | grep -w "value" | awk '{print $2}' | cut -d '"' -f2);
@@ -674,7 +680,7 @@ function con() {
 }
 while true; do
   sleep 5
-  data=($(cat /etc/vmess.db 2>/dev/null | grep '^###' | cut -d ' ' -f 2; cat /etc/xray/config.json 2>/dev/null | grep '^###' | cut -d ' ' -f 2) | sort -u)
+  data=($(cat /etc/vmess.db 2>/dev/null | grep '^###' | cut -d ' ' -f 2; cat /etc/xray/config.json 2>/dev/null | grep '^###' | cut -d ' ' -f 2 | sort -u))
   mkdir -p /etc/limit/vmess
   for user in ${data[@]}; do
     downlink=$(xray api stats --server=127.0.0.1:10000 -name "user>>>${user}>>>traffic>>>downlink" | grep -w "value" | awk '{print $2}' | cut -d '"' -f2);
@@ -746,7 +752,7 @@ function con() {
 }
 while true; do
   sleep 30
-  data=($(cat /etc/trojan.db 2>/dev/null | grep '^#!' | cut -d ' ' -f 2; cat /etc/xray/config.json 2>/dev/null | grep '^#!' | cut -d ' ' -f 2) | sort -u)
+  data=($(cat /etc/trojan.db 2>/dev/null | grep '^#!' | cut -d ' ' -f 2; cat /etc/xray/config.json 2>/dev/null | grep '^#!' | cut -d ' ' -f 2 | sort -u))
   mkdir -p /etc/limit/trojan
   for user in ${data[@]}; do
     downlink=$(xray api stats --server=127.0.0.1:10000 -name "user>>>${user}>>>traffic>>>downlink" | grep -w "value" | awk '{print $2}' | cut -d '"' -f2);

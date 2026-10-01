@@ -602,7 +602,7 @@ function con() {
 }
 while true; do
   sleep 5
-  data=($(cat /etc/vless.db 2>/dev/null; cat /etc/xray/config.json 2>/dev/null | grep '^#&' | cut -d ' ' -f 2) | sort -u)
+  data=($(cat /etc/vless.db 2>/dev/null; cat /etc/xray/config.json 2>/dev/null | grep '^#&' | cut -d ' ' -f 2 | sort -u))
   mkdir -p /etc/limit/vless
   for user in ${data[@]}; do
     downlink=$(xray api stats --server=127.0.0.1:10000 -name "user>>>${user}>>>traffic>>>downlink" | grep -w "value" | awk '{print $2}' | cut -d '"' -f2);
@@ -674,7 +674,7 @@ function con() {
 }
 while true; do
   sleep 5
-  data=($(cat /etc/vmess.db 2>/dev/null | grep '^###' | cut -d ' ' -f 2; cat /etc/xray/config.json 2>/dev/null | grep '^###' | cut -d ' ' -f 2) | sort -u)
+  data=($(cat /etc/vmess.db 2>/dev/null | grep '^###' | cut -d ' ' -f 2; cat /etc/xray/config.json 2>/dev/null | grep '^###' | cut -d ' ' -f 2 | sort -u))
   mkdir -p /etc/limit/vmess
   for user in ${data[@]}; do
     downlink=$(xray api stats --server=127.0.0.1:10000 -name "user>>>${user}>>>traffic>>>downlink" | grep -w "value" | awk '{print $2}' | cut -d '"' -f2);
@@ -746,7 +746,7 @@ function con() {
 }
 while true; do
   sleep 30
-  data=($(cat /etc/trojan.db 2>/dev/null | grep '^#!' | cut -d ' ' -f 2; cat /etc/xray/config.json 2>/dev/null | grep '^#!' | cut -d ' ' -f 2) | sort -u)
+  data=($(cat /etc/trojan.db 2>/dev/null | grep '^#!' | cut -d ' ' -f 2; cat /etc/xray/config.json 2>/dev/null | grep '^#!' | cut -d ' ' -f 2 | sort -u))
   mkdir -p /etc/limit/trojan
   for user in ${data[@]}; do
     downlink=$(xray api stats --server=127.0.0.1:10000 -name "user>>>${user}>>>traffic>>>downlink" | grep -w "value" | awk '{print $2}' | cut -d '"' -f2);

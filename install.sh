@@ -4630,6 +4630,78 @@ main "$@"
 
 __EMBED_EOF__
 chmod 755 "$ETC/setup/cert.sh"
+cat > "$ETC/usr/local/bin/mytunnel-tlsmux.py" << '__EMBED_EOF__'
+#!/usr/bin/env python3
+import socket, threading, select, sys
+LISTEN_HOST="127.0.0.1"
+LISTEN_PORT=1443
+SSH_HOST="127.0.0.1"
+SSH_PORT=22
+HTTP_HOST="127.0.0.1"
+HTTP_PORT=80
+def pipe(a,b):
+    try:
+        while True:
+            rr,_,_ = select.select([a,b], [], [], 60)
+            if not rr:
+                break
+            for sock in rr:
+                try:
+                    data = sock.recv(8192)
+                except:
+                    return
+                if not data:
+                    return
+                try:
+                    (b if sock is a else a).sendall(data)
+                except:
+                    return
+    except:
+        pass
+    finally:
+        try: a.close()
+        except: pass
+        try: b.close()
+        except: pass
+def handle(conn, addr):
+    conn.settimeout(3)
+    peek = b""
+    try:
+        peek = conn.recv(8192, socket.MSG_PEEK)
+    except: peek = b""
+    is_http = False
+    if peek:
+        if peek.startswith((b"GET ", b"POST ", b"HEAD ", b"PUT ", b"DELETE ", b"OPTIONS ", b"CONNECT ", b"PATCH ", b"PRI * HTTP/2")):
+            is_http = True
+        elif b"HTTP/1." in peek[:1024]:
+            is_http = True
+    target_host = HTTP_HOST if is_http else SSH_HOST
+    target_port = HTTP_PORT if is_http else SSH_PORT
+    try:
+        upstream = socket.create_connection((target_host, target_port), timeout=5)
+    except Exception as e:
+        sys.stderr.write(f"mux connect {target_host}:{target_port} fail {e} peer {addr}\n")
+        try: conn.close()
+        except: pass
+        return
+    t1 = threading.Thread(target=pipe, args=(conn, upstream), daemon=True)
+    t2 = threading.Thread(target=pipe, args=(upstream, conn), daemon=True)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+def main():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((LISTEN_HOST, LISTEN_PORT))
+    s.listen(128)
+    sys.stderr.write(f"mux listening {LISTEN_HOST}:{LISTEN_PORT} -> ssh {SSH_HOST}:{SSH_PORT} http {HTTP_HOST}:{HTTP_PORT}\n")
+    while True:
+        conn, addr = s.accept()
+        threading.Thread(target=handle, args=(conn, addr), daemon=True).start()
+if __name__ == "__main__":
+    main()
+
+__EMBED_EOF__
+chmod 755 "$ETC/usr/local/bin/mytunnel-tlsmux.py"
 cat > "$ETC/setup/xray.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel setup/xray.sh - install & config Xray (9 inbounds: ws+grpc+httpupgrade)
@@ -7442,7 +7514,7 @@ write_proxy() {
   mkdir -p "$(dirname "$PY_BIN")" 2>/dev/null || true
   cat > "$PY_BIN" << 'PY_EOF'
 #!/usr/bin/env python3
-import socket, threading, hashlib, base64, re, sys, os, time
+import socket, threading, hashlib, base64, re, time, os
 LISTEN_HOST="127.0.0.1"
 LISTEN_PORT=10004
 SSH_HOST="127.0.0.1"
@@ -7456,185 +7528,88 @@ def recvall(sock, n):
     buf=b""
     while len(buf)<n:
         try: chunk=sock.recv(n-len(buf))
-        except socket.timeout: return None if not buf else buf
-        except Exception as e:
-            log(f"recvall err {e}")
-            return None
-        if not chunk: return None if not buf else buf
+        except: return None
+        if not chunk: return None
         buf+=chunk
     return buf
-def ws_handshake(conn):
+def handle_client(conn, addr):
+    conn.settimeout(8)
     try:
-        conn.settimeout(5)
         data=b""
         while b"\r\n\r\n" not in data:
-            chunk=conn.recv(4096)
-            if not chunk: break
-            data+=chunk
-            if len(data)>8192: break
-        if not data: log("hs no data"); return None
+            c=conn.recv(4096)
+            if not c: break
+            data+=c
+            if len(data)>16384: break
+        if not data:
+            log(f"{addr} no data")
+            conn.close(); return
         txt=data.decode(errors="ignore")
-        m=re.search(r"^\w+\s+(\S+)\s+HTTP", txt, re.M)
-        path=m.group(1) if m else ""
-        if path != "/ssh-ws":
-            if "upgrade: websocket" in txt.lower() and path.startswith("/"):
-                path="/ssh-ws"
-            else:
-                try: conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
-                except: pass
-                log(f"hs 404 path={path}")
-                return None
+        # log first line for debug
+        first=txt.splitlines()[0] if txt else ""
+        log(f"{addr} {first} len={len(data)} has_upgrade={'upgrade: websocket' in txt.lower()}")
+        # wajib ada Upgrade: websocket (method apa pun termasuk PATCH)
         if "upgrade: websocket" not in txt.lower():
-            log("hs no upgrade raw")
-            conn.settimeout(None)
-            return "raw"
-        km=re.search(r"Sec-WebSocket-Key:\s*(.+)\r\n", txt, re.I)
-        if not km:
-            key="dGhlIHNhbXBsZSBub25jZQ=="
-            log("hs dummy key")
-        else: key=km.group(1).strip()
+            # bukan WS, coba raw pipe langsung ke SSH (untuk nginx raw fallback)
+            log(f"{addr} no upgrade header -> raw fallback")
+            # but still need to forward data already read? No, this is WS-only proxy
+            # close
+            conn.close(); return
+        # buat Sec-WebSocket-Accept (pakai dummy jika tidak ada key — HC PATCH kadang tanpa key)
+        m=re.search(r"Sec-WebSocket-Key:\s*(.+)\r\n", txt, re.I)
+        key=m.group(1).strip() if m else "dGhlIHNhbXBsZSBub25jZQ=="
+        if not m: log(f"{addr} dummy key")
         accept=base64.b64encode(hashlib.sha1((key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
         resp=f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
         conn.sendall(resp.encode())
-        log(f"hs 101 path={path}")
-        conn.settimeout(None)
-        return "ws"
+        log(f"{addr} 101 sent")
     except Exception as e:
-        log(f"hs exc {e}")
-        try: conn.sendall(b"HTTP/1.1 500 err\r\n\r\n")
-        except: pass
-        return None
-def ws_recv(conn):
-    try:
-        b1=recvall(conn,1)
-        if not b1: return None
-        b1=b1[0]
-        opcode=b1 & 0x0F
-        if opcode==8:
-            log("ws_recv close")
-            return None
-        if opcode==9:
-            b2=recvall(conn,1)
-            if not b2: return None
-            b2=b2[0]
-            length=b2 & 0x7F
-            if length==126: length=int.from_bytes(recvall(conn,2),"big")
-            elif length==127: length=int.from_bytes(recvall(conn,8),"big")
-            mask=recvall(conn,4) if (b2 & 0x80) else b""
-            payload=recvall(conn,length) if length else b""
-            if mask and payload: payload=bytes(b ^ mask[i%4] for i,b in enumerate(payload))
-            try:
-                hdr=bytes([0x8A, length if length<126 else 126])
-                if length>=126: hdr+=length.to_bytes(2,"big")
-                conn.sendall(hdr+payload)
-            except: pass
-            return ws_recv(conn)
-        b2=recvall(conn,1)
-        if not b2: return None
-        b2=b2[0]
-        masked=b2 & 0x80
-        length=b2 & 0x7F
-        if length==126:
-            ext=recvall(conn,2)
-            if not ext: return None
-            length=int.from_bytes(ext,"big")
-        elif length==127:
-            ext=recvall(conn,8)
-            if not ext: return None
-            length=int.from_bytes(ext,"big")
-        mask=b""
-        if masked:
-            mask=recvall(conn,4)
-            if not mask: return None
-        payload=b""
-        if length:
-            payload=recvall(conn,length)
-            if payload is None or len(payload)<length:
-                log(f"ws_recv incomplete {len(payload) if payload else 0}/{length}")
-                return None
-            if masked:
-                payload=bytes(b ^ mask[i%4] for i,b in enumerate(payload))
-        return payload
-    except Exception as e:
-        log(f"ws_recv exc {e}")
-        return None
-def ws_send(conn, data):
-    try:
-        l=len(data)
-        if l<126: hdr=bytes([0x81, l])
-        elif l<65536: hdr=bytes([0x81,126])+l.to_bytes(2,"big")
-        else: hdr=bytes([0x81,127])+l.to_bytes(8,"big")
-        conn.sendall(hdr+data)
-        return True
-    except Exception as e:
-        log(f"ws_send exc {e}")
-        return False
-def pipe_raw(a,b):
-    a.settimeout(None); b.settimeout(None)
-    try:
-        while True:
-            d=a.recv(8192)
-            if not d: break
-            b.sendall(d)
-    except Exception as e: log(f"pipe_raw exc {e}")
-    finally:
-        try: a.close()
-        except: pass
-        try: b.close()
-        except: pass
-def handle_client(conn, addr):
-    log(f"handle {addr}")
-    mode=ws_handshake(conn)
-    if mode is None:
+        log(f"{addr} handshake exc {e}")
         try: conn.close()
         except: pass
-        log("mode None")
         return
+    # connect ke sshd/dropbear
     try:
         ssh=socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
         ssh.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
-        log(f"ssh connected {addr} mode={mode}")
+        conn.settimeout(None); ssh.settimeout(None)
+        log(f"{addr} ssh connected {SSH_HOST}:{SSH_PORT}")
     except Exception as e:
-        log(f"ssh connect fail {e}")
+        log(f"{addr} ssh connect fail {e}")
         try: conn.close()
         except: pass
         return
-    if mode=="raw":
-        t1=threading.Thread(target=pipe_raw, args=(conn,ssh), daemon=True)
-        t2=threading.Thread(target=pipe_raw, args=(ssh,conn), daemon=True)
-        t1.start(); t2.start(); t1.join(); t2.join()
-        log("raw done")
-        return
-    def c2s():
-        while True:
-            d=ws_recv(conn)
-            if d is None: log("c2s end"); break
-            try: ssh.sendall(d)
-            except Exception as e: log(f"c2s sendall {e}"); break
-        try: ssh.shutdown(socket.SHUT_WR)
+    # sisa data setelah \r\n\r\n (jika klien sudah kirim SSH bytes langsung setelah header)
+    # data may contain extra beyond \r\n\r\n
+    idx=data.find(b"\r\n\r\n")+4
+    leftover=data[idx:] if idx>3 else b""
+    if leftover:
+        try: ssh.sendall(leftover); log(f"{addr} leftover {len(leftover)} forwarded")
         except: pass
-        try: ssh.close()
-        except: pass
-        log("c2s exit")
-    def s2c():
+    def pipe(a,b, name):
         try:
             while True:
-                try: d=ssh.recv(8192)
-                except Exception as e: log(f"s2c recv {e}"); break
-                if not d: log("s2c ssh 0"); break
-                if not ws_send(conn,d): log("s2c ws_send fail"); break
+                d=a.recv(8192)
+                if not d: break
+                b.sendall(d)
+        except Exception as e:
+            log(f"{name} exc {e}")
         finally:
-            try: conn.shutdown(socket.SHUT_WR)
+            try: a.shutdown(socket.SHUT_RDWR)
             except: pass
-            try: conn.close()
+            try: b.shutdown(socket.SHUT_RDWR)
             except: pass
-            log("s2c exit")
-    t1=threading.Thread(target=c2s, daemon=True)
-    t2=threading.Thread(target=s2c, daemon=True)
-    t1.start(); t2.start()
-    t1.join(); t2.join()
-    log("handle done")
+            try: a.close()
+            except: pass
+            try: b.close()
+            except: pass
+            log(f"{name} done")
+    t1=threading.Thread(target=pipe, args=(conn,ssh,"c2s"), daemon=True)
+    t2=threading.Thread(target=pipe, args=(ssh,conn,"s2c"), daemon=True)
+    t1.start(); t2.start(); t1.join(); t2.join()
+    log(f"{addr} done")
+
 def main():
     s=socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
@@ -7642,8 +7617,8 @@ def main():
     except: pass
     s.bind((LISTEN_HOST, LISTEN_PORT))
     s.listen(128)
-    print(f"mytunnel-sshws listening {LISTEN_HOST}:{LISTEN_PORT} -> {SSH_HOST}:{SSH_PORT}",flush=True)
-    log("started")
+    print(f"mytunnel-sshws raw listening {LISTEN_HOST}:{LISTEN_PORT} -> {SSH_HOST}:{SSH_PORT}", flush=True)
+    log("raw proxy started")
     while True:
         conn,addr=s.accept()
         threading.Thread(target=handle_client, args=(conn,addr), daemon=True).start()
@@ -7767,6 +7742,87 @@ main "$@"
 
 __EMBED_EOF__
 chmod 755 "$ETC/setup/sshws.sh"
+cat > "$ETC/setup/tlsmux.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel setup/tlsmux.sh - stunnel 443 -> mux 1443 -> ssh/http
+set -e
+BASE="${MYTUNNEL_PREFIX:-}"
+# This file is the live mux code, embedded below for idempotent reinstall
+cat > "${BASE}/usr/local/bin/mytunnel-tlsmux.py" << 'PYEOF'
+#!/usr/bin/env python3
+import socket, threading, select, sys
+LISTEN_HOST="127.0.0.1"
+LISTEN_PORT=1443
+SSH_HOST="127.0.0.1"
+SSH_PORT=22
+HTTP_HOST="127.0.0.1"
+HTTP_PORT=80
+def pipe(a,b):
+    try:
+        while True:
+            rr,_,_ = select.select([a,b], [], [], 60)
+            if not rr:
+                break
+            for sock in rr:
+                try:
+                    data = sock.recv(8192)
+                except:
+                    return
+                if not data:
+                    return
+                try:
+                    (b if sock is a else a).sendall(data)
+                except:
+                    return
+    except:
+        pass
+    finally:
+        try: a.close()
+        except: pass
+        try: b.close()
+        except: pass
+def handle(conn, addr):
+    conn.settimeout(3)
+    peek = b""
+    try:
+        peek = conn.recv(8192, socket.MSG_PEEK)
+    except: peek = b""
+    is_http = False
+    if peek:
+        if peek.startswith((b"GET ", b"POST ", b"HEAD ", b"PUT ", b"DELETE ", b"OPTIONS ", b"CONNECT ", b"PATCH ", b"PRI * HTTP/2")):
+            is_http = True
+        elif b"HTTP/1." in peek[:1024]:
+            is_http = True
+    target_host = HTTP_HOST if is_http else SSH_HOST
+    target_port = HTTP_PORT if is_http else SSH_PORT
+    try:
+        upstream = socket.create_connection((target_host, target_port), timeout=5)
+    except Exception as e:
+        sys.stderr.write(f"mux connect {target_host}:{target_port} fail {e} peer {addr}\n")
+        try: conn.close()
+        except: pass
+        return
+    t1 = threading.Thread(target=pipe, args=(conn, upstream), daemon=True)
+    t2 = threading.Thread(target=pipe, args=(upstream, conn), daemon=True)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+def main():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((LISTEN_HOST, LISTEN_PORT))
+    s.listen(128)
+    sys.stderr.write(f"mux listening {LISTEN_HOST}:{LISTEN_PORT} -> ssh {SSH_HOST}:{SSH_PORT} http {HTTP_HOST}:{HTTP_PORT}\n")
+    while True:
+        conn, addr = s.accept()
+        threading.Thread(target=handle, args=(conn, addr), daemon=True).start()
+if __name__ == "__main__":
+    main()
+
+PYEOF
+chmod 755 "${BASE}/usr/local/bin/mytunnel-tlsmux.py"
+
+__EMBED_EOF__
+chmod 755 "$ETC/setup/tlsmux.sh"
 cat > "$ETC/cron/autoexpire.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel cron/autoexpire.sh - hapus/kunci akun SSH lewat expiry harian 00:00

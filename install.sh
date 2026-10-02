@@ -260,11 +260,17 @@ cat > "$ETC/lib/xray_helpers.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel lib/xray_helpers.sh - helpers untuk 9 inbounds (ws/grpc/hu)
 # shellcheck disable=SC1091,SC1090
-BASE="${MYTUNNEL_PREFIX:-}"
-ETC="${BASE}/etc/mytunnel"
-XRAY_ETC="${BASE}/usr/local/etc/xray"
+# Preserve BASE if caller already set full /etc/mytunnel path (menu)
+if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
+  ETC="$BASE"
+else
+  BASE="${MYTUNNEL_PREFIX:-}"
+  ETC="${BASE}/etc/mytunnel"
+fi
+if [ -n "${MYTUNNEL_PREFIX:-}" ]; then XRAY_ETC="$MYTUNNEL_PREFIX/usr/local/etc/xray"; else XRAY_ETC="/usr/local/etc/xray"; fi
 XRAY_CFG="$XRAY_ETC/config.json"
-LOG="${BASE}/var/log/mytunnel.log"
+LOG="${MYTUNNEL_PREFIX:-}/var/log/mytunnel.log"
+[ -z "${MYTUNNEL_PREFIX:-}" ] && LOG="/var/log/mytunnel.log"
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 CYAN="${CYAN:-\033[0;36m}"; RESET="${RESET:-\033[0m}"
@@ -443,11 +449,17 @@ cat > "$ETC/lib/ssh_helpers.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel lib/ssh_helpers.sh - DB & user helpers (60 col, flock, no eval)
 # shellcheck disable=SC1091,SC1090
-BASE="${MYTUNNEL_PREFIX:-}"
-ETC="${BASE}/etc/mytunnel"
+# Preserve BASE if caller already set full /etc/mytunnel path (menu)
+if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
+  ETC="$BASE"
+else
+  BASE="${MYTUNNEL_PREFIX:-}"
+  ETC="${BASE}/etc/mytunnel"
+fi
 DB="$ETC/db/ssh.txt"
 DB_LOCK="$ETC/db/.ssh.lock"
-LOG="${BASE}/var/log/mytunnel.log"
+LOG="${MYTUNNEL_PREFIX:-}/var/log/mytunnel.log"
+[ -z "${MYTUNNEL_PREFIX:-}" ] && LOG="/var/log/mytunnel.log"
 # DOMAIN_FILE="$ETC/config/domain.txt"  # unused - _get_domain() uses cat directly
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
@@ -759,17 +771,24 @@ print_ssh_account_info() {
 print_account_info() {
   print_ssh_account_info "$@" 2>/dev/null || return $?
 }
+
 __EMBED_EOF__
 chmod 644 "$ETC/lib/ssh_helpers.sh"
 cat > "$ETC/lib/proto_helpers.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel lib/proto_helpers.sh - generic helpers vmess|vless|trojan (60 col, flock, jq --arg)
 # shellcheck disable=SC1091,SC2129,SC2162,SC1090,SC2034
-BASE="${MYTUNNEL_PREFIX:-}"
-ETC="${BASE}/etc/mytunnel"
-XRAY_ETC="${BASE}/usr/local/etc/xray"
+# Preserve BASE if caller already set full /etc/mytunnel path (menu)
+if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
+  ETC="$BASE"
+else
+  BASE="${MYTUNNEL_PREFIX:-}"
+  ETC="${BASE}/etc/mytunnel"
+fi
+if [ -n "${MYTUNNEL_PREFIX:-}" ]; then XRAY_ETC="$MYTUNNEL_PREFIX/usr/local/etc/xray"; else XRAY_ETC="/usr/local/etc/xray"; fi
 XRAY_CFG="$XRAY_ETC/config.json"
-LOG="${BASE}/var/log/mytunnel.log"
+LOG="${MYTUNNEL_PREFIX:-}/var/log/mytunnel.log"
+[ -z "${MYTUNNEL_PREFIX:-}" ] && LOG="/var/log/mytunnel.log"
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/xray_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 CYAN="${CYAN:-\033[0;36m}"; BLUE="${BLUE:-\033[0;34m}"; RESET="${RESET:-\033[0m}"
@@ -1301,9 +1320,14 @@ cat > "$ETC/lib/features_helpers.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel lib/features_helpers.sh - helpers untuk FEATURES (reboot, backup, services, etc)
 # shellcheck disable=SC1091,SC1090,SC2154
-BASE="${MYTUNNEL_PREFIX:-}"
-ETC="${BASE}/etc/mytunnel"
-LOG="${BASE}/var/log/mytunnel.log"
+# Preserve BASE if caller already set full path
+if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
+  ETC="$BASE"
+else
+  BASE="${MYTUNNEL_PREFIX:-}"
+  ETC="${BASE}/etc/mytunnel"
+fi
+if [ -n "${MYTUNNEL_PREFIX:-}" ]; then LOG="$MYTUNNEL_PREFIX/var/log/mytunnel.log"; else LOG="/var/log/mytunnel.log"; fi
 # REAL_CRON_DIR removed (was unused) - cron dir is /etc/cron.d fixed
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/sysinfo.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
@@ -1380,10 +1404,14 @@ cat > "$ETC/lib/advanced_helpers.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel lib/advanced_helpers.sh - helpers TAHAP 6 (bot/warp/routing/slowdns)
 # shellcheck disable=SC1091,SC1090,SC2154
-BASE="${MYTUNNEL_PREFIX:-}"
-ETC="${BASE}/etc/mytunnel"
-LOG="${BASE}/var/log/mytunnel.log"
-XRAY_ETC="${BASE}/usr/local/etc/xray"
+# Preserve BASE if caller already set full /etc/mytunnel path (menu)
+if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
+  ETC="$BASE"
+else
+  BASE="${MYTUNNEL_PREFIX:-}"
+  ETC="${BASE}/etc/mytunnel"
+fi
+if [ -n "${MYTUNNEL_PREFIX:-}" ]; then LOG="$MYTUNNEL_PREFIX/var/log/mytunnel.log"; XRAY_ETC="$MYTUNNEL_PREFIX/usr/local/etc/xray"; else LOG="/var/log/mytunnel.log"; XRAY_ETC="/usr/local/etc/xray"; fi
 XRAY_CFG="$XRAY_ETC/config.json"
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/sysinfo.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
@@ -1480,6 +1508,7 @@ ah_notify_admin(){
   ah_log "notify admin: ${clean:0:80}"
 }
 # ponytail: checksum DB optional; upgrade to sig verify when upstream publishes
+
 __EMBED_EOF__
 chmod 644 "$ETC/lib/advanced_helpers.sh"
 cat > "$ETC/menu/main.sh" << '__EMBED_EOF__'
@@ -1773,46 +1802,64 @@ do_create() {
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+_parse_duration_to_min() {
+  local inp="$1" def="$2" v num suffix
+  v=$(echo "$inp" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+  [ -z "$v" ] && v="$def"
+  suffix="${v: -1}"
+  if [[ "$suffix" == "h" ]]; then num="${v%?}"; [[ "$num" =~ ^[0-9]+$ ]] || num="$def"; echo $((num*60))
+  elif [[ "$suffix" == "m" ]]; then num="${v%?}"; [[ "$num" =~ ^[0-9]+$ ]] || num="$def"; echo "$num"
+  else [[ "$v" =~ ^[0-9]+$ ]] || v="$def"; echo "$v"; fi
+}
 do_trial() {
   clear 2>/dev/null || printf '\033c'
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Trial SSH"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  local inp_dur inp_limit trial_min trial_limit days
+  echo -ne "${CYAN}Durasi trial [60m, contoh 30m/2h, default 60m]: ${RESET}"; read -r inp_dur
+  trial_min=$(_parse_duration_to_min "$inp_dur" 60)
+  [[ "$trial_min" =~ ^[0-9]+$ ]] || trial_min=60
+  [ "$trial_min" -lt 1 ] && trial_min=1
+  [ "$trial_min" -gt 10080 ] && trial_min=10080
+  echo -ne "${CYAN}Limit IP [1, 0=unlimited]: ${RESET}"; read -r inp_limit
+  [[ "$inp_limit" =~ ^[0-9]+$ ]] || inp_limit=1
+  trial_limit="$inp_limit"
+  # days = ceil(min/1440)
+  days=$(( (trial_min + 1439) / 1440 ))
+  [ "$days" -lt 1 ] && days=1
   local rnd user pass exp
   rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4)
   [ -z "$rnd" ] && rnd=$(date +%s | tail -c 5)
   user="trial${rnd}"
-  # ensure not exists
   while ssh_user_exists "$user" 2>/dev/null || id "$user" >/dev/null 2>&1; do
     rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4); user="trial${rnd}"
   done
   if command -v openssl >/dev/null 2>&1; then pass=$(openssl rand -base64 9 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c 8); else pass="Trial$(date +%s | tail -c 5)"; fi
-  # trial 60 menit: buat user 1 hari tapi schedule hapus 60 menit
-  if ! ssh_create "$user" "$pass" 1 1 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
+  if ! ssh_create "$user" "$pass" "$days" "$trial_limit" 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
   exp=$(ssh_get_field "$user" 3 2>/dev/null || _today_str)
-  # schedule deletion in 60 min
+  local _human; if [ "$trial_min" -ge 60 ] && [ $((trial_min % 60)) -eq 0 ]; then _human="$((trial_min/60)) jam"; else _human="${trial_min} menit"; fi
   if [ -n "$MYTUNNEL_PREFIX" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial $user scheduled delete in 60m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
-    echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial $user scheduled delete in ${trial_min}m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
+    echo "$(date -d "+${trial_min} minutes" +%s 2>/dev/null || echo 0) $user" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
   else
     if command -v at >/dev/null 2>&1; then
-      echo "bash $BASE/cron/autoexpire.sh; userdel -r $user 2>/dev/null; sed -i '/^$user|/d' $DB 2>/dev/null" | at now + 60 minutes 2>/dev/null || true
-      # also fallback cron one-time via at
+      echo "bash $BASE/cron/autoexpire.sh; userdel -r $user 2>/dev/null; sed -i '/^$user|/d' $DB 2>/dev/null" | at now + "${trial_min}" minutes 2>/dev/null || true
     else
-      # cron per menit cek file schedule
-      echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user $pass" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
-      # ensure limitip/autoexpire will handle? add simple cron check
+      echo "$(date -d "+${trial_min} minutes" +%s 2>/dev/null || echo 0) $user $pass" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
       if [ ! -f /etc/cron.d/mytunnel-trial ]; then
         echo "* * * * * root $BASE/cron/autoexpire.sh 2>/dev/null; awk -v now=\$(date +\%s) '\$1<=now{print \$2}' $BASE/db/.trial_schedule 2>/dev/null | while read u; do pkill -u \"\$u\" 2>/dev/null; userdel -r \"\$u\" 2>/dev/null; sed -i \"/^\$u|/d\" $DB 2>/dev/null; done; awk -v now=\$(date +\%s) '\$1>now' $BASE/db/.trial_schedule > $BASE/db/.trial_schedule.tmp 2>/dev/null && mv $BASE/db/.trial_schedule.tmp $BASE/db/.trial_schedule 2>/dev/null" > /etc/cron.d/mytunnel-trial 2>/dev/null || true
         chmod 644 /etc/cron.d/mytunnel-trial 2>/dev/null || true
       fi
     fi
   fi
-  echo -e "${GREEN}Trial dibuat 60 menit${RESET}"
-  print_ssh_account_info "$user" "$pass" "$exp" "1" 2>/dev/null || true
-  # notify Telegram admin (trial)
+  echo -e "${GREEN}Trial dibuat ${_human} (exp $exp, limit $trial_limit IP)${RESET}"
+  print_ssh_account_info "$user" "$pass" "$exp" "$trial_limit" 2>/dev/null || true
   if declare -f ah_notify_admin >/dev/null 2>&1; then
-    _ntf=$(print_ssh_account_info "$user" "$pass" "$exp" "1" 2>/dev/null || echo "SSH trial $user | $pass | exp $exp")
+    _ntf=$(print_ssh_account_info "$user" "$pass" "$exp" "$trial_limit" 2>/dev/null || echo "SSH trial $user | $pass | exp $exp")
     ah_notify_admin "$_ntf" 2>/dev/null || true
   fi
-  echo -e "${YELLOW}Akan dihapus otomatis 60 menit${RESET}"
+  echo -e "${YELLOW}Akan dihapus otomatis ${_human}${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -1886,50 +1933,72 @@ do_chpass() {
 do_check_login() {
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login SSH"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
   _ensure_db
-  local found=0
-  local user
+  local found=0 user
   while IFS='|' read -r user _pass _exp _limit _status; do
     [ -z "$user" ] && continue
-    local cnt ips
-    cnt=$(who 2>/dev/null | awk -v u="$user" '$1==u{c++} END{print c+0}')
-    ips=$(who 2>/dev/null | awk -v u="$user" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' | head -c 40)
-    # also try ss
-    if [ "$cnt" -eq 0 ] && command -v ss >/dev/null 2>&1; then
-      local pids
-      pids=$(pgrep -u "$user" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-      if [ -n "$pids" ]; then cnt=$(ss -tnp 2>/dev/null | grep -c "$pids" 2>/dev/null || echo 0); fi
+    local ips cnt
+    # reuse helper if available
+    if declare -f _ssh_online_cnt >/dev/null 2>&1; then
+      ips=$(who 2>/dev/null | awk -v u="$user" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' | head -c 40)
+      [ -z "$ips" ] && ips=$(ss -tnp 2>/dev/null | grep -E "$(pgrep -u "$user" 2>/dev/null | tr '\n' '|' | sed 's/|$//')" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' | head -c 40)
+      [ -z "$ips" ] && [ -f /var/log/auth.log ] && ips=$(grep -E "Accepted.* $user " /var/log/auth.log 2>/dev/null | tail -n 20 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' | head -c 40)
+      ips=$(echo "$ips" | tr -s ' ' | sed 's/^ //;s/ $//')
+      cnt=$(echo "$ips" | wc -w 2>/dev/null | tr -d ' '); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      [ -z "$ips" ] && cnt=0
+    else
+      cnt=$(who 2>/dev/null | awk -v u="$user" '$1==u{c++} END{print c+0}')
+      ips=$(who 2>/dev/null | awk -v u="$user" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' | head -c 40)
+      if [ "$cnt" -eq 0 ] && command -v ss >/dev/null 2>&1; then
+        local pids; pids=$(pgrep -u "$user" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+        if [ -n "$pids" ]; then cnt=$(ss -tnp 2>/dev/null | grep -c "$pids" 2>/dev/null || echo 0); fi
+      fi
     fi
-    if [ "$cnt" -gt 0 ] 2>/dev/null; then
-      printf " %-16s : %2d sesi  %s\n" "$user" "$cnt" "$ips"
+    if [ -n "$ips" ] || [ "$cnt" -gt 0 ] 2>/dev/null; then
+      printf " %-12s : %2s/%-2s IP  %s ${GREY}[%s]${RESET}\n" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
       found=1
     fi
   done < <(_list_users_raw)
-  [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada user login)${RESET}"
+  [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada user login / belum ada sesi)${RESET}"
+  echo -e "${GREY}Limit = batas IP, angka pertama = IP unik online${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+_ssh_online_cnt() {
+  local _u="$1" _ips _cnt
+  _ips=$(who 2>/dev/null | awk -v u="$_u" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' 2>/dev/null)
+  if [ -z "$_ips" ] && command -v ss >/dev/null 2>&1; then
+    local _pids; _pids=$(pgrep -u "$_u" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+    [ -n "$_pids" ] && _ips=$(ss -tnp 2>/dev/null | grep -E "$_pids" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' 2>/dev/null)
+  fi
+  if [ -z "$_ips" ] && [ -f /var/log/auth.log ]; then _ips=$(grep -E "Accepted.* $_u |sshd.* $_u.*Accepted" /var/log/auth.log 2>/dev/null | tail -n 20 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' 2>/dev/null); fi
+  _ips=$(echo "$_ips" | tr -s ' ' | sed 's/^ //;s/ $//')
+  [ -z "$_ips" ] && echo "0" && return
+  echo "$_ips" | wc -w | tr -d ' '
+}
 do_list() {
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users SSH"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-16s %-10s %4s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "IP" "Status"
+  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %3s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "Lim" "On" "Status"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   if [ ! -s "$DB" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
   else
-    local user pass exp limit status days
+    local user pass exp limit status days cnt
     while IFS='|' read -r user pass exp limit status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
-      printf "${BLUE}│${RESET} %-16s %-10s %3sd %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "$limit" "$status"
+      cnt=$(_ssh_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      printf "${BLUE}│${RESET} %-12s %-10s %3sd %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "$cnt" "$status"
     done < <(_list_users_raw)
   fi
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -e "${GREY}Lim=Limit IP, On=IP login sekarang${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -2153,6 +2222,7 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
+
 __EMBED_EOF__
 chmod 755 "$ETC/menu/ssh.sh"
 cat > "$ETC/menu/vmess.sh" << '__EMBED_EOF__'
@@ -2344,9 +2414,35 @@ do_create_custom() {
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+_parse_duration_to_min() {
+  local inp="$1" def="$2" v num suffix
+  v=$(echo "$inp" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+  [ -z "$v" ] && v="$def"
+  suffix="${v: -1}"
+  if [[ "$suffix" == "h" ]]; then num="${v%?}"; [[ "$num" =~ ^[0-9]+$ ]] || num="$def"; echo $((num*60))
+  elif [[ "$suffix" == "m" ]]; then num="${v%?}"; [[ "$num" =~ ^[0-9]+$ ]] || num="$def"; echo "$num"
+  else [[ "$v" =~ ^[0-9]+$ ]] || v="$def"; echo "$v"; fi
+}
 do_trial() {
   clear 2>/dev/null || printf '\033c'
-  local rnd user id exp
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Trial VMESS"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  local inp_dur inp_limit inp_quota trial_min trial_limit trial_quota days
+  echo -ne "${CYAN}Durasi trial [60m, contoh 30m/2h, default 60m]: ${RESET}"; read -r inp_dur
+  trial_min=$(_parse_duration_to_min "$inp_dur" 60)
+  [[ "$trial_min" =~ ^[0-9]+$ ]] || trial_min=60
+  [ "$trial_min" -lt 1 ] && trial_min=1
+  [ "$trial_min" -gt 10080 ] && trial_min=10080
+  echo -ne "${CYAN}Limit IP [1, 0=unlimited]: ${RESET}"; read -r inp_limit
+  [[ "$inp_limit" =~ ^[0-9]+$ ]] || inp_limit=1
+  trial_limit="$inp_limit"
+  echo -ne "${CYAN}Quota GB [1, 0=unlimited]: ${RESET}"; read -r inp_quota
+  [[ "$inp_quota" =~ ^[0-9]+$ ]] || inp_quota=1
+  trial_quota="$inp_quota"
+  days=$(( (trial_min + 1439) / 1440 ))
+  [ "$days" -lt 1 ] && days=1
+  local rnd user id
   rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4)
   [ -z "$rnd" ] && rnd=$(date +%s | tail -c 5)
   user="trial${rnd}"
@@ -2356,25 +2452,25 @@ do_trial() {
     rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4); user="trial${rnd}"; user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   done
   if [ "$PROTO" = "trojan" ]; then id=$(gen_password); else id=$(gen_uuid); fi
-  if ! proto_create "$PROTO" "$user" "$id" 1 1 1 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
-  echo -e "${GREEN}Trial dibuat 60 menit (1 hari, limit 1 IP, quota 1GB)${RESET}"
+  if ! proto_create "$PROTO" "$user" "$id" "$days" "$trial_limit" "$trial_quota" 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
+  local _human; if [ "$trial_min" -ge 60 ] && [ $((trial_min % 60)) -eq 0 ]; then _human="$((trial_min/60)) jam"; else _human="${trial_min} menit"; fi
+  echo -e "${GREEN}Trial dibuat $_human (exp ${days} hari, limit $trial_limit IP, quota $trial_quota GB)${RESET}"
   print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
-  # notify Telegram admin (trial)
   if declare -f ah_notify_admin >/dev/null 2>&1; then
     _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO trial $user")
     ah_notify_admin "$_ntf" 2>/dev/null || true
   fi
   if [ -n "$MYTUNNEL_PREFIX" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial vmess $user scheduled delete in 60m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
-    echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user vmess" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial $PROTO $user scheduled delete in ${trial_min}m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
+    echo "$(date -d "+${trial_min} minutes" +%s 2>/dev/null || echo 0) $user $PROTO" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
   else
     if command -v at >/dev/null 2>&1; then
-      echo "bash $BASE/cron/autoexpire_xray.sh; xray_del_client vmess $user 2>/dev/null; sed -i '/^$user|/d' $DB 2>/dev/null" | at now + 60 minutes 2>/dev/null || true
+      echo "bash $BASE/cron/autoexpire_xray.sh; xray_del_client $PROTO $user 2>/dev/null; sed -i '/^$user|/d' $DB 2>/dev/null" | at now + "${trial_min}" minutes 2>/dev/null || true
     else
-      echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user vmess" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
+      echo "$(date -d "+${trial_min} minutes" +%s 2>/dev/null || echo 0) $user $PROTO" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
     fi
   fi
-  echo -e "${YELLOW}Akan dihapus otomatis 60 menit${RESET}"
+  echo -e "${YELLOW}Akan dihapus otomatis $_human${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -2438,52 +2534,73 @@ do_check_login() {
   local found=0 user
   while IFS='|' read -r user _id _exp _limit _quota _used _status; do
     [ -z "$user" ] && continue
-    local cnt=0
-    if [ -f "/var/log/xray/access.log" ] || [ -f "${MYTUNNEL_PREFIX:-}/var/log/xray/access.log" ]; then
-      local logf="/var/log/xray/access.log"
-      [ -n "$MYTUNNEL_PREFIX" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-      cnt=$(grep -c -F "$user" "$logf" 2>/dev/null | tr -d ' \n')
-      [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      [ "$cnt" -gt 1000 ] && cnt=1000
+    local cnt ips logf
+    logf="/var/log/xray/access.log"
+    [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+    cnt=0; ips=""
+    if [ -f "$logf" ]; then
+      ips=$(tail -n 5000 "$logf" 2>/dev/null | grep -F "email: $user" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | sed 's/ $//')
+      cnt=$(echo "$ips" | wc -w 2>/dev/null | tr -d ' '); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      ips=$(echo "$ips" | head -c 42)
     fi
-    if [ "$cnt" -gt 0 ] 2>/dev/null; then
-      printf " %-16s : %4s hits (log)  %s\n" "$user" "$cnt" "$_status"
+    if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
+      printf " %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
       found=1
+    else
+      # tetap tampilkan yang limit 0? tidak — hanya yang online
+      true
     fi
   done < <(_list_users_raw)
   [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada hit di access.log / belum ada trafik)${RESET}"
+  echo -e "${GREY}Format: online/limit IP | On=IP unik 5k log terakhir${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+_xray_online_cnt() {
+  local _u="$1" _log="/var/log/xray/access.log"
+  [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+  [ -f "$_log" ] || { echo 0; return; }
+  tail -n 5000 "$_log" 2>/dev/null | grep -F "email: $_u" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | wc -l 2>/dev/null | tr -d ' '
+}
+_xray_online_ips() {
+  local _u="$1" _log="/var/log/xray/access.log"
+  [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+  [ -f "$_log" ] || return
+  tail -n 5000 "$_log" 2>/dev/null | grep -F "email: $_u" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | head -c 28
+}
 do_list() {
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users VMESS"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-14s %-10s %4s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "IP" "Q" "Status"
+  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %3s %3s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   if [ ! -s "$DB" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
   else
-    local user exp limit quota status days
+    local user exp limit quota status days cnt
     while IFS='|' read -r user _id exp limit quota _used status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
-      printf "${BLUE}│${RESET} %-14s %-10s %3sd %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$status"
+      cnt=$(_xray_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      printf "${BLUE}│${RESET} %-12s %-10s %3sd %3s %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
     done < <(_list_users_raw)
   fi
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -e "${GREY}Lim=Limit IP, Q=Quota GB, On=IP unik di access.log (5k)${RESET}"
   echo -e "${GREY}Pilih nomor untuk detail (0 kembali):${RESET}"
   echo -ne "${CYAN}Nomor: ${RESET}"
   read -r num
   [[ "$num" =~ ^[0-9]+$ ]] || { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
   [ "$num" -eq 0 ] && return 0
-  local user
-  user=$(_pick_user_by_number "$num")
-  [ -z "$user" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  local _u
+  _u=$(_pick_user_by_number "$num")
+  [ -z "$_u" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
   clear 2>/dev/null || printf '\033c'
-  print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "User tidak ada"
+  local _ips; _ips=$(_xray_online_ips "$_u" 2>/dev/null)
+  [ -n "$_ips" ] && echo -e "${CYAN}IP login: ${RESET}$_ips"
+  print_proto_account_info "$PROTO" "$_u" 2>/dev/null || gen_links "$PROTO" "$_u" 2>/dev/null || echo "User tidak ada"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -2632,6 +2749,7 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
+
 __EMBED_EOF__
 chmod 755 "$ETC/menu/vmess.sh"
 cat > "$ETC/menu/vless.sh" << '__EMBED_EOF__'
@@ -2823,9 +2941,35 @@ do_create_custom() {
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+_parse_duration_to_min() {
+  local inp="$1" def="$2" v num suffix
+  v=$(echo "$inp" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+  [ -z "$v" ] && v="$def"
+  suffix="${v: -1}"
+  if [[ "$suffix" == "h" ]]; then num="${v%?}"; [[ "$num" =~ ^[0-9]+$ ]] || num="$def"; echo $((num*60))
+  elif [[ "$suffix" == "m" ]]; then num="${v%?}"; [[ "$num" =~ ^[0-9]+$ ]] || num="$def"; echo "$num"
+  else [[ "$v" =~ ^[0-9]+$ ]] || v="$def"; echo "$v"; fi
+}
 do_trial() {
   clear 2>/dev/null || printf '\033c'
-  local rnd user id exp
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Trial VLESS"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  local inp_dur inp_limit inp_quota trial_min trial_limit trial_quota days
+  echo -ne "${CYAN}Durasi trial [60m, contoh 30m/2h, default 60m]: ${RESET}"; read -r inp_dur
+  trial_min=$(_parse_duration_to_min "$inp_dur" 60)
+  [[ "$trial_min" =~ ^[0-9]+$ ]] || trial_min=60
+  [ "$trial_min" -lt 1 ] && trial_min=1
+  [ "$trial_min" -gt 10080 ] && trial_min=10080
+  echo -ne "${CYAN}Limit IP [1, 0=unlimited]: ${RESET}"; read -r inp_limit
+  [[ "$inp_limit" =~ ^[0-9]+$ ]] || inp_limit=1
+  trial_limit="$inp_limit"
+  echo -ne "${CYAN}Quota GB [1, 0=unlimited]: ${RESET}"; read -r inp_quota
+  [[ "$inp_quota" =~ ^[0-9]+$ ]] || inp_quota=1
+  trial_quota="$inp_quota"
+  days=$(( (trial_min + 1439) / 1440 ))
+  [ "$days" -lt 1 ] && days=1
+  local rnd user id
   rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4)
   [ -z "$rnd" ] && rnd=$(date +%s | tail -c 5)
   user="trial${rnd}"
@@ -2835,25 +2979,25 @@ do_trial() {
     rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4); user="trial${rnd}"; user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   done
   if [ "$PROTO" = "trojan" ]; then id=$(gen_password); else id=$(gen_uuid); fi
-  if ! proto_create "$PROTO" "$user" "$id" 1 1 1 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
-  echo -e "${GREEN}Trial dibuat 60 menit (1 hari, limit 1 IP, quota 1GB)${RESET}"
+  if ! proto_create "$PROTO" "$user" "$id" "$days" "$trial_limit" "$trial_quota" 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
+  local _human; if [ "$trial_min" -ge 60 ] && [ $((trial_min % 60)) -eq 0 ]; then _human="$((trial_min/60)) jam"; else _human="${trial_min} menit"; fi
+  echo -e "${GREEN}Trial dibuat $_human (exp ${days} hari, limit $trial_limit IP, quota $trial_quota GB)${RESET}"
   print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
-  # notify Telegram admin (trial)
   if declare -f ah_notify_admin >/dev/null 2>&1; then
     _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO trial $user")
     ah_notify_admin "$_ntf" 2>/dev/null || true
   fi
   if [ -n "$MYTUNNEL_PREFIX" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial vless $user scheduled delete in 60m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
-    echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user vless" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial $PROTO $user scheduled delete in ${trial_min}m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
+    echo "$(date -d "+${trial_min} minutes" +%s 2>/dev/null || echo 0) $user $PROTO" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
   else
     if command -v at >/dev/null 2>&1; then
-      echo "bash $BASE/cron/autoexpire_xray.sh; xray_del_client vless $user 2>/dev/null; sed -i '/^$user|/d' $DB 2>/dev/null" | at now + 60 minutes 2>/dev/null || true
+      echo "bash $BASE/cron/autoexpire_xray.sh; xray_del_client $PROTO $user 2>/dev/null; sed -i '/^$user|/d' $DB 2>/dev/null" | at now + "${trial_min}" minutes 2>/dev/null || true
     else
-      echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user vless" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
+      echo "$(date -d "+${trial_min} minutes" +%s 2>/dev/null || echo 0) $user $PROTO" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
     fi
   fi
-  echo -e "${YELLOW}Akan dihapus otomatis 60 menit${RESET}"
+  echo -e "${YELLOW}Akan dihapus otomatis $_human${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -2917,52 +3061,73 @@ do_check_login() {
   local found=0 user
   while IFS='|' read -r user _id _exp _limit _quota _used _status; do
     [ -z "$user" ] && continue
-    local cnt=0
-    if [ -f "/var/log/xray/access.log" ] || [ -f "${MYTUNNEL_PREFIX:-}/var/log/xray/access.log" ]; then
-      local logf="/var/log/xray/access.log"
-      [ -n "$MYTUNNEL_PREFIX" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-      cnt=$(grep -c -F "$user" "$logf" 2>/dev/null | tr -d ' \n')
-      [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      [ "$cnt" -gt 1000 ] && cnt=1000
+    local cnt ips logf
+    logf="/var/log/xray/access.log"
+    [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+    cnt=0; ips=""
+    if [ -f "$logf" ]; then
+      ips=$(tail -n 5000 "$logf" 2>/dev/null | grep -F "email: $user" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | sed 's/ $//')
+      cnt=$(echo "$ips" | wc -w 2>/dev/null | tr -d ' '); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      ips=$(echo "$ips" | head -c 42)
     fi
-    if [ "$cnt" -gt 0 ] 2>/dev/null; then
-      printf " %-16s : %4s hits (log)  %s\n" "$user" "$cnt" "$_status"
+    if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
+      printf " %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
       found=1
+    else
+      # tetap tampilkan yang limit 0? tidak — hanya yang online
+      true
     fi
   done < <(_list_users_raw)
   [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada hit di access.log / belum ada trafik)${RESET}"
+  echo -e "${GREY}Format: online/limit IP | On=IP unik 5k log terakhir${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+_xray_online_cnt() {
+  local _u="$1" _log="/var/log/xray/access.log"
+  [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+  [ -f "$_log" ] || { echo 0; return; }
+  tail -n 5000 "$_log" 2>/dev/null | grep -F "email: $_u" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | wc -l 2>/dev/null | tr -d ' '
+}
+_xray_online_ips() {
+  local _u="$1" _log="/var/log/xray/access.log"
+  [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+  [ -f "$_log" ] || return
+  tail -n 5000 "$_log" 2>/dev/null | grep -F "email: $_u" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | head -c 28
+}
 do_list() {
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users VLESS"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-14s %-10s %4s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "IP" "Q" "Status"
+  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %3s %3s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   if [ ! -s "$DB" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
   else
-    local user exp limit quota status days
+    local user exp limit quota status days cnt
     while IFS='|' read -r user _id exp limit quota _used status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
-      printf "${BLUE}│${RESET} %-14s %-10s %3sd %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$status"
+      cnt=$(_xray_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      printf "${BLUE}│${RESET} %-12s %-10s %3sd %3s %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
     done < <(_list_users_raw)
   fi
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -e "${GREY}Lim=Limit IP, Q=Quota GB, On=IP unik di access.log (5k)${RESET}"
   echo -e "${GREY}Pilih nomor untuk detail (0 kembali):${RESET}"
   echo -ne "${CYAN}Nomor: ${RESET}"
   read -r num
   [[ "$num" =~ ^[0-9]+$ ]] || { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
   [ "$num" -eq 0 ] && return 0
-  local user
-  user=$(_pick_user_by_number "$num")
-  [ -z "$user" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  local _u
+  _u=$(_pick_user_by_number "$num")
+  [ -z "$_u" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
   clear 2>/dev/null || printf '\033c'
-  print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "User tidak ada"
+  local _ips; _ips=$(_xray_online_ips "$_u" 2>/dev/null)
+  [ -n "$_ips" ] && echo -e "${CYAN}IP login: ${RESET}$_ips"
+  print_proto_account_info "$PROTO" "$_u" 2>/dev/null || gen_links "$PROTO" "$_u" 2>/dev/null || echo "User tidak ada"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -3111,6 +3276,7 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
+
 __EMBED_EOF__
 chmod 755 "$ETC/menu/vless.sh"
 cat > "$ETC/menu/trojan.sh" << '__EMBED_EOF__'
@@ -3302,9 +3468,35 @@ do_create_custom() {
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+_parse_duration_to_min() {
+  local inp="$1" def="$2" v num suffix
+  v=$(echo "$inp" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+  [ -z "$v" ] && v="$def"
+  suffix="${v: -1}"
+  if [[ "$suffix" == "h" ]]; then num="${v%?}"; [[ "$num" =~ ^[0-9]+$ ]] || num="$def"; echo $((num*60))
+  elif [[ "$suffix" == "m" ]]; then num="${v%?}"; [[ "$num" =~ ^[0-9]+$ ]] || num="$def"; echo "$num"
+  else [[ "$v" =~ ^[0-9]+$ ]] || v="$def"; echo "$v"; fi
+}
 do_trial() {
   clear 2>/dev/null || printf '\033c'
-  local rnd user id exp
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Trial TROJAN"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  local inp_dur inp_limit inp_quota trial_min trial_limit trial_quota days
+  echo -ne "${CYAN}Durasi trial [60m, contoh 30m/2h, default 60m]: ${RESET}"; read -r inp_dur
+  trial_min=$(_parse_duration_to_min "$inp_dur" 60)
+  [[ "$trial_min" =~ ^[0-9]+$ ]] || trial_min=60
+  [ "$trial_min" -lt 1 ] && trial_min=1
+  [ "$trial_min" -gt 10080 ] && trial_min=10080
+  echo -ne "${CYAN}Limit IP [1, 0=unlimited]: ${RESET}"; read -r inp_limit
+  [[ "$inp_limit" =~ ^[0-9]+$ ]] || inp_limit=1
+  trial_limit="$inp_limit"
+  echo -ne "${CYAN}Quota GB [1, 0=unlimited]: ${RESET}"; read -r inp_quota
+  [[ "$inp_quota" =~ ^[0-9]+$ ]] || inp_quota=1
+  trial_quota="$inp_quota"
+  days=$(( (trial_min + 1439) / 1440 ))
+  [ "$days" -lt 1 ] && days=1
+  local rnd user id
   rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4)
   [ -z "$rnd" ] && rnd=$(date +%s | tail -c 5)
   user="trial${rnd}"
@@ -3314,25 +3506,25 @@ do_trial() {
     rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4); user="trial${rnd}"; user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   done
   if [ "$PROTO" = "trojan" ]; then id=$(gen_password); else id=$(gen_uuid); fi
-  if ! proto_create "$PROTO" "$user" "$id" 1 1 1 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
-  echo -e "${GREEN}Trial dibuat 60 menit (1 hari, limit 1 IP, quota 1GB)${RESET}"
+  if ! proto_create "$PROTO" "$user" "$id" "$days" "$trial_limit" "$trial_quota" 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
+  local _human; if [ "$trial_min" -ge 60 ] && [ $((trial_min % 60)) -eq 0 ]; then _human="$((trial_min/60)) jam"; else _human="${trial_min} menit"; fi
+  echo -e "${GREEN}Trial dibuat $_human (exp ${days} hari, limit $trial_limit IP, quota $trial_quota GB)${RESET}"
   print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
-  # notify Telegram admin (trial)
   if declare -f ah_notify_admin >/dev/null 2>&1; then
     _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO trial $user")
     ah_notify_admin "$_ntf" 2>/dev/null || true
   fi
   if [ -n "$MYTUNNEL_PREFIX" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial trojan $user scheduled delete in 60m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
-    echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user trojan" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial $PROTO $user scheduled delete in ${trial_min}m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
+    echo "$(date -d "+${trial_min} minutes" +%s 2>/dev/null || echo 0) $user $PROTO" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
   else
     if command -v at >/dev/null 2>&1; then
-      echo "bash $BASE/cron/autoexpire_xray.sh; xray_del_client trojan $user 2>/dev/null; sed -i '/^$user|/d' $DB 2>/dev/null" | at now + 60 minutes 2>/dev/null || true
+      echo "bash $BASE/cron/autoexpire_xray.sh; xray_del_client $PROTO $user 2>/dev/null; sed -i '/^$user|/d' $DB 2>/dev/null" | at now + "${trial_min}" minutes 2>/dev/null || true
     else
-      echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user trojan" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
+      echo "$(date -d "+${trial_min} minutes" +%s 2>/dev/null || echo 0) $user $PROTO" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
     fi
   fi
-  echo -e "${YELLOW}Akan dihapus otomatis 60 menit${RESET}"
+  echo -e "${YELLOW}Akan dihapus otomatis $_human${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -3395,52 +3587,73 @@ do_check_login() {
   local found=0 user
   while IFS='|' read -r user _id _exp _limit _quota _used _status; do
     [ -z "$user" ] && continue
-    local cnt=0
-    if [ -f "/var/log/xray/access.log" ] || [ -f "${MYTUNNEL_PREFIX:-}/var/log/xray/access.log" ]; then
-      local logf="/var/log/xray/access.log"
-      [ -n "$MYTUNNEL_PREFIX" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-      cnt=$(grep -c -F "$user" "$logf" 2>/dev/null | tr -d ' \n')
-      [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      [ "$cnt" -gt 1000 ] && cnt=1000
+    local cnt ips logf
+    logf="/var/log/xray/access.log"
+    [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+    cnt=0; ips=""
+    if [ -f "$logf" ]; then
+      ips=$(tail -n 5000 "$logf" 2>/dev/null | grep -F "email: $user" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | sed 's/ $//')
+      cnt=$(echo "$ips" | wc -w 2>/dev/null | tr -d ' '); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      ips=$(echo "$ips" | head -c 42)
     fi
-    if [ "$cnt" -gt 0 ] 2>/dev/null; then
-      printf " %-16s : %4s hits (log)  %s\n" "$user" "$cnt" "$_status"
+    if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
+      printf " %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
       found=1
+    else
+      # tetap tampilkan yang limit 0? tidak — hanya yang online
+      true
     fi
   done < <(_list_users_raw)
   [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada hit di access.log / belum ada trafik)${RESET}"
+  echo -e "${GREY}Format: online/limit IP | On=IP unik 5k log terakhir${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+_xray_online_cnt() {
+  local _u="$1" _log="/var/log/xray/access.log"
+  [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+  [ -f "$_log" ] || { echo 0; return; }
+  tail -n 5000 "$_log" 2>/dev/null | grep -F "email: $_u" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | wc -l 2>/dev/null | tr -d ' '
+}
+_xray_online_ips() {
+  local _u="$1" _log="/var/log/xray/access.log"
+  [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+  [ -f "$_log" ] || return
+  tail -n 5000 "$_log" 2>/dev/null | grep -F "email: $_u" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | head -c 28
+}
 do_list() {
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users TROJAN"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-14s %-10s %4s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "IP" "Q" "Status"
+  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %3s %3s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   if [ ! -s "$DB" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
   else
-    local user exp limit quota status days
+    local user exp limit quota status days cnt
     while IFS='|' read -r user _id exp limit quota _used status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
-      printf "${BLUE}│${RESET} %-14s %-10s %3sd %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$status"
+      cnt=$(_xray_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      printf "${BLUE}│${RESET} %-12s %-10s %3sd %3s %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
     done < <(_list_users_raw)
   fi
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -e "${GREY}Lim=Limit IP, Q=Quota GB, On=IP unik di access.log (5k)${RESET}"
   echo -e "${GREY}Pilih nomor untuk detail (0 kembali):${RESET}"
   echo -ne "${CYAN}Nomor: ${RESET}"
   read -r num
   [[ "$num" =~ ^[0-9]+$ ]] || { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
   [ "$num" -eq 0 ] && return 0
-  local user
-  user=$(_pick_user_by_number "$num")
-  [ -z "$user" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  local _u
+  _u=$(_pick_user_by_number "$num")
+  [ -z "$_u" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
   clear 2>/dev/null || printf '\033c'
-  print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "User tidak ada"
+  local _ips; _ips=$(_xray_online_ips "$_u" 2>/dev/null)
+  [ -n "$_ips" ] && echo -e "${CYAN}IP login: ${RESET}$_ips"
+  print_proto_account_info "$PROTO" "$_u" 2>/dev/null || gen_links "$PROTO" "$_u" 2>/dev/null || echo "User tidak ada"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -3589,6 +3802,7 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
+
 __EMBED_EOF__
 chmod 755 "$ETC/menu/trojan.sh"
 cat > "$ETC/menu/features.sh" << '__EMBED_EOF__'

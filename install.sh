@@ -7580,13 +7580,8 @@ def handle_client(conn, addr):
         try: conn.close()
         except: pass
         return
-    # sisa data setelah \r\n\r\n (jika klien sudah kirim SSH bytes langsung setelah header)
-    # data may contain extra beyond \r\n\r\n
-    idx=data.find(b"\r\n\r\n")+4
-    leftover=data[idx:] if idx>3 else b""
-    if leftover:
-        try: ssh.sendall(leftover); log(f"{addr} leftover {len(leftover)} forwarded")
-        except: pass
+    # JANGAN teruskan sisa buffer ke SSH — header HTTP bukan data SSH
+    # (meneruskan sisa menyebabkan sshd dapat "Illegal packet size" di KEX)
     def pipe(a,b, name):
         try:
             while True:

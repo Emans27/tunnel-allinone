@@ -4393,20 +4393,62 @@ ensure_swap() {
 enable_bbr() {
   mkdir -p "$SYSCTL_DIR" 2>/dev/null || true
   local conf="$SYSCTL_DIR/99-mytunnel-bbr.conf"
+  local gconf="$SYSCTL_DIR/99-game-video.conf"
   cat > "$conf" << 'BBR_EOF'
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-net.ipv4.tcp_fastopen=3
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_notsent_lowat = 16384
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.core.netdev_max_backlog = 5000
 BBR_EOF
-  chmod 644 "$conf" 2>/dev/null || true
+  cat > "$gconf" << 'GV_EOF'
+net.ipv4.tcp_ecn = 1
+net.core.optmem_max = 81920
+net.ipv4.udp_mem = 65536 131072 262144
+net.ipv4.ip_local_port_range = 1024 65535
+GV_EOF
+  chmod 644 "$conf" "$gconf" 2>/dev/null || true
   if [ -z "$BASE" ]; then
+    # ip_forward persistent
+    if ! grep -q "^net.ipv4.ip_forward" /etc/sysctl.conf 2>/dev/null; then echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf 2>/dev/null || true; else sed -i 's/.*net.ipv4.ip_forward.*/net.ipv4.ip_forward = 1/' /etc/sysctl.conf 2>/dev/null || true; fi
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+    sysctl --system >/dev/null 2>&1 || true
     sysctl -p "$conf" >/dev/null 2>&1 || sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1 || true
     sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
-    echo -e "${GREEN}BBR diaktifkan${RESET}"
+    # fq_codel for game/video low latency
+    modprobe sch_fq_codel 2>/dev/null || true
+    local _iface; _iface=$(ip route 2>/dev/null | grep default | awk '{print $5}' | head -1); [ -z "$_iface" ] && _iface=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}'); [ -z "$_iface" ] && _iface=eth0
+    tc qdisc replace dev "$_iface" root fq_codel target 5ms interval 100ms quantum 300 limit 1000 flows 1024 2>/dev/null || tc qdisc replace dev "$_iface" root fq 2>/dev/null || true
+    mkdir -p /etc/systemd/system 2>/dev/null || true
+    cat > /etc/systemd/system/tc-fqcodel.service << TC_EOF
+[Unit]
+Description=fq_codel for game/video
+After=network.target
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'IF=\$(ip route | grep default | awk "{print \\$5}" | head -1); [ -z "\$IF" ] && IF=\$(ip route get 8.8.8.8 2>/dev/null | awk "{print \\$5; exit}"); [ -z "\$IF" ] && IF=eth0; tc qdisc replace dev \$IF root fq_codel target 5ms interval 100ms quantum 300 limit 1000 flows 1024 2>/dev/null || tc qdisc replace dev \$IF root fq'
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+TC_EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now tc-fqcodel.service 2>/dev/null || true
+    # forward + NAT for UDPGW/OpenVPN
+    iptables -C FORWARD -j ACCEPT 2>/dev/null || iptables -I FORWARD -j ACCEPT 2>/dev/null || true
+    iptables -t nat -C POSTROUTING -o "$_iface" -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o "$_iface" -j MASQUERADE 2>/dev/null || true
+    echo -e "${GREEN}BBR+fq_codel+forward aktif${RESET}"
   else
-    echo -e "${YELLOW}[TEST MODE] BBR config ditulis ke $conf (tidak sysctl)${RESET}"
+    echo -e "${YELLOW}[TEST MODE] BBR/game tuning ditulis ke $conf,$gconf (tidak sysctl)${RESET}"
   fi
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] BBR enabled: $conf" >> "$LOG" 2>/dev/null || true
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] BBR enabled: $conf,$gconf" >> "$LOG" 2>/dev/null || true
 }
 
 setup_ufw() {
@@ -6109,8 +6151,8 @@ STUB
       fi
       mkdir -p "$tmp/badvpn/build" 2>/dev/null || true
       (cd "$tmp/badvpn/build" && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 2>&1 | tail -n 20 && make -j"$(nproc)" 2>&1 | tail -n 20) || die "Build badvpn gagal" "Cek cmake/make log"
-      if [ -f "$tmp/badvpn/build/badvpn-udpgw/badvpn-udpgw" ]; then
-        cp -a "$tmp/badvpn/build/badvpn-udpgw/badvpn-udpgw" "$bin" 2>/dev/null || true
+      if [ -f "$tmp/badvpn/build/udpgw/badvpn-udpgw" ]; then
+        cp -a "$tmp/badvpn/build/udpgw/badvpn-udpgw" "$bin" 2>/dev/null || true
         chmod +x "$bin" 2>/dev/null || true
         echo -e "${GREEN}badvpn-udpgw terinstall: $bin${RESET}"
         ls -lh "$bin" 2>&1 | sed 's/^/  /'
@@ -6133,9 +6175,9 @@ STUB
   # If range >10, sample every ~100
   local plist=()
   if [ "$s" = "$e" ]; then plist=("$s")
+  elif [ "$s" = "7100" ] && [ "$e" = "7600" ]; then plist=(7100 7200 7300 7400 7500)
   elif [ $((e - s)) -le 10 ]; then for ((p=s;p<=e;p++)); do plist+=("$p"); done
   else
-    # sample 5: s, s+100, s+200, s+300, e (but within range)
     local step=$(((e - s)/4))
     [ "$step" -lt 1 ] && step=1
     for i in 0 1 2 3 4; do
@@ -6143,8 +6185,11 @@ STUB
       [ "$pp" -gt "$e" ] && pp="$e"
       plist+=("$pp")
     done
-    # dedup
-    mapfile -t plist < <(printf "%s\n" "${plist[@]}" | sort -u)
+    if [ "$s" -le 7300 ] && [ "$e" -ge 7300 ]; then
+      local has7300=0; for x in "${plist[@]}"; do [ "$x" = "7300" ] && has7300=1; done
+      [ "$has7300" = "0" ] && plist[2]=7300
+      mapfile -t plist < <(printf "%s\n" "${plist[@]}" | sort -nu)
+    fi
   fi
   echo -e "${CYAN}Port sample untuk systemd: ${plist[*]}${RESET}"
 

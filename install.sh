@@ -5023,6 +5023,108 @@ write_config() {
     fi
   fi
   mkdir -p "$NGINX_CONF_DIR/conf.d" "$(dirname "$NGINX_SITE")" 2>/dev/null || true
+  # shared locations include — biar 80 (non-TLS) dan 8443 (TLS) tidak bisa berbeda
+  local LOC_INC="$NGINX_CONF_DIR/conf.d/mytunnel-locations.inc"
+  cat > "$LOC_INC" << 'LOC_EOF'
+location = /vmess {
+  proxy_pass http://127.0.0.1:10001;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+}
+location = /whatever {
+  rewrite ^/whatever$ /vmess break;
+  proxy_pass http://127.0.0.1:10001;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+}
+location = /vless {
+  proxy_pass http://127.0.0.1:10002;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+}
+location = /trojan {
+  proxy_pass http://127.0.0.1:10003;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+}
+location = /upvmess {
+  proxy_pass http://127.0.0.1:10021;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+}
+location = /upvless {
+  proxy_pass http://127.0.0.1:10022;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+}
+location = /uptrojan {
+  proxy_pass http://127.0.0.1:10023;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+}
+location = /ssh-ws {
+  proxy_pass http://127.0.0.1:10004;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+}
+LOC_EOF
+  chmod 644 "$LOC_INC" 2>/dev/null || true
   if [ -f "$NGINX_SITE" ]; then
     local bak
     bak="$NGINX_SITE.bak-$(date +%Y%m%d-%H%M%S)"
@@ -5074,105 +5176,7 @@ $http_listens
     root /var/www/html;
   }
 
-  # VMess WS
-  location = /vmess {
-    proxy_pass http://127.0.0.1:10001;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /whatever {
-    rewrite ^/whatever$ /vmess break;
-    proxy_pass http://127.0.0.1:10001;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /vless {
-    proxy_pass http://127.0.0.1:10002;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /trojan {
-    proxy_pass http://127.0.0.1:10003;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  # HTTPUpgrade
-  location = /upvmess {
-    proxy_pass http://127.0.0.1:10021;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /upvless {
-    proxy_pass http://127.0.0.1:10022;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /uptrojan {
-    proxy_pass http://127.0.0.1:10023;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /ssh-ws {
-    proxy_pass http://127.0.0.1:10004;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
+  include $NGINX_CONF_DIR/conf.d/mytunnel-locations.inc;
 
   location / {
     error_page 418 = @sshws;
@@ -5189,7 +5193,6 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
-    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
 }
@@ -5210,105 +5213,7 @@ $https_listens
   add_header X-Frame-Options DENY always;
   add_header X-Content-Type-Options nosniff always;
 
-  # VMess WS
-  location = /vmess {
-    proxy_pass http://127.0.0.1:10001;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /whatever {
-    rewrite ^/whatever$ /vmess break;
-    proxy_pass http://127.0.0.1:10001;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /vless {
-    proxy_pass http://127.0.0.1:10002;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /trojan {
-    proxy_pass http://127.0.0.1:10003;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  # HTTPUpgrade TLS
-  location = /upvmess {
-    proxy_pass http://127.0.0.1:10021;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /upvless {
-    proxy_pass http://127.0.0.1:10022;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /uptrojan {
-    proxy_pass http://127.0.0.1:10023;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
-  location = /ssh-ws {
-    proxy_pass http://127.0.0.1:10004;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection \$connection_upgrade;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 3600s;
-    proxy_buffering off;
-    proxy_send_timeout 3600s;
-  }
+  include $NGINX_CONF_DIR/conf.d/mytunnel-locations.inc;
 
   # gRPC - wajib http2, path /<serviceName>/Tun (client pakai mode gun)
   location ~ ^/vmess/.* {
@@ -5346,7 +5251,6 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
-    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
 }

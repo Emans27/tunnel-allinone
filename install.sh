@@ -4408,6 +4408,9 @@ net.core.wmem_default = 262144
 net.ipv4.tcp_rmem = 4096 87380 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
 net.core.netdev_max_backlog = 5000
+net.ipv4.tcp_keepalive_time = 120
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 8
 BBR_EOF
   cat > "$gconf" << 'GV_EOF'
 net.ipv4.tcp_ecn = 1
@@ -4420,6 +4423,9 @@ GV_EOF
     # ip_forward persistent
     if ! grep -q "^net.ipv4.ip_forward" /etc/sysctl.conf 2>/dev/null; then echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf 2>/dev/null || true; else sed -i 's/.*net.ipv4.ip_forward.*/net.ipv4.ip_forward = 1/' /etc/sysctl.conf 2>/dev/null || true; fi
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.tcp_keepalive_time=120 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.tcp_keepalive_intvl=30 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.tcp_keepalive_probes=8 >/dev/null 2>&1 || true
     sysctl --system >/dev/null 2>&1 || true
     sysctl -p "$conf" >/dev/null 2>&1 || sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1 || true
     sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
@@ -5670,7 +5676,9 @@ EOF
       # MaxStartups/MaxSessions for high concurrency (HC many PATCH)
       if ! grep -q "^MaxStartups" "$SSHD_CFG" 2>/dev/null; then echo "MaxStartups 100:30:1000" >> "$SSHD_CFG"; else sed -i 's/^MaxStartups.*/MaxStartups 100:30:1000/' "$SSHD_CFG"; fi
       if ! grep -q "^MaxSessions" "$SSHD_CFG" 2>/dev/null; then echo "MaxSessions 100" >> "$SSHD_CFG"; else sed -i 's/^MaxSessions.*/MaxSessions 100/' "$SSHD_CFG"; fi
-      if ! grep -q "^ClientAliveInterval" "$SSHD_CFG" 2>/dev/null; then echo "ClientAliveInterval 300" >> "$SSHD_CFG"; fi
+      if grep -q "^ClientAliveInterval" "$SSHD_CFG" 2>/dev/null; then sed -i 's/^ClientAliveInterval.*/ClientAliveInterval 30/' "$SSHD_CFG"; else echo "ClientAliveInterval 30" >> "$SSHD_CFG"; fi
+      if grep -q "^ClientAliveCountMax" "$SSHD_CFG" 2>/dev/null; then sed -i 's/^ClientAliveCountMax.*/ClientAliveCountMax 8/' "$SSHD_CFG"; else echo "ClientAliveCountMax 8" >> "$SSHD_CFG"; fi
+      if grep -q "^TCPKeepAlive" "$SSHD_CFG" 2>/dev/null; then sed -i 's/^TCPKeepAlive.*/TCPKeepAlive yes/' "$SSHD_CFG"; else echo "TCPKeepAlive yes" >> "$SSHD_CFG"; fi
       echo -e "${YELLOW}[TEST MODE] sshd_config stub dibuat: $SSHD_CFG${RESET}"
       return 0
     else
@@ -5696,6 +5704,12 @@ EOF
   else
     echo -e "${GREEN}Port $new_port sudah ada${RESET}"
   fi
+  # enforce keepalive (anti reconnect) idempotent
+  if grep -q "^ClientAliveInterval" "$SSHD_CFG" 2>/dev/null; then sed -i 's/^ClientAliveInterval.*/ClientAliveInterval 30/' "$SSHD_CFG"; else echo "ClientAliveInterval 30" >> "$SSHD_CFG"; fi
+  if grep -q "^ClientAliveCountMax" "$SSHD_CFG" 2>/dev/null; then sed -i 's/^ClientAliveCountMax.*/ClientAliveCountMax 8/' "$SSHD_CFG"; else echo "ClientAliveCountMax 8" >> "$SSHD_CFG"; fi
+  if grep -q "^TCPKeepAlive" "$SSHD_CFG" 2>/dev/null; then sed -i 's/^TCPKeepAlive.*/TCPKeepAlive yes/' "$SSHD_CFG"; else echo "TCPKeepAlive yes" >> "$SSHD_CFG"; fi
+  if grep -q "^MaxStartups" "$SSHD_CFG" 2>/dev/null; then sed -i 's/^MaxStartups.*/MaxStartups 100:30:1000/' "$SSHD_CFG"; else echo "MaxStartups 100:30:1000" >> "$SSHD_CFG"; fi
+  if grep -q "^MaxSessions" "$SSHD_CFG" 2>/dev/null; then sed -i 's/^MaxSessions.*/MaxSessions 100/' "$SSHD_CFG"; else echo "MaxSessions 100" >> "$SSHD_CFG"; fi
   echo "$bak"
 }
 
@@ -7618,6 +7632,13 @@ def handle_client(conn, addr):
         ssh=socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
         ssh.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+        for _s in (ssh, conn):
+            try:
+                _s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 120)
+                _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
+                _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 8)
+            except: pass
         conn.settimeout(None); ssh.settimeout(None)
         log(f"{addr} ssh connected {SSH_HOST}:{SSH_PORT}")
     except Exception as e:
@@ -7719,8 +7740,18 @@ patch_nginx() {
     echo -e "${YELLOW}Nginx site belum ada, skip patch (akan dibuat saat nginx.sh)${RESET}"
     return 0
   fi
+  # skip if already via include or inline (avoid duplicate)
+  local _inc=""
+  _inc=$(grep -oE "include[^;]*mytunnel-locations\.inc[^;]*" "$site" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+  [ -z "$_inc" ] && _inc="/etc/nginx/conf.d/mytunnel-locations.inc"
+  # support BASE prefix
+  if [ -n "$BASE" ] && [ ! -f "$_inc" ]; then _inc="${BASE}$_inc"; fi
   if grep -q "location.*\/ssh-ws" "$site" 2>/dev/null; then
-    echo -e "${GREEN}Nginx sudah ada /ssh-ws${RESET}"
+    echo -e "${GREEN}Nginx sudah ada /ssh-ws (inline)${RESET}"
+    return 0
+  fi
+  if [ -n "$_inc" ] && [ -f "$_inc" ] && grep -q "location.*\/ssh-ws" "$_inc" 2>/dev/null; then
+    echo -e "${GREEN}Nginx sudah ada /ssh-ws via $_inc (include)${RESET}"
     return 0
   fi
   # backup
@@ -7873,6 +7904,13 @@ def handle_client(conn, addr):
                     ssh=socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
                     ssh.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
                     conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                    for _s in (ssh, conn):
+                        try:
+                            _s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                            _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 120)
+                            _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
+                            _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 8)
+                        except: pass
                     conn.settimeout(None); ssh.settimeout(None)
                     if leftover: ssh.sendall(leftover)
                     log(f"{addr} ssh connected via CONNECT+Upgrade")
@@ -7900,6 +7938,13 @@ def handle_client(conn, addr):
                     ssh=socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
                     ssh.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
                     conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                    for _s in (ssh, conn):
+                        try:
+                            _s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                            _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 120)
+                            _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
+                            _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 8)
+                        except: pass
                     if not leftover or len(leftover)==0:
                         conn.settimeout(3)
                         try:
@@ -7954,6 +7999,13 @@ def handle_client(conn, addr):
                 backend=socket.create_connection((NGINX_BACKEND_HOST, NGINX_BACKEND_PORT), timeout=5)
                 backend.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
                 conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                for _s in (backend, conn):
+                    try:
+                        _s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                        _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 120)
+                        _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
+                        _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 8)
+                    except: pass
                 backend.sendall(data)
                 conn.settimeout(None); backend.settimeout(None)
                 log(f"{addr} forward to nginx {NGINX_BACKEND_PORT}")
@@ -8286,7 +8338,9 @@ main() {
     ips=$(_get_user_ips "$user")
     [ -z "$ips" ] && continue
     cnt=$(echo "$ips" | wc -w | tr -d ' ')
-    if [ "$cnt" -gt "$limit" ] 2>/dev/null; then
+    # grace +1 untuk reconnect (NAT ganti IP sesaat) - lock hanya jika melebihi limit+1
+    local _effective=$((limit + 1))
+    if [ "$cnt" -gt "$_effective" ] 2>/dev/null; then
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] limitip: $user melebihi limit ($cnt > $limit) ips=$ips" >> "$LOG" 2>/dev/null || true
       if [ -n "$BASE" ]; then
         echo "TEST limitip would lock $user" >> "$LOG" 2>/dev/null || true

@@ -550,10 +550,12 @@ _expiry_date() {
 _days_left() {
   local exp="$1"
   local sec_exp sec_now
-  # now removed (was unused) - use sec_now instead
-  sec_exp=$(date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
+  # ceil: expiry is end of day 23:59:59, so today still 1d not 0d
+  sec_exp=$(date -d "$exp 23:59:59" +%s 2>/dev/null || date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
   sec_now=$(date +%s 2>/dev/null)
-  echo $(( (sec_exp - sec_now) / 86400 ))
+  local diff=$((sec_exp - sec_now))
+  [ "$diff" -lt 0 ] && echo 0 && return
+  echo $(( (diff + 86399) / 86400 ))
 }
 
 ssh_create() {
@@ -578,7 +580,7 @@ ssh_create() {
   local expiry
   expiry=$(_expiry_date "$days")
   # system user create (or simulate in test mode)
-  if [ -n "$BASE" ]; then
+  if [ -n "${MYTUNNEL_PREFIX:-}" ]; then
     # TEST MODE: simulasi
     :
   else
@@ -616,7 +618,7 @@ ssh_delete() {
     echo -e "${YELLOW}User tidak ada di DB: $user${RESET}" >&2
     # still try system delete if exists
   fi
-  if [ -n "$BASE" ]; then
+  if [ -n "${MYTUNNEL_PREFIX:-}" ]; then
     # TEST MODE: no system delete
     :
   else
@@ -909,11 +911,12 @@ _expiry_date() {
 }
 
 _days_left() {
-  local exp="$1"
-  local sec_exp sec_now
-  sec_exp=$(date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
+  local exp="$1"; local sec_exp sec_now
+  sec_exp=$(date -d "$exp 23:59:59" +%s 2>/dev/null || date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
   sec_now=$(date +%s 2>/dev/null)
-  echo $(( (sec_exp - sec_now) / 86400 ))
+  local diff=$((sec_exp - sec_now))
+  [ "$diff" -lt 0 ] && echo 0 && return
+  echo $(( (diff + 86399) / 86400 ))
 }
 
 # internal: append to DB with flock
@@ -1715,9 +1718,11 @@ _expiry_add_days() {
 _today_str() { date +%Y-%m-%d 2>/dev/null; }
 _days_left_calc() {
   local exp="$1"; local sec_exp sec_now
-  sec_exp=$(date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
+  sec_exp=$(date -d "$exp 23:59:59" +%s 2>/dev/null || date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
   sec_now=$(date +%s 2>/dev/null)
-  echo $(( (sec_exp - sec_now) / 86400 ))
+  local diff=$((sec_exp - sec_now))
+  [ "$diff" -lt 0 ] && echo 0 && return
+  echo $(( (diff + 86399) / 86400 ))
 }
 
 _list_users_raw() { _ensure_db; grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' || true; }
@@ -2290,9 +2295,11 @@ _expiry_add_days() {
 _today_str() { date +%Y-%m-%d 2>/dev/null; }
 _days_left_calc() {
   local exp="$1"; local sec_exp sec_now
-  sec_exp=$(date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
+  sec_exp=$(date -d "$exp 23:59:59" +%s 2>/dev/null || date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
   sec_now=$(date +%s 2>/dev/null)
-  echo $(( (sec_exp - sec_now) / 86400 ))
+  local diff=$((sec_exp - sec_now))
+  [ "$diff" -lt 0 ] && echo 0 && return
+  echo $(( (diff + 86399) / 86400 ))
 }
 _list_users_raw() { _ensure_db; grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' || true; }
 _show_user_list_numbered() {
@@ -2844,9 +2851,11 @@ _expiry_add_days() {
 _today_str() { date +%Y-%m-%d 2>/dev/null; }
 _days_left_calc() {
   local exp="$1"; local sec_exp sec_now
-  sec_exp=$(date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
+  sec_exp=$(date -d "$exp 23:59:59" +%s 2>/dev/null || date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
   sec_now=$(date +%s 2>/dev/null)
-  echo $(( (sec_exp - sec_now) / 86400 ))
+  local diff=$((sec_exp - sec_now))
+  [ "$diff" -lt 0 ] && echo 0 && return
+  echo $(( (diff + 86399) / 86400 ))
 }
 _list_users_raw() { _ensure_db; grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' || true; }
 _show_user_list_numbered() {
@@ -3398,9 +3407,11 @@ _expiry_add_days() {
 _today_str() { date +%Y-%m-%d 2>/dev/null; }
 _days_left_calc() {
   local exp="$1"; local sec_exp sec_now
-  sec_exp=$(date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
+  sec_exp=$(date -d "$exp 23:59:59" +%s 2>/dev/null || date -d "$exp" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$exp" +%s 2>/dev/null || echo 0)
   sec_now=$(date +%s 2>/dev/null)
-  echo $(( (sec_exp - sec_now) / 86400 ))
+  local diff=$((sec_exp - sec_now))
+  [ "$diff" -lt 0 ] && echo 0 && return
+  echo $(( (diff + 86399) / 86400 ))
 }
 _list_users_raw() { _ensure_db; grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' || true; }
 _show_user_list_numbered() {
@@ -7815,8 +7826,8 @@ for f in "$ETC/lib/ssh_helpers.sh" "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh"; d
 _ensure_db() { mkdir -p "$(dirname "$DB")" 2>/dev/null || true; [ -f "$DB" ] || touch "$DB" 2>/dev/null || true; }
 EXP_DB="$ETC/db/ssh_expired.txt"
 
-_today_epoch() { date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || date +%s; }
-_expiry_epoch() { date -d "$1" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || echo 0; }
+_today_epoch() { date +%s 2>/dev/null; }  # now, not midnight — expiry uses 23:59:59
+_expiry_epoch() { date -d "$1 23:59:59" +%s 2>/dev/null || date -d "$1" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || echo 0; }
 
 main() {
   _ensure_db
@@ -7832,7 +7843,7 @@ main() {
     local exp_s
     exp_s=$(_expiry_epoch "$exp")
     [ "$exp_s" -eq 0 ] && continue
-    if [ "$exp_s" -le "$today" ]; then
+    if [ "$exp_s" -lt "$today" ]; then
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] autoexpire: $user exp=$exp lewat, hapus" >> "$LOG" 2>/dev/null || true
       if [ -n "$BASE" ]; then
         # TEST MODE: hanya log
@@ -7855,7 +7866,7 @@ main() {
       [ -z "$user" ] && continue
       local exp_s
       exp_s=$(_expiry_epoch "$exp")
-      if [ "$exp_s" -le "$today" ] 2>/dev/null; then
+      if [ "$exp_s" -lt "$today" ] 2>/dev/null; then
         # archive expired for Recovery (600, flock)
         echo "$user|$pass|$exp|$limit|$status" >> "$exp_tmp" 2>/dev/null || true
         continue
@@ -8026,7 +8037,7 @@ for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/xray_helpers.sh" "
 
 _expiry_epoch() {
   local d="$1"
-  date -d "$d" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$d" +%s 2>/dev/null || echo 0
+  date -d "$d 23:59:59" +%s || date -d "$d" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$d" +%s 2>/dev/null || echo 0
 }
 
 _today_epoch() { date +%s 2>/dev/null; }

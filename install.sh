@@ -1888,6 +1888,10 @@ do_delete() {
   echo -ne "${YELLOW}Hapus $user ? [y/N]: ${RESET}"
   read -r yn; case "$yn" in y|Y|yes|YES) ;; *) return 0;; esac
   ssh_delete "$user" 2>&1
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    _ntf="🗑 SSH deleted: $user"
+    ah_notify_admin "$_ntf" 2>/dev/null || true
+  fi
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
@@ -2516,6 +2520,10 @@ do_delete() {
   echo -ne "${YELLOW}Hapus $user ? [y/N]: ${RESET}"
   read -r yn; case "$yn" in y|Y|yes|YES) ;; *) return 0;; esac
   proto_delete "$PROTO" "$user" 2>&1
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    _ntf="🗑 $PROTO deleted: $user"
+    ah_notify_admin "$_ntf" 2>/dev/null || true
+  fi
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
@@ -3047,6 +3055,10 @@ do_delete() {
   echo -ne "${YELLOW}Hapus $user ? [y/N]: ${RESET}"
   read -r yn; case "$yn" in y|Y|yes|YES) ;; *) return 0;; esac
   proto_delete "$PROTO" "$user" 2>&1
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    _ntf="🗑 $PROTO deleted: $user"
+    ah_notify_admin "$_ntf" 2>/dev/null || true
+  fi
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
@@ -3578,6 +3590,10 @@ do_delete() {
   echo -ne "${YELLOW}Hapus $user ? [y/N]: ${RESET}"
   read -r yn; case "$yn" in y|Y|yes|YES) ;; *) return 0;; esac
   proto_delete "$PROTO" "$user" 2>&1
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    _ntf="🗑 $PROTO deleted: $user"
+    ah_notify_admin "$_ntf" 2>/dev/null || true
+  fi
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
@@ -8207,7 +8223,8 @@ __EMBED_EOF__
 chmod 755 "$ETC/cron/bot_notify.sh"
 cat > "$ETC/bot/bot.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel bot/bot.sh - daemon long-polling (curl + jq, admin-only)
+# mytunnel bot/bot.sh - daemon long-polling (curl + jq, admin-only) - READ-ONLY + backup/restore
+# Bot TIDAK bisa buat akun; hanya notifikasi create/delete dari menu + /status /list /backup + restore via file
 # shellcheck disable=SC1091,SC2154,SC1090,SC2034
 set -e
 BASE="${MYTUNNEL_PREFIX:-}"
@@ -8231,7 +8248,6 @@ OFFSET=0
 
 send_msg(){
   local chat_id="$1" text="$2"
-  # escape handled by --data-urlencode
   curl -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${chat_id}" --data-urlencode "text=${text}" >/dev/null 2>&1 || true
 }
 
@@ -8240,73 +8256,68 @@ handle_update(){
   local chat_id from_id text
   chat_id=$(echo "$upd" | jq -r '.message.chat.id // empty' 2>/dev/null)
   from_id=$(echo "$upd" | jq -r '.message.from.id // empty' 2>/dev/null)
+  # --- handle document (backup restore) ---
+  local doc_id doc_name doc_size
+  doc_id=$(echo "$upd" | jq -r '.message.document.file_id // empty' 2>/dev/null)
+  doc_name=$(echo "$upd" | jq -r '.message.document.file_name // empty' 2>/dev/null)
+  doc_size=$(echo "$upd" | jq -r '.message.document.file_size // 0' 2>/dev/null | tr -dc '0-9')
+  [ -z "$doc_size" ] && doc_size=0
+  if [ -n "$doc_id" ]; then
+    if [ "$chat_id" != "$ADMIN_ID" ] && [ "$from_id" != "$ADMIN_ID" ]; then return 0; fi
+    # hanya terima .tar.gz / .tgz / .gz (backup) - tolak file lain
+    case "$doc_name" in
+      *.tar.gz|*.tgz|*.tar|*.gz) ;;
+      *) send_msg "$ADMIN_ID" "Restore ditolak: kirim file backup .tar.gz (mytunnel-*.tar.gz)"; return 0;;
+    esac
+    if [ "$doc_size" -gt 25000000 ] 2>/dev/null; then send_msg "$ADMIN_ID" "File terlalu besar (>25MB)"; return 0; fi
+    local reply
+    reply=$(bh_restore_from_telegram "$doc_id" "$doc_name" 2>&1 | head -n 40)
+    [ -z "$reply" ] && reply="Restore selesai (cek log)"
+    reply=$(echo "$reply" | head -c 4000)
+    send_msg "$ADMIN_ID" "$reply"
+    ah_log "bot document $doc_name from $from_id"
+    return 0
+  fi
   text=$(echo "$upd" | jq -r '.message.text // empty' 2>/dev/null)
   [ -z "$chat_id" ] && return 0
   # HANYA admin
   if [ "$chat_id" != "$ADMIN_ID" ] && [ "$from_id" != "$ADMIN_ID" ]; then
     return 0
   fi
-  # normalize text
   text=$(echo "$text" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   [ -z "$text" ] && return 0
-  local cmd arg1 arg2 arg3 arg4
+  local cmd arg1
   cmd=$(echo "$text" | awk '{print $1}' | tr -d ' \n')
   arg1=$(echo "$text" | awk '{print $2}' | tr -d ' \n')
-  arg2=$(echo "$text" | awk '{print $3}' | tr -d ' \n')
-  arg3=$(echo "$text" | awk '{print $4}' | tr -d ' \n')
-  arg4=$(echo "$text" | awk '{print $5}' | tr -d ' \n')
   local reply=""
   case "$cmd" in
-    /start)
-      reply="TUNNEL PRO Bot
-/start - bantuan
+    /start|/help)
+      reply="TUNNEL PRO Bot (read-only)
+Bot tidak bisa buat akun — buat/hapus lewat menu VPS.
+/start - bantuan ini
 /status - info sistem
-/create_ssh user hari limit_ip quota_gb
-/create_vmess user hari limit_ip quota_gb
-/create_vless user hari limit_ip quota_gb
-/create_trojan user hari limit_ip quota_gb
-/delete user
-/renew user hari
-/list
-/trial [vmess|vless|trojan|ssh]
-/backup"
+/list - daftar akun (ringkas)
+/backup - kirim file backup terbaru
+Kirim file .tar.gz backup sebagai document untuk restore (hanya admin, max 25MB)."
       ;;
     /status)
       reply=$(bh_status_text 2>/dev/null || echo "status error")
       ;;
-    /create_ssh)
-      if [ -z "$arg1" ] || [ -z "$arg2" ]; then reply="Format: /create_ssh user hari [limit_ip] [quota_gb]"; else reply=$(bh_create_ssh "$arg1" "$arg2" "$arg3" "$arg4" 2>&1 | head -n 40); fi
-      ;;
-    /create_vmess)
-      if [ -z "$arg1" ] || [ -z "$arg2" ]; then reply="Format: /create_vmess user hari [limit_ip] [quota_gb]"; else reply=$(bh_create_proto vmess "$arg1" "$arg2" "$arg3" "$arg4" 2>&1 | head -n 50); fi
-      ;;
-    /create_vless)
-      if [ -z "$arg1" ] || [ -z "$arg2" ]; then reply="Format: /create_vless user hari [limit_ip] [quota_gb]"; else reply=$(bh_create_proto vless "$arg1" "$arg2" "$arg3" "$arg4" 2>&1 | head -n 50); fi
-      ;;
-    /create_trojan)
-      if [ -z "$arg1" ] || [ -z "$arg2" ]; then reply="Format: /create_trojan user hari [limit_ip] [quota_gb]"; else reply=$(bh_create_proto trojan "$arg1" "$arg2" "$arg3" "$arg4" 2>&1 | head -n 50); fi
-      ;;
-    /delete)
-      if [ -z "$arg1" ]; then reply="Format: /delete user"; else reply=$(bh_delete "$arg1" 2>&1 | head -n 30); fi
-      ;;
-    /renew)
-      if [ -z "$arg1" ] || [ -z "$arg2" ]; then reply="Format: /renew user hari"; else reply=$(bh_renew "$arg1" "$arg2" 2>&1 | head -n 30); fi
-      ;;
     /list)
-      reply=$(bh_list 2>&1 | head -n 60)
-      ;;
-    /trial)
-      reply=$(bh_trial "$arg1" 2>&1 | head -n 50)
+      reply=$(bh_list 2>&1 | head -n 80)
       ;;
     /backup)
       reply=$(bh_backup_send 2>&1 | head -n 20)
+      ;;
+    /create_ssh|/create_vmess|/create_vless|/create_trojan|/delete|/renew|/trial)
+      reply="Fitur $cmd via bot dinonaktifkan.
+Buat/hapus/renew/trial hanya lewat menu VPS — bot hanya kirim notifikasi + /backup & restore file."
       ;;
     *)
       reply="Perintah tidak dikenal: $cmd
 Ketik /start untuk bantuan"
       ;;
   esac
-  # truncate to 4000
   reply=$(echo "$reply" | head -c 4000)
   send_msg "$ADMIN_ID" "$reply"
   ah_log "bot cmd $cmd from $from_id"
@@ -8326,11 +8337,9 @@ while true; do
           echo "$OFFSET" > "$OFFSET_FILE" 2>/dev/null || true
         fi
       done
-      # re-read offset (subshell)
       [ -f "$OFFSET_FILE" ] && OFFSET=$(cat "$OFFSET_FILE" 2>/dev/null | tr -dc '0-9' | head -c 20)
     fi
   else
-    # backoff on error
     sleep 5
   fi
   sleep 1
@@ -8490,6 +8499,65 @@ bh_backup_send(){
   echo "Mengirim backup $(basename "$bk")..."
   curl -fsS --max-time 30 "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" -F "chat_id=${ADMIN_ID}" -F "document=@${bk}" -F "caption=Backup $(basename "$bk")" >/dev/null 2>&1 && echo "Backup terkirim" || echo "Gagal kirim backup"
   bh_log "bot backup sent $(basename "$bk")"
+}
+
+bh_restore_from_telegram(){
+  local file_id="$1" file_name="$2"
+  local conf="$ETC/config/bot.conf"
+  [ -f "$conf" ] || { echo "bot.conf tidak ada"; return 1; }
+  # shellcheck disable=SC1090
+  . "$conf" 2>/dev/null || true
+  [ -z "${BOT_TOKEN:-}" ] || [ -z "${ADMIN_ID:-}" ] && { echo "Token/admin kosong"; return 1; }
+  [[ "$file_name" == *.tar.gz || "$file_name" == *.tgz || "$file_name" == *.tar || "$file_name" == *.gz ]] || { echo "Nama file harus .tar.gz"; return 1; }
+  echo "Restore: ambil $file_name ..."
+  local resp fpath
+  resp=$(curl -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/getFile" -d "file_id=${file_id}" 2>&1 || true)
+  if ! echo "$resp" | jq -e '.ok == true' >/dev/null 2>&1; then echo "Gagal getFile: $(echo "$resp" | head -c 200)"; return 1; fi
+  fpath=$(echo "$resp" | jq -r '.result.file_path // empty' 2>/dev/null)
+  [ -z "$fpath" ] && { echo "file_path kosong"; return 1; }
+  local tmp_dir tmp_file
+  tmp_dir=$(mktemp -d 2>/dev/null || echo "/tmp")
+  tmp_file="$tmp_dir/mytunnel-restore-$(date +%s 2>/dev/null).tar.gz"
+  # download via file api (HTTPS only)
+  if ! curl -fsS --proto '=https' --tlsv1.2 --max-time 60 "https://api.telegram.org/file/bot${BOT_TOKEN}/${fpath}" -o "$tmp_file" 2>&1; then echo "Download gagal"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  chmod 600 "$tmp_file" 2>/dev/null || true
+  local sz; sz=$(stat -c %s "$tmp_file" 2>/dev/null || stat -f %z "$tmp_file" 2>/dev/null || echo 0)
+  if [ "$sz" -gt 25000000 ] 2>/dev/null; then echo "File >25MB ditolak"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  if ! tar tzf "$tmp_file" >/dev/null 2>&1 && ! tar tf "$tmp_file" >/dev/null 2>&1; then echo "Bukan arsip tar valid"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  # must contain etc/mytunnel (safety)
+  if ! tar tf "$tmp_file" 2>/dev/null | grep -q "etc/mytunnel" ; then echo "Arsip tidak berisi etc/mytunnel — ditolak"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  # backup current before restore
+  local pre_arch bk_dir
+  if [ -n "$BASE" ]; then bk_dir="${BASE}/root/backup"; else bk_dir="/root/backup"; fi
+  mkdir -p "$bk_dir" 2>/dev/null || true
+  pre_arch="$bk_dir/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).tar.gz"
+  if [ -n "$BASE" ]; then tar -czf "$pre_arch" -C "$BASE" etc/mytunnel 2>/dev/null || true; else tar -czf "$pre_arch" -C / etc/mytunnel 2>/dev/null || true; fi
+  chmod 600 "$pre_arch" 2>/dev/null || true
+  echo "Ekstrak $file_name ..."
+  local ok=1
+  if [ -n "$BASE" ]; then tar -xzf "$tmp_file" -C "$BASE" 2>&1 | head -n 20 || ok=0; else tar -xzf "$tmp_file" -C / 2>&1 | head -n 20 || ok=0; fi
+  if [ "$ok" -eq 0 ]; then echo "Gagal ekstrak, rollback"; [ -f "$pre_arch" ] && { if [ -n "$BASE" ]; then tar -xzf "$pre_arch" -C "$BASE" 2>/dev/null || true; else tar -xzf "$pre_arch" -C / 2>/dev/null || true; fi; }; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  # perms
+  chmod 600 "$ETC/db/"*.txt 2>/dev/null || true
+  chmod 600 "$ETC/db/".*.lock 2>/dev/null || true
+  # validate xray + nginx
+  local valid=1
+  local xcfg="${BASE}/usr/local/etc/xray/config.json"; [ -n "$BASE" ] || xcfg="/usr/local/etc/xray/config.json"
+  if [ -f "$xcfg" ]; then
+    if command -v jq >/dev/null 2>&1; then jq . "$xcfg" >/dev/null 2>&1 || valid=0; else python3 -m json.tool "$xcfg" >/dev/null 2>&1 || valid=0; fi
+    if command -v xray >/dev/null 2>&1 || [ -x "${BASE}/usr/local/bin/xray" ]; then
+      local bin="xray"; [ -x "${BASE}/usr/local/bin/xray" ] && bin="${BASE}/usr/local/bin/xray"
+      "$bin" run -test -config "$xcfg" >/dev/null 2>&1 || valid=0
+    fi
+  fi
+  if [ "$valid" -eq 0 ]; then echo "Validasi gagal, rollback"; [ -f "$pre_arch" ] && { if [ -n "$BASE" ]; then tar -xzf "$pre_arch" -C "$BASE" 2>/dev/null || true; else tar -xzf "$pre_arch" -C / 2>/dev/null || true; fi; }; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  if [ -z "$BASE" ]; then
+    systemctl restart xray 2>/dev/null || true; systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true; systemctl restart cron 2>/dev/null || service cron restart 2>/dev/null || true
+  fi
+  rm -rf "$tmp_dir" 2>/dev/null || true
+  bh_log "bot restore $file_name ok pre=$pre_arch"
+  echo "Restore OK: $file_name"
+  echo "Pre-restore backup: $(basename "$pre_arch")"
 }
 
 __EMBED_EOF__

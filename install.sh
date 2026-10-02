@@ -7583,10 +7583,24 @@ def handle_client(conn, addr):
     # JANGAN teruskan sisa buffer ke SSH — header HTTP bukan data SSH
     # (meneruskan sisa menyebabkan sshd dapat "Illegal packet size" di KEX)
     def pipe(a,b, name):
+        first=True
         try:
             while True:
                 d=a.recv(8192)
                 if not d: break
+                if first and name=="c2s":
+                    first=False
+                    if d.startswith(b"HTTP/") or d.startswith(b"GET ") or d.startswith(b"PATCH "):
+                        stripped=d.lstrip()
+                        if stripped.startswith(b"HTTP/"):
+                            log(f"{addr} c2s discard HTTP split {d[:40]!r}")
+                            continue
+                        if b"\r\n\r\n" in d and (d[:10].strip().startswith(b"HTTP/") or b"Host:" in d[:200]):
+                            log(f"{addr} c2s discard pipelined HTTP {d[:60]!r}")
+                            continue
+                if name=="s2c" and d.startswith(b"Invalid SSH"):
+                    log(f"{addr} s2c discard Invalid SSH {d[:40]!r}")
+                    continue
                 b.sendall(d)
         except Exception as e:
             log(f"{name} exc {e}")

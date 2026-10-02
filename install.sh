@@ -5084,6 +5084,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /whatever {
@@ -5096,6 +5097,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /vless {
@@ -5107,6 +5109,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /trojan {
@@ -5118,6 +5121,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   # HTTPUpgrade
@@ -5130,6 +5134,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /upvless {
@@ -5141,6 +5146,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /uptrojan {
@@ -5152,6 +5158,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /ssh-ws {
@@ -5163,6 +5170,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
 
@@ -5181,6 +5189,7 @@ $http_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
 }
@@ -5211,6 +5220,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /whatever {
@@ -5223,6 +5233,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /vless {
@@ -5234,6 +5245,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /trojan {
@@ -5245,6 +5257,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   # HTTPUpgrade TLS
@@ -5257,6 +5270,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /upvless {
@@ -5268,6 +5282,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /uptrojan {
@@ -5279,6 +5294,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
   location = /ssh-ws {
@@ -5290,6 +5306,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
 
@@ -5329,6 +5346,7 @@ $https_listens
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;
+    proxy_buffering off;
     proxy_send_timeout 3600s;
   }
 }
@@ -7520,178 +7538,213 @@ write_proxy() {
   mkdir -p "$(dirname "$PY_BIN")" 2>/dev/null || true
   cat > "$PY_BIN" << 'PY_EOF'
 #!/usr/bin/env python3
-# mytunnel-sshws.py - minimal WS -> TCP proxy for SSH
-# listen 127.0.0.1:10004, path /ssh-ws -> forward to 127.0.0.1:22 (sshd)
-import socket, threading, hashlib, base64, re, sys
-
-LISTEN_HOST = "127.0.0.1"
-LISTEN_PORT = 10004
-SSH_HOST = "127.0.0.1"
-SSH_PORT = 22
-# ponytail: single SSH target; upgrade to multi-port/dropbear when needed
-
+import socket, threading, hashlib, base64, re, sys, os, time
+LISTEN_HOST="127.0.0.1"
+LISTEN_PORT=10004
+SSH_HOST="127.0.0.1"
+SSH_PORT=22
+LOG="/tmp/sshws.log"
+def log(msg):
+    try:
+        with open(LOG,"a") as f: f.write(time.strftime("%Y-%m-%d %H:%M:%S ")+msg+"\n")
+    except: pass
+def recvall(sock, n):
+    buf=b""
+    while len(buf)<n:
+        try: chunk=sock.recv(n-len(buf))
+        except socket.timeout: return None if not buf else buf
+        except Exception as e:
+            log(f"recvall err {e}")
+            return None
+        if not chunk: return None if not buf else buf
+        buf+=chunk
+    return buf
 def ws_handshake(conn):
     try:
-        data = conn.recv(4096).decode(errors="ignore")
-        if not data:
-            return None
-        # must be GET /ssh-ws
-        m = re.search(r"^\w+\s+(\S+)\s+HTTP", data, re.M)
-        path = m.group(1) if m else ""
+        conn.settimeout(5)
+        data=b""
+        while b"\r\n\r\n" not in data:
+            chunk=conn.recv(4096)
+            if not chunk: break
+            data+=chunk
+            if len(data)>8192: break
+        if not data: log("hs no data"); return None
+        txt=data.decode(errors="ignore")
+        m=re.search(r"^\w+\s+(\S+)\s+HTTP", txt, re.M)
+        path=m.group(1) if m else ""
         if path != "/ssh-ws":
-            # bug host: any path with websocket upgrade -> treat as /ssh-ws
-            if "upgrade: websocket" in data.lower() and path.startswith("/"):
-                path = "/ssh-ws"
+            if "upgrade: websocket" in txt.lower() and path.startswith("/"):
+                path="/ssh-ws"
             else:
-                conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
+                try: conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
+                except: pass
+                log(f"hs 404 path={path}")
                 return None
-        # check Upgrade: websocket
-        if "Upgrade: websocket" not in data and "upgrade: websocket" not in data.lower():
-            # allow plain HTTP proxy for nginx (nginx already handles Upgrade header)
-            # if not WS, just treat as raw TCP (for nginx proxy_pass)
+        if "upgrade: websocket" not in txt.lower():
+            log("hs no upgrade raw")
+            conn.settimeout(None)
             return "raw"
-        key_m = re.search(r"Sec-WebSocket-Key:\s*(.+)\r\n", data, re.I)
-        if not key_m:
-            # HC on port 80 sends PATCH Upgrade without Sec-WebSocket-Key
-            key = "dGhlIHNhbXBsZSBub25jZQ=="
-        else:
-            key = key_m.group(1).strip()
-        accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
-        resp = (
-            "HTTP/1.1 101 Switching Protocols\r\n"
-            "Upgrade: websocket\r\n"
-            "Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
-        )
+        km=re.search(r"Sec-WebSocket-Key:\s*(.+)\r\n", txt, re.I)
+        if not km:
+            key="dGhlIHNhbXBsZSBub25jZQ=="
+            log("hs dummy key")
+        else: key=km.group(1).strip()
+        accept=base64.b64encode(hashlib.sha1((key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        resp=f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
         conn.sendall(resp.encode())
+        log(f"hs 101 path={path}")
+        conn.settimeout(None)
         return "ws"
     except Exception as e:
-        try:
-            conn.sendall(b"HTTP/1.1 500 err\r\n\r\n")
-        except Exception:
-            pass
+        log(f"hs exc {e}")
+        try: conn.sendall(b"HTTP/1.1 500 err\r\n\r\n")
+        except: pass
         return None
-
 def ws_recv(conn):
-    # minimal WS frame parser (client->server masked)
     try:
-        b1 = conn.recv(1)
-        if not b1:
+        b1=recvall(conn,1)
+        if not b1: return None
+        b1=b1[0]
+        opcode=b1 & 0x0F
+        if opcode==8:
+            log("ws_recv close")
             return None
-        b1 = b1[0]
-        fin = b1 & 0x80
-        opcode = b1 & 0x0F
-        if opcode == 8:  # close
-            return None
-        b2 = conn.recv(1)[0]
-        masked = b2 & 0x80
-        length = b2 & 0x7F
-        if length == 126:
-            length = int.from_bytes(conn.recv(2), "big")
-        elif length == 127:
-            length = int.from_bytes(conn.recv(8), "big")
-        mask = conn.recv(4) if masked else b""
-        payload = b""
-        while len(payload) < length:
-            chunk = conn.recv(length - len(payload))
-            if not chunk:
-                break
-            payload += chunk
+        if opcode==9:
+            b2=recvall(conn,1)
+            if not b2: return None
+            b2=b2[0]
+            length=b2 & 0x7F
+            if length==126: length=int.from_bytes(recvall(conn,2),"big")
+            elif length==127: length=int.from_bytes(recvall(conn,8),"big")
+            mask=recvall(conn,4) if (b2 & 0x80) else b""
+            payload=recvall(conn,length) if length else b""
+            if mask and payload: payload=bytes(b ^ mask[i%4] for i,b in enumerate(payload))
+            try:
+                hdr=bytes([0x8A, length if length<126 else 126])
+                if length>=126: hdr+=length.to_bytes(2,"big")
+                conn.sendall(hdr+payload)
+            except: pass
+            return ws_recv(conn)
+        b2=recvall(conn,1)
+        if not b2: return None
+        b2=b2[0]
+        masked=b2 & 0x80
+        length=b2 & 0x7F
+        if length==126:
+            ext=recvall(conn,2)
+            if not ext: return None
+            length=int.from_bytes(ext,"big")
+        elif length==127:
+            ext=recvall(conn,8)
+            if not ext: return None
+            length=int.from_bytes(ext,"big")
+        mask=b""
         if masked:
-            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            mask=recvall(conn,4)
+            if not mask: return None
+        payload=b""
+        if length:
+            payload=recvall(conn,length)
+            if payload is None or len(payload)<length:
+                log(f"ws_recv incomplete {len(payload) if payload else 0}/{length}")
+                return None
+            if masked:
+                payload=bytes(b ^ mask[i%4] for i,b in enumerate(payload))
         return payload
-    except Exception:
+    except Exception as e:
+        log(f"ws_recv exc {e}")
         return None
-
 def ws_send(conn, data):
-    # server->client unmasked
     try:
-        header = bytes([0x81])
-        l = len(data)
-        if l < 126:
-            header += bytes([l])
-        elif l < 65536:
-            header += bytes([126]) + l.to_bytes(2, "big")
-        else:
-            header += bytes([127]) + l.to_bytes(8, "big")
-        conn.sendall(header + data)
-    except Exception:
-        pass
-
-def pipe_raw(a, b):
+        l=len(data)
+        if l<126: hdr=bytes([0x81, l])
+        elif l<65536: hdr=bytes([0x81,126])+l.to_bytes(2,"big")
+        else: hdr=bytes([0x81,127])+l.to_bytes(8,"big")
+        conn.sendall(hdr+data)
+        return True
+    except Exception as e:
+        log(f"ws_send exc {e}")
+        return False
+def pipe_raw(a,b):
+    a.settimeout(None); b.settimeout(None)
     try:
         while True:
-            d = a.recv(4096)
-            if not d:
-                break
+            d=a.recv(8192)
+            if not d: break
             b.sendall(d)
-    except Exception:
-        pass
+    except Exception as e: log(f"pipe_raw exc {e}")
     finally:
         try: a.close()
-        except Exception: pass
+        except: pass
         try: b.close()
-        except Exception: pass
-
+        except: pass
 def handle_client(conn, addr):
-    mode = ws_handshake(conn)
+    log(f"handle {addr}")
+    mode=ws_handshake(conn)
     if mode is None:
         try: conn.close()
-        except Exception: pass
+        except: pass
+        log("mode None")
         return
     try:
-        ssh = socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
-    except Exception:
+        ssh=socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
+        ssh.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+        log(f"ssh connected {addr} mode={mode}")
+    except Exception as e:
+        log(f"ssh connect fail {e}")
         try: conn.close()
-        except Exception: pass
+        except: pass
         return
-    if mode == "raw":
-        # nginx already did WS upgrade, just pipe
-        t1 = threading.Thread(target=pipe_raw, args=(conn, ssh), daemon=True)
-        t2 = threading.Thread(target=pipe_raw, args=(ssh, conn), daemon=True)
-        t1.start(); t2.start()
-        t1.join(); t2.join()
+    if mode=="raw":
+        t1=threading.Thread(target=pipe_raw, args=(conn,ssh), daemon=True)
+        t2=threading.Thread(target=pipe_raw, args=(ssh,conn), daemon=True)
+        t1.start(); t2.start(); t1.join(); t2.join()
+        log("raw done")
         return
-    # ws mode: decode ws frames -> ssh, encode ssh -> ws
     def c2s():
         while True:
-            d = ws_recv(conn)
-            if d is None:
-                break
-            try:
-                ssh.sendall(d)
-            except Exception:
-                break
+            d=ws_recv(conn)
+            if d is None: log("c2s end"); break
+            try: ssh.sendall(d)
+            except Exception as e: log(f"c2s sendall {e}"); break
+        try: ssh.shutdown(socket.SHUT_WR)
+        except: pass
         try: ssh.close()
-        except Exception: pass
+        except: pass
+        log("c2s exit")
     def s2c():
-        while True:
-            try:
-                d = ssh.recv(4096)
-                if not d:
-                    break
-                ws_send(conn, d)
-            except Exception:
-                break
-        try: conn.close()
-        except Exception: pass
-    t1 = threading.Thread(target=c2s, daemon=True)
-    t2 = threading.Thread(target=s2c, daemon=True)
+        try:
+            while True:
+                try: d=ssh.recv(8192)
+                except Exception as e: log(f"s2c recv {e}"); break
+                if not d: log("s2c ssh 0"); break
+                if not ws_send(conn,d): log("s2c ws_send fail"); break
+        finally:
+            try: conn.shutdown(socket.SHUT_WR)
+            except: pass
+            try: conn.close()
+            except: pass
+            log("s2c exit")
+    t1=threading.Thread(target=c2s, daemon=True)
+    t2=threading.Thread(target=s2c, daemon=True)
     t1.start(); t2.start()
     t1.join(); t2.join()
-
+    log("handle done")
 def main():
-    s = socket.socket()
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s=socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
+    try: s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT,1)
+    except: pass
     s.bind((LISTEN_HOST, LISTEN_PORT))
-    s.listen(64)
-    print(f"mytunnel-sshws listening {LISTEN_HOST}:{LISTEN_PORT} -> {SSH_HOST}:{SSH_PORT}", flush=True)
+    s.listen(128)
+    print(f"mytunnel-sshws listening {LISTEN_HOST}:{LISTEN_PORT} -> {SSH_HOST}:{SSH_PORT}",flush=True)
+    log("started")
     while True:
-        conn, addr = s.accept()
-        threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
+        conn,addr=s.accept()
+        threading.Thread(target=handle_client, args=(conn,addr), daemon=True).start()
+if __name__=="__main__": main()
 
-if __name__ == "__main__":
-    main()
 PY_EOF
   chmod 755 "$PY_BIN" 2>/dev/null || true
   echo -e "${GREEN}Proxy WS ditulis: $PY_BIN${RESET}"

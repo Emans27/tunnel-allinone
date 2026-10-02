@@ -10562,6 +10562,7 @@ get_traffic_month_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --onel
 get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $5}' || echo "-"; }
 
 render_login_dashboard(){
+  clear 2>/dev/null || printf '\033c'
   local brand os ram swap city isp ip domain uptime
   brand=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
   os=$(get_os 2>/dev/null || echo "-")
@@ -10712,14 +10713,25 @@ mkdir -p "${BASE}/etc/profile.d" 2>/dev/null || true
 cat > "${BASE}/etc/profile.d/mytunnel.sh" << '__EMBED_EOF__'
 #!/bin/sh
 # /etc/profile.d/mytunnel.sh - dashboard saat login (60 kolom)
+# skip jika dimatikan
 if [ -n "$MYTUNNEL_DISABLE_DASHBOARD" ]; then return 0 2>/dev/null || exit 0; fi
-case "$-" in *i*) ;; *) return 0 2>/dev/null || exit 0;; esac
-if [ -z "$PS1" ] && [ -z "$SSH_TTY" ]; then return 0 2>/dev/null || exit 0; fi
-if [ ! -t 1 ] 2>/dev/null; then return 0 2>/dev/null || exit 0; fi
+# jangan ganggu scp/sftp/rsync (ada SSH_CONNECTION tapi tanpa tty)
+if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_TTY" ]; then
+  if [ ! -t 1 ] 2>/dev/null; then return 0 2>/dev/null || exit 0; fi
+else
+  # bukan sesi SSH: hanya tampil jika shell interaktif + tty
+  case "$-" in *i*) ;; *) return 0 2>/dev/null || exit 0;; esac
+  if [ -z "$PS1" ]; then return 0 2>/dev/null || exit 0; fi
+  if [ ! -t 1 ] 2>/dev/null; then return 0 2>/dev/null || exit 0; fi
+fi
+# anti-duplikat per sesi (bash login bisa source profile berkali-kali)
 if [ -n "$MYTUNNEL_LOGIN_SHOWN" ]; then return 0 2>/dev/null || exit 0; fi
 export MYTUNNEL_LOGIN_SHOWN=1
-if [ -x /etc/mytunnel/login.sh ]; then
+# login.sh 644 pun bisa via bash, jadi cek -f bukan -x
+if [ -f /etc/mytunnel/login.sh ]; then
   bash /etc/mytunnel/login.sh 2>/dev/null || true
+elif [ -f "$HOME/etc/mytunnel/login.sh" ]; then
+  bash "$HOME/etc/mytunnel/login.sh" 2>/dev/null || true
 fi
 
 __EMBED_EOF__
@@ -11211,6 +11223,11 @@ if [ -f "$ETC/logrotate.d/mytunnel" ]; then cp -a "$ETC/logrotate.d/mytunnel" "$
 chmod 644 "${BASE}/var/log"/*.log "${BASE}/var/log"/*.sim.log 2>/dev/null || true; chmod 644 "${BASE}/var/log/xray"/*.log 2>/dev/null || true
 if [ -f "$ETC/setup/logrotate.sh" ]; then bash "$ETC/setup/logrotate.sh" 2>&1 | tee -a "$LOG" || true; fi
 chmod +x "$BIN/menu" 2>/dev/null || true
+# suppress MOTD Ubuntu agar dashboard bersih 1:1 TUNNELING (60 kolom)
+touch "$HOME/.hushlogin" 2>/dev/null || touch /root/.hushlogin 2>/dev/null || true
+chmod 644 "$HOME/.hushlogin" 2>/dev/null || true
+chmod 644 /root/.hushlogin 2>/dev/null || true
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then touch "/home/$SUDO_USER/.hushlogin" 2>/dev/null || true; fi
 _log "tahap 1 selesai"
 
 if [ "${MYTUNNEL_SKIP_SETUP:-0}" = "1" ]; then

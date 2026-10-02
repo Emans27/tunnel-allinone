@@ -170,15 +170,19 @@ draw_line() {
 draw_box() {
   local title="$1"
   local width="${2:-60}"
+  local inner=$((width - 2))
   printf "${BLUE}┌"
-  printf '─%.0s' $(seq 1 $((width-2)))
+  printf '─%.0s' $(seq 1 $inner)
   printf "┐${RESET}\n"
   if [ -n "$title" ]; then
-    local pad=$(( (width - 2 - ${#title}) / 2 ))
-    printf "${BLUE}│${RESET}%*s${BOLD}%s${RESET}%*s${BLUE}│${RESET}\n" "$pad" "" "$title" "$pad" ""
+    local len=${#title}
+    [ "$len" -gt "$inner" ] && title="${title:0:$inner}" && len=$inner
+    local left=$(( (inner - len) / 2 ))
+    local right=$(( inner - len - left ))
+    printf "${BLUE}│${RESET}%*s${BOLD}%s${RESET}%*s${BLUE}│${RESET}\n" "$left" "" "$title" "$right" ""
   fi
   printf "${BLUE}└"
-  printf '─%.0s' $(seq 1 $((width-2)))
+  printf '─%.0s' $(seq 1 $inner)
   printf "┘${RESET}\n"
 }
 banner() {
@@ -1537,9 +1541,16 @@ show_header() {
   local brand
   brand=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
   clear 2>/dev/null || printf '\033c'
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  if declare -f draw_box >/dev/null 2>&1; then
+    draw_box "$brand" 60
+  else
+    local inner=58 len=${#brand} left right
+    [ "$len" -gt 58 ] && brand="${brand:0:58}" && len=58
+    left=$(( (inner - len) / 2 )); right=$(( inner - len - left ))
+    echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+    printf "${BLUE}│${RESET}%*s${BOLD}%s${RESET}%*s${BLUE}│${RESET}\n" "$left" "" "$brand" "$right" ""
+    echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  fi
 }
 
 show_sysinfo() {

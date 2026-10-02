@@ -2071,95 +2071,99 @@ do_check_config() {
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Config SSH"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  # Baca ports.conf (jangan hardcode) + tampilkan hanya yang aktif
-  local pf="$BASE/config/ports.conf"
-  # shellcheck disable=SC1090
-  [ -f "$pf" ] && . "$pf" 2>/dev/null || true
-  echo -e "${CYAN}Domain:${RESET} $(cat "$BASE/config/domain.txt" 2>/dev/null | head -1 || echo "-")"
-  echo -e "${CYAN}Ports (dari $pf - hanya baris aktif):${RESET}"
-  :  # line var removed (was unused)
-  for kv in "TLS:${TLS_PORT:-}" "None TLS:${NONTLS_PORT:-}" "Any:${ANY_PORT:-}" "OpenSSH:${OPENSSH_PORT:-}" "Dropbear:${DROPBEAR_PORT:-}" "SlowDNS:${SLOWDNS_PORT:-}" "UDP-Custom:${UDP_CUSTOM_PORT:-}" "OHP+SSH:${OHP_SSH_PORT:-}" "Squid:${SQUID_PORT:-}" "UDPGW:${UDPGW_PORT:-}" "OpenVPN TCP:${OPENVPN_TCP_PORT:-}" "OpenVPN SSL:${OPENVPN_SSL_PORT:-}" "OpenVPN UDP:${OPENVPN_UDP_PORT:-}" "OpenVPN DNS:${OPENVPN_DNS_PORT:-}" "OHP+OVPN:${OHP_OVPN_PORT:-}" "Config:${CONFIG_PORT:-}"; do
-    local label="${kv%%:*}" val="${kv#*:}"
-    [ -z "$val" ] && continue
-    local svc="nginx"
-    case "$label" in TLS|None\ TLS|Any|Config) svc="nginx";; OpenSSH) svc="sshd";; Dropbear) svc="dropbear";; SlowDNS) svc="mytunnel-slowdns";; UDP-Custom) svc="mytunnel-udp-custom";; OHP+SSH) svc="mytunnel-ohp-ssh";; Squid) svc="squid";; UDPGW) svc="mytunnel-udpgw";; OpenVPN\ TCP) svc="mytunnel-openvpn-tcp";; OpenVPN\ SSL) svc="mytunnel-openvpn-ssl";; OpenVPN\ UDP) svc="mytunnel-openvpn-udp";; OpenVPN\ DNS) svc="mytunnel-openvpn-dns";; OHP+OVPN) svc="mytunnel-ohp-ovpn";; esac
-    # cek aktif via _mt_port_active (handle dash range)
-    if declare -f _mt_port_active >/dev/null 2>&1; then
-      if _mt_port_active "$svc" "$val" 2>/dev/null; then printf " ${GREEN}%-14s${RESET} : %s ${DIM}(ON)${RESET}\n" "$label" "$val"
-      else printf " ${DIM}%-14s : %s (OFF)${RESET}\n" "$label" "$val"
-      fi
-    else
-      printf " %-14s : %s\n" "$label" "$val"
-    fi
-  done
+  _show_user_list_numbered
+  [ ! -s "$DB" ] && { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  echo -ne "${CYAN}Pilih nomor cek config (0 batal): ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -e "${RED}Input angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local user; user=$(_pick_user_by_number "$num")
+  [ -z "$user" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  local _pass _exp _lim
+  _pass=$(ssh_get_field "$user" 2 2>/dev/null || echo "-")
+  _exp=$(ssh_get_field "$user" 3 2>/dev/null || echo "-")
+  _lim=$(ssh_get_field "$user" 4 2>/dev/null || echo "0")
+  clear 2>/dev/null || printf '\033c'
+  local _out
+  _out=$(print_ssh_account_info "$user" "$_pass" "$_exp" "$_lim" 2>&1) || _out="Gagal tampil $user"
+  echo "$_out"
   echo ""
-  # Service status ringkas
-  echo -e "${CYAN}Service:${RESET}"
-  for svc in sshd dropbear mytunnel-sshws mytunnel-squid mytunnel-udpgw mytunnel-ohp-ssh mytunnel-ohp-ovpn mytunnel-slowdns mytunnel-openvpn-tcp mytunnel-openvpn-udp mytunnel-openvpn-ssl mytunnel-udp-custom; do
-    local st="OFF"
-    if [ -n "$MYTUNNEL_PREFIX" ]; then
-      case "$svc" in
-        sshd|dropbear) st="ON(test)";;
-        mytunnel-sshws) [ -f "$MYTUNNEL_PREFIX/var/log/sshws-sim.log" ] && st="SIMULATED" || st="OFF(test)";;
-        mytunnel-squid) [ -f "$MYTUNNEL_PREFIX/etc/systemd/system/mytunnel-squid.service" ] && st="SIMULATED" || st="OFF(test)";;
-        mytunnel-udpgw) [ -f "$MYTUNNEL_PREFIX/var/log/udpgw-sim.log" ] && st="SIMULATED" || st="OFF(test)";;
-        mytunnel-ohp-ssh|mytunnel-ohp-ovpn) [ -f "$MYTUNNEL_PREFIX/etc/systemd/system/${svc}.service" ] && st="SIMULATED" || st="OFF(test)";;
-        mytunnel-slowdns) [ -f "$MYTUNNEL_PREFIX/etc/mytunnel/config/slowdns.conf" ] && st="SIMULATED" || st="OFF(test)";;
-        mytunnel-openvpn-tcp|mytunnel-openvpn-udp|mytunnel-openvpn-ssl|mytunnel-openvpn-dns) [ -f "$MYTUNNEL_PREFIX/etc/openvpn/server-${svc##*-}.conf" ] && st="SIMULATED" || st="OFF(test)";;
-        mytunnel-udp-custom) [ -f "$MYTUNNEL_PREFIX/var/log/udp-custom-sim.log" ] && st="SIMULATED" || st="OFF(test)";;
-        *) st="OFF(test)";;
-      esac
-    else
-      if systemctl is-active --quiet "$svc" 2>/dev/null; then st="ON"; else st="OFF"; fi
-    fi
-    printf " %-22s : %s\n" "$svc" "$st"
-  done
-  echo ""
-  # Contoh output Create (reuse print_ssh_account_info) - tidak hardcode
-  echo -e "${CYAN}Contoh output Create (reuse print_ssh_account_info):${RESET}"
-  if declare -f print_ssh_account_info >/dev/null 2>&1; then
-    print_ssh_account_info "contohuser" "contohpass" "$(date +%Y-%m-%d 2>/dev/null)" "0" 2>&1 | sed 's/^/  /' | head -n 40
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    ah_notify_admin "$_out" 2>/dev/null || true
+    echo -e "${GREEN}Detail terkirim ke bot ✓${RESET}"
   fi
-  echo ""
-  echo -e "${CYAN}Banner:${RESET}"
-  if [ -f "$BASE/config/banner.txt" ]; then cat "$BASE/config/banner.txt" 2>/dev/null | head -n 5 | sed 's/^/  /'; else echo "  (default)"; fi
-  echo ""
-  echo -e "${CYAN}Validasi:${RESET}"
-  if command -v nginx >/dev/null 2>&1; then nginx -t 2>&1 | head -n 5 | sed 's/^/  /' || true; else echo "  nginx -t skip (test mode)"; fi
-  if command -v xray >/dev/null 2>&1; then xray run -test -config "${MYTUNNEL_PREFIX:-}/usr/local/etc/xray/config.json" 2>&1 | tail -n 3 | sed 's/^/  /' || true; fi
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
 do_recovery() {
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Recovery SSH"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Recovery SSH (Expired)"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  local restored=0 skipped=0
-  local user pass exp limit status
+  local exp_db="$BASE/db/ssh_expired.txt"
+  if [ ! -f "$exp_db" ] || [ ! -s "$exp_db" ]; then
+    echo -e "${DIM}(tidak ada akun expired — akun expired otomatis pindah kesini jam 00:00)${RESET}"
+    echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _; return 0
+  fi
+  echo -e "${CYAN}Akun expired:${RESET}"
+  local i=1
   while IFS='|' read -r user pass exp limit status; do
     [ -z "$user" ] && continue
+    printf " %2d) %-12s exp:%-10s lim:%-3s [%s]\n" "$i" "$user" "$exp" "${limit:-0}" "${status:-active}"
+    i=$((i+1))
+  done < "$exp_db"
+  echo ""
+  echo -ne "${CYAN}Pilih nomor recovery (0 batal): ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -e "${RED}Input angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local line; line=$(sed -n "${num}p" "$exp_db" 2>/dev/null)
+  [ -z "$line" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  local user pass exp limit status
+  IFS='|' read -r user pass exp limit status <<< "$line"
+  [ -z "$user" ] && { echo -e "${RED}Data rusak${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  if grep -q "^${user}|" "$DB" 2>/dev/null; then
+    echo -e "${YELLOW}$user sudah ada di DB aktif — hapus dari expired saja${RESET}"
+    local _tmp; _tmp=$(mktemp); grep -v "^${user}|" "$exp_db" > "$_tmp" 2>/dev/null || true; cat "$_tmp" > "$exp_db" 2>/dev/null; chmod 600 "$exp_db" 2>/dev/null || true; rm -f "$_tmp" 2>/dev/null || true
+    echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0
+  fi
+  echo -ne "${CYAN}Hari aktif baru [30]: ${RESET}"
+  read -r add; [ -z "$add" ] && add=30
+  [[ "$add" =~ ^[0-9]+$ ]] || { echo -e "${RED}Harus angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$add" -lt 1 ] && add=1; [ "$add" -gt 3650 ] && add=3650
+  local today new_exp
+  today=$(date +%Y-%m-%d 2>/dev/null)
+  if declare -f _expiry_add_days >/dev/null 2>&1; then new_exp=$(_expiry_add_days "$today" "$add"); else new_exp=$(date -d "+${add} days" +%Y-%m-%d 2>/dev/null || date -v+${add}d +%Y-%m-%d 2>/dev/null || echo "2099-01-01"); fi
+  echo -e "${DIM}Aktifkan $user -> $new_exp (+$add hari) ...${RESET}"
+  if [ -n "$MYTUNNEL_PREFIX" ]; then
+    :
+  else
+    grep -qx "/bin/false" /etc/shells 2>/dev/null || echo "/bin/false" >> /etc/shells 2>/dev/null || true
     if ! id "$user" >/dev/null 2>&1; then
-      echo -e "${YELLOW}Pulihkan $user ...${RESET}"
-      if [ -n "$MYTUNNEL_PREFIX" ]; then
-        echo "[TEST] would recreate $user exp=$exp" >> "$LOG" 2>/dev/null || true
-        restored=$((restored+1))
-      else
-        grep -qx "/bin/false" /etc/shells 2>/dev/null || echo "/bin/false" >> /etc/shells 2>/dev/null || true
-        if useradd -M -s /bin/false -e "$exp" "$user" 2>/dev/null; then
-          echo "$user:$pass" | chpasswd 2>/dev/null || true
-          if [ "$status" = "locked" ]; then usermod -L "$user" 2>/dev/null || true; fi
-          restored=$((restored+1))
-        else
-          echo -e "${RED}Gagal pulihkan $user${RESET}"
-        fi
-      fi
+      if ! useradd -M -s /bin/false -e "$new_exp" "$user" 2>&1; then echo -e "${RED}Gagal useradd $user${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; fi
+      echo "$user:$pass" | chpasswd 2>&1 || { echo -e "${RED}Gagal chpasswd${RESET}"; userdel "$user" 2>/dev/null || true; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
     else
-      skipped=$((skipped+1))
+      chage -E "$new_exp" "$user" 2>/dev/null || usermod -e "$new_exp" "$user" 2>/dev/null || true
+      echo "$user:$pass" | chpasswd 2>&1 || true
     fi
-  done < <(_list_users_raw)
-  echo -e "${GREEN}Recovery selesai: $restored dipulihkan, $skipped sudah ada${RESET}"
-  echo -ne "${GREY}Enter...${RESET}"; read -r _
+    if [ "$status" = "locked" ]; then usermod -U "$user" 2>/dev/null || true; status="active"; fi
+  fi
+  local nline="${user}|${pass}|${new_exp}|${limit:-0}|active"
+  local db_lock="$BASE/db/.ssh.lock"; [ -f "$db_lock" ] || touch "$db_lock" 2>/dev/null || true
+  local _tmp2; _tmp2=$(mktemp)
+  (
+    flock -x 200
+    echo "$nline" >> "$DB" 2>/dev/null
+    chmod 600 "$DB" 2>/dev/null || true
+  ) 200>"$db_lock" 2>/dev/null || { echo "$nline" >> "$DB" 2>/dev/null; chmod 600 "$DB" 2>/dev/null || true; }
+  rm -f "$_tmp2" 2>/dev/null || true
+  local _tmp3; _tmp3=$(mktemp); grep -v "^${user}|" "$exp_db" > "$_tmp3" 2>/dev/null || true; cat "$_tmp3" > "$exp_db" 2>/dev/null; chmod 600 "$exp_db" 2>/dev/null || true; rm -f "$_tmp3" 2>/dev/null || true
+  echo -e "${GREEN}Recovery OK: $user -> $new_exp${RESET}"
+  local _out; _out=$(print_ssh_account_info "$user" "$pass" "$new_exp" "${limit:-0}" 2>&1) || _out="Akun $user dipulihkan exp $new_exp"
+  echo "$_out"
+  if declare -f ah_notify_admin >/dev/null 2>&1; then ah_notify_admin "$_out" 2>/dev/null || true; echo -e "${GREEN}Terkirim ke bot ✓${RESET}"; fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ssh recovery $user $exp -> $new_exp" >> "$LOG" 2>/dev/null || true
+  echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
 do_edit_limit() {
@@ -2672,75 +2676,94 @@ do_unlock() {
 
 do_check_config() {
   clear 2>/dev/null || printf '\033c'
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Config VMESS (WS+gRPC+HU)"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  local cfg="$XRAY_CFG"
-  if [ ! -f "$cfg" ]; then echo -e "${RED}Config tidak ada: $cfg${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; fi
-  echo -e "${CYAN}Inbounds VMESS:${RESET}"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '.inbounds[] | select(.tag|startswith("vmess")) | "\(.tag)  port \(.port)  \(.protocol)  \(.streamSettings.network)  path=\(.streamSettings.wsSettings.path // .streamSettings.httpupgradeSettings.path // .streamSettings.grpcSettings.serviceName // "-")"' "$cfg" 2>/dev/null | while IFS= read -r line; do echo "  $line"; done
-    if ! jq -e '.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu")' "$cfg" >/dev/null 2>&1; then
-      echo -e "${RED}  Inbound vmess tidak lengkap (butuh ws+grpc+hu)${RESET}"
-    fi
-  else
-    grep -E '"tag".*"vmess' "$cfg" 2>/dev/null | sed 's/^/  /'
-  fi
+  printf "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}\n"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Config VMESS (pilih akun)"
+  printf "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}\n"
+  _show_user_list_numbered
+  [ ! -s "$DB" ] && { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  echo -ne "${CYAN}Pilih nomor cek (0 batal): ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -e "${RED}Input angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local user; user=$(_pick_user_by_number "$num")
+  [ -z "$user" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  clear 2>/dev/null || printf '\033c'
+  local _out
+  _out=$(print_proto_account_info "$PROTO" "$user" 2>&1) || _out=$(gen_links "$PROTO" "$user" 2>&1) || _out="Gagal tampil $user"
+  echo "$_out"
   echo ""
-  echo -e "${CYAN}Nginx:${RESET}"
-  local nconf="${MYTUNNEL_PREFIX:-}/etc/nginx/conf.d/mytunnel.conf"
-  [ -n "$MYTUNNEL_PREFIX" ] && nconf="$MYTUNNEL_PREFIX/etc/nginx/conf.d/mytunnel.conf"
-  [ -z "$MYTUNNEL_PREFIX" ] && nconf="/etc/nginx/conf.d/mytunnel.conf"
-  if [ -f "$nconf" ]; then
-    grep -E "location.*vmess|grpc_pass|/upvmess|/whatever" "$nconf" 2>/dev/null | head -n 20 | sed 's/^/  /' || echo "  (tidak ada lokasi vmess)"
-    if grep -q "grpc_pass.*1001" "$nconf" 2>/dev/null; then echo "  grpc_pass OK (http2 di 443)"; else echo -e "${YELLOW}  grpc_pass belum ada${RESET}"; fi
-  else
-    echo "  (nginx conf belum ada)"
-  fi
-  echo ""
-  if command -v xray >/dev/null 2>&1 || [ -x "/usr/local/bin/xray" ]; then
-    local xb="xray"; [ -x "/usr/local/bin/xray" ] && xb="/usr/local/bin/xray"
-    echo -e "${CYAN}xray -test:${RESET}"
-    if "$xb" run -test -config "$cfg" 2>&1 | head -n 5; then echo -e "${GREEN}  xray -test OK${RESET}"; else echo -e "${RED}  xray -test FAIL${RESET}"; fi
-  fi
-  if command -v nginx >/dev/null 2>&1; then
-    echo -e "${CYAN}nginx -t:${RESET}"
-    nginx -t 2>&1 | head -n 5 || true
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    ah_notify_admin "$_out" 2>/dev/null || true
+    echo -e "${GREEN}Detail terkirim ke bot ✓${RESET}"
   fi
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
 do_recovery() {
   clear 2>/dev/null || printf '\033c'
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Recovery VMESS"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  local restored=0 skipped=0
-  local user id exp limit quota used status
+  printf "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}\n"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Recovery VMESS (Expired)"
+  printf "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}\n"
+  local exp_db="$BASE/db/${PROTO}_expired.txt"
+  if [ ! -f "$exp_db" ] || [ ! -s "$exp_db" ]; then
+    echo -e "${DIM}(tidak ada akun expired — akun expired otomatis pindah kesini jam 00:00)${RESET}"
+    echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _; return 0
+  fi
+  echo -e "${CYAN}Akun expired:${RESET}"
+  local i=1
   while IFS='|' read -r user id exp limit quota used status; do
     [ -z "$user" ] && continue
-    if [ "$status" != "active" ]; then
-      echo -e "${DIM}Skip $user (status $status)${RESET}"
-      skipped=$((skipped+1))
-      continue
-    fi
-    local exists=0
-    if command -v jq >/dev/null 2>&1 && [ -f "$XRAY_CFG" ]; then
-      if jq -e --arg email "$user" '.inbounds[] | select(.tag|startswith("vmess")) | .settings.clients[]? | select(.email==$email)' "$XRAY_CFG" >/dev/null 2>&1; then exists=1; fi
-    fi
-    if [ "$exists" -eq 1 ]; then
-      skipped=$((skipped+1))
-    else
-      echo -e "${YELLOW}Pulihkan $user ...${RESET}"
-      if xray_add_client "$PROTO" "$id" "$user" 2>&1 | head -n 2; then
-        restored=$((restored+1))
-      else
-        echo -e "${RED}Gagal pulihkan $user${RESET}"
-      fi
-    fi
-  done < <(_list_users_raw)
-  if [ "$restored" -gt 0 ]; then xray_reload 2>/dev/null || true; fi
-  echo -e "${GREEN}Recovery selesai: $restored dipulihkan, $skipped sudah ada/skip${RESET}"
+    printf " %2d) %-12s exp:%-10s lim:%-3s q:%-4s [%s]\n" "$i" "$user" "$exp" "${limit:-0}" "${quota:-0}" "${status:-active}"
+    i=$((i+1))
+  done < "$exp_db"
+  echo ""
+  echo -ne "${CYAN}Pilih nomor recovery (0 batal): ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -e "${RED}Input angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local line; line=$(sed -n "${num}p" "$exp_db" 2>/dev/null)
+  [ -z "$line" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  local user id exp limit quota used status
+  IFS='|' read -r user id exp limit quota used status <<< "$line"
+  [ -z "$user" ] && { echo -e "${RED}Data rusak${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  if grep -q "^${user}|" "$DB" 2>/dev/null; then
+    echo -e "${YELLOW}$user sudah ada di DB aktif — hapus dari expired saja${RESET}"
+    local _tmp; _tmp=$(mktemp); grep -v "^${user}|" "$exp_db" > "$_tmp" 2>/dev/null || true; cat "$_tmp" > "$exp_db" 2>/dev/null; chmod 600 "$exp_db" 2>/dev/null || true; rm -f "$_tmp" 2>/dev/null || true
+    echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0
+  fi
+  echo -ne "${CYAN}Hari aktif baru [30]: ${RESET}"
+  read -r add; [ -z "$add" ] && add=30
+  [[ "$add" =~ ^[0-9]+$ ]] || { echo -e "${RED}Harus angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$add" -lt 1 ] && add=1; [ "$add" -gt 3650 ] && add=3650
+  local today new_exp
+  today=$(date +%Y-%m-%d 2>/dev/null)
+  if declare -f _expiry_add_days >/dev/null 2>&1; then new_exp=$(_expiry_add_days "$today" "$add"); else new_exp=$(date -d "+${add} days" +%Y-%m-%d 2>/dev/null || date -v+${add}d +%Y-%m-%d 2>/dev/null || echo "2099-01-01"); fi
+  if [ "$PROTO" = "trojan" ]; then
+    [ -z "$id" ] && id=$(gen_password 2>/dev/null || openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
+  else
+    if ! validate_uuid "$id" 2>/dev/null; then echo -e "${RED}UUID rusak, generate baru${RESET}"; id=$(gen_uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null); fi
+  fi
+  echo -e "${DIM}Aktifkan $user -> $new_exp (+$add hari) ...${RESET}"
+  used=0
+  if ! xray_add_client "$PROTO" "$id" "$user" 2>&1 | head -n 3; then
+    echo -e "${RED}Gagal xray_add_client${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0
+  fi
+  xray_reload 2>/dev/null || true
+  local nline="${user}|${id}|${new_exp}|${limit:-0}|${quota:-0}|0|active"
+  local db_lock; db_lock=$(_proto_lockfile "$PROTO" 2>/dev/null || echo "$BASE/db/.${PROTO}.lock")
+  local _tmp2; _tmp2=$(mktemp)
+  (
+    flock -x 200
+    echo "$nline" >> "$DB" 2>/dev/null
+    chmod 600 "$DB" 2>/dev/null || true
+  ) 200>"$db_lock" 2>/dev/null || { echo "$nline" >> "$DB" 2>/dev/null; chmod 600 "$DB" 2>/dev/null || true; }
+  rm -f "$_tmp2" 2>/dev/null || true
+  local _tmp3; _tmp3=$(mktemp); grep -v "^${user}|" "$exp_db" > "$_tmp3" 2>/dev/null || true; cat "$_tmp3" > "$exp_db" 2>/dev/null; chmod 600 "$exp_db" 2>/dev/null || true; rm -f "$_tmp3" 2>/dev/null || true
+  echo -e "${GREEN}Recovery OK: $user -> $new_exp${RESET}"
+  local _out; _out=$(print_proto_account_info "$PROTO" "$user" 2>&1) || _out=$(gen_links "$PROTO" "$user" 2>&1) || _out="Akun $user dipulihkan exp $new_exp"
+  echo "$_out"
+  if declare -f ah_notify_admin >/dev/null 2>&1; then ah_notify_admin "$_out" 2>/dev/null || true; echo -e "${GREEN}Terkirim ke bot ✓${RESET}"; fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $PROTO recovery $user $exp -> $new_exp" >> "$LOG" 2>/dev/null || true
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -3207,75 +3230,94 @@ do_unlock() {
 
 do_check_config() {
   clear 2>/dev/null || printf '\033c'
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Config VLESS (WS+gRPC+HU)"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  local cfg="$XRAY_CFG"
-  if [ ! -f "$cfg" ]; then echo -e "${RED}Config tidak ada: $cfg${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; fi
-  echo -e "${CYAN}Inbounds VLESS:${RESET}"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '.inbounds[] | select(.tag|startswith("vless")) | "\(.tag)  port \(.port)  \(.protocol)  \(.streamSettings.network)  path=\(.streamSettings.wsSettings.path // .streamSettings.httpupgradeSettings.path // .streamSettings.grpcSettings.serviceName // "-")"' "$cfg" 2>/dev/null | while IFS= read -r line; do echo "  $line"; done
-    if ! jq -e '.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu")' "$cfg" >/dev/null 2>&1; then
-      echo -e "${RED}  Inbound vless tidak lengkap (butuh ws+grpc+hu)${RESET}"
-    fi
-  else
-    grep -E '"tag".*"vless' "$cfg" 2>/dev/null | sed 's/^/  /'
-  fi
+  printf "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}\n"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Config VLESS (pilih akun)"
+  printf "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}\n"
+  _show_user_list_numbered
+  [ ! -s "$DB" ] && { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  echo -ne "${CYAN}Pilih nomor cek (0 batal): ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -e "${RED}Input angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local user; user=$(_pick_user_by_number "$num")
+  [ -z "$user" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  clear 2>/dev/null || printf '\033c'
+  local _out
+  _out=$(print_proto_account_info "$PROTO" "$user" 2>&1) || _out=$(gen_links "$PROTO" "$user" 2>&1) || _out="Gagal tampil $user"
+  echo "$_out"
   echo ""
-  echo -e "${CYAN}Nginx:${RESET}"
-  local nconf="${MYTUNNEL_PREFIX:-}/etc/nginx/conf.d/mytunnel.conf"
-  [ -n "$MYTUNNEL_PREFIX" ] && nconf="$MYTUNNEL_PREFIX/etc/nginx/conf.d/mytunnel.conf"
-  [ -z "$MYTUNNEL_PREFIX" ] && nconf="/etc/nginx/conf.d/mytunnel.conf"
-  if [ -f "$nconf" ]; then
-    grep -E "location.*vless|grpc_pass|/upvless|/whatever" "$nconf" 2>/dev/null | head -n 20 | sed 's/^/  /' || echo "  (tidak ada lokasi vless)"
-    if grep -q "grpc_pass.*1001" "$nconf" 2>/dev/null; then echo "  grpc_pass OK (http2 di 443)"; else echo -e "${YELLOW}  grpc_pass belum ada${RESET}"; fi
-  else
-    echo "  (nginx conf belum ada)"
-  fi
-  echo ""
-  if command -v xray >/dev/null 2>&1 || [ -x "/usr/local/bin/xray" ]; then
-    local xb="xray"; [ -x "/usr/local/bin/xray" ] && xb="/usr/local/bin/xray"
-    echo -e "${CYAN}xray -test:${RESET}"
-    if "$xb" run -test -config "$cfg" 2>&1 | head -n 5; then echo -e "${GREEN}  xray -test OK${RESET}"; else echo -e "${RED}  xray -test FAIL${RESET}"; fi
-  fi
-  if command -v nginx >/dev/null 2>&1; then
-    echo -e "${CYAN}nginx -t:${RESET}"
-    nginx -t 2>&1 | head -n 5 || true
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    ah_notify_admin "$_out" 2>/dev/null || true
+    echo -e "${GREEN}Detail terkirim ke bot ✓${RESET}"
   fi
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
 do_recovery() {
   clear 2>/dev/null || printf '\033c'
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Recovery VLESS"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  local restored=0 skipped=0
-  local user id exp limit quota used status
+  printf "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}\n"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Recovery VLESS (Expired)"
+  printf "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}\n"
+  local exp_db="$BASE/db/${PROTO}_expired.txt"
+  if [ ! -f "$exp_db" ] || [ ! -s "$exp_db" ]; then
+    echo -e "${DIM}(tidak ada akun expired — akun expired otomatis pindah kesini jam 00:00)${RESET}"
+    echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _; return 0
+  fi
+  echo -e "${CYAN}Akun expired:${RESET}"
+  local i=1
   while IFS='|' read -r user id exp limit quota used status; do
     [ -z "$user" ] && continue
-    if [ "$status" != "active" ]; then
-      echo -e "${DIM}Skip $user (status $status)${RESET}"
-      skipped=$((skipped+1))
-      continue
-    fi
-    local exists=0
-    if command -v jq >/dev/null 2>&1 && [ -f "$XRAY_CFG" ]; then
-      if jq -e --arg email "$user" '.inbounds[] | select(.tag|startswith("vless")) | .settings.clients[]? | select(.email==$email)' "$XRAY_CFG" >/dev/null 2>&1; then exists=1; fi
-    fi
-    if [ "$exists" -eq 1 ]; then
-      skipped=$((skipped+1))
-    else
-      echo -e "${YELLOW}Pulihkan $user ...${RESET}"
-      if xray_add_client "$PROTO" "$id" "$user" 2>&1 | head -n 2; then
-        restored=$((restored+1))
-      else
-        echo -e "${RED}Gagal pulihkan $user${RESET}"
-      fi
-    fi
-  done < <(_list_users_raw)
-  if [ "$restored" -gt 0 ]; then xray_reload 2>/dev/null || true; fi
-  echo -e "${GREEN}Recovery selesai: $restored dipulihkan, $skipped sudah ada/skip${RESET}"
+    printf " %2d) %-12s exp:%-10s lim:%-3s q:%-4s [%s]\n" "$i" "$user" "$exp" "${limit:-0}" "${quota:-0}" "${status:-active}"
+    i=$((i+1))
+  done < "$exp_db"
+  echo ""
+  echo -ne "${CYAN}Pilih nomor recovery (0 batal): ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -e "${RED}Input angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local line; line=$(sed -n "${num}p" "$exp_db" 2>/dev/null)
+  [ -z "$line" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  local user id exp limit quota used status
+  IFS='|' read -r user id exp limit quota used status <<< "$line"
+  [ -z "$user" ] && { echo -e "${RED}Data rusak${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  if grep -q "^${user}|" "$DB" 2>/dev/null; then
+    echo -e "${YELLOW}$user sudah ada di DB aktif — hapus dari expired saja${RESET}"
+    local _tmp; _tmp=$(mktemp); grep -v "^${user}|" "$exp_db" > "$_tmp" 2>/dev/null || true; cat "$_tmp" > "$exp_db" 2>/dev/null; chmod 600 "$exp_db" 2>/dev/null || true; rm -f "$_tmp" 2>/dev/null || true
+    echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0
+  fi
+  echo -ne "${CYAN}Hari aktif baru [30]: ${RESET}"
+  read -r add; [ -z "$add" ] && add=30
+  [[ "$add" =~ ^[0-9]+$ ]] || { echo -e "${RED}Harus angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$add" -lt 1 ] && add=1; [ "$add" -gt 3650 ] && add=3650
+  local today new_exp
+  today=$(date +%Y-%m-%d 2>/dev/null)
+  if declare -f _expiry_add_days >/dev/null 2>&1; then new_exp=$(_expiry_add_days "$today" "$add"); else new_exp=$(date -d "+${add} days" +%Y-%m-%d 2>/dev/null || date -v+${add}d +%Y-%m-%d 2>/dev/null || echo "2099-01-01"); fi
+  if [ "$PROTO" = "trojan" ]; then
+    [ -z "$id" ] && id=$(gen_password 2>/dev/null || openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
+  else
+    if ! validate_uuid "$id" 2>/dev/null; then echo -e "${RED}UUID rusak, generate baru${RESET}"; id=$(gen_uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null); fi
+  fi
+  echo -e "${DIM}Aktifkan $user -> $new_exp (+$add hari) ...${RESET}"
+  used=0
+  if ! xray_add_client "$PROTO" "$id" "$user" 2>&1 | head -n 3; then
+    echo -e "${RED}Gagal xray_add_client${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0
+  fi
+  xray_reload 2>/dev/null || true
+  local nline="${user}|${id}|${new_exp}|${limit:-0}|${quota:-0}|0|active"
+  local db_lock; db_lock=$(_proto_lockfile "$PROTO" 2>/dev/null || echo "$BASE/db/.${PROTO}.lock")
+  local _tmp2; _tmp2=$(mktemp)
+  (
+    flock -x 200
+    echo "$nline" >> "$DB" 2>/dev/null
+    chmod 600 "$DB" 2>/dev/null || true
+  ) 200>"$db_lock" 2>/dev/null || { echo "$nline" >> "$DB" 2>/dev/null; chmod 600 "$DB" 2>/dev/null || true; }
+  rm -f "$_tmp2" 2>/dev/null || true
+  local _tmp3; _tmp3=$(mktemp); grep -v "^${user}|" "$exp_db" > "$_tmp3" 2>/dev/null || true; cat "$_tmp3" > "$exp_db" 2>/dev/null; chmod 600 "$exp_db" 2>/dev/null || true; rm -f "$_tmp3" 2>/dev/null || true
+  echo -e "${GREEN}Recovery OK: $user -> $new_exp${RESET}"
+  local _out; _out=$(print_proto_account_info "$PROTO" "$user" 2>&1) || _out=$(gen_links "$PROTO" "$user" 2>&1) || _out="Akun $user dipulihkan exp $new_exp"
+  echo "$_out"
+  if declare -f ah_notify_admin >/dev/null 2>&1; then ah_notify_admin "$_out" 2>/dev/null || true; echo -e "${GREEN}Terkirim ke bot ✓${RESET}"; fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $PROTO recovery $user $exp -> $new_exp" >> "$LOG" 2>/dev/null || true
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -3741,75 +3783,94 @@ do_unlock() {
 
 do_check_config() {
   clear 2>/dev/null || printf '\033c'
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Config TROJAN (WS+gRPC+HU)"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  local cfg="$XRAY_CFG"
-  if [ ! -f "$cfg" ]; then echo -e "${RED}Config tidak ada: $cfg${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; fi
-  echo -e "${CYAN}Inbounds TROJAN:${RESET}"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '.inbounds[] | select(.tag|startswith("trojan")) | "\(.tag)  port \(.port)  \(.protocol)  \(.streamSettings.network)  path=\(.streamSettings.wsSettings.path // .streamSettings.httpupgradeSettings.path // .streamSettings.grpcSettings.serviceName // "-")"' "$cfg" 2>/dev/null | while IFS= read -r line; do echo "  $line"; done
-    if ! jq -e '.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu")' "$cfg" >/dev/null 2>&1; then
-      echo -e "${RED}  Inbound trojan tidak lengkap (butuh ws+grpc+hu)${RESET}"
-    fi
-  else
-    grep -E '"tag".*"trojan' "$cfg" 2>/dev/null | sed 's/^/  /'
-  fi
+  printf "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}\n"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Config TROJAN (pilih akun)"
+  printf "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}\n"
+  _show_user_list_numbered
+  [ ! -s "$DB" ] && { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  echo -ne "${CYAN}Pilih nomor cek (0 batal): ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -e "${RED}Input angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local user; user=$(_pick_user_by_number "$num")
+  [ -z "$user" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  clear 2>/dev/null || printf '\033c'
+  local _out
+  _out=$(print_proto_account_info "$PROTO" "$user" 2>&1) || _out=$(gen_links "$PROTO" "$user" 2>&1) || _out="Gagal tampil $user"
+  echo "$_out"
   echo ""
-  echo -e "${CYAN}Nginx:${RESET}"
-  local nconf="${MYTUNNEL_PREFIX:-}/etc/nginx/conf.d/mytunnel.conf"
-  [ -n "$MYTUNNEL_PREFIX" ] && nconf="$MYTUNNEL_PREFIX/etc/nginx/conf.d/mytunnel.conf"
-  [ -z "$MYTUNNEL_PREFIX" ] && nconf="/etc/nginx/conf.d/mytunnel.conf"
-  if [ -f "$nconf" ]; then
-    grep -E "location.*trojan|grpc_pass|/uptrojan|/whatever" "$nconf" 2>/dev/null | head -n 20 | sed 's/^/  /' || echo "  (tidak ada lokasi trojan)"
-    if grep -q "grpc_pass.*1001" "$nconf" 2>/dev/null; then echo "  grpc_pass OK (http2 di 443)"; else echo -e "${YELLOW}  grpc_pass belum ada${RESET}"; fi
-  else
-    echo "  (nginx conf belum ada)"
-  fi
-  echo ""
-  if command -v xray >/dev/null 2>&1 || [ -x "/usr/local/bin/xray" ]; then
-    local xb="xray"; [ -x "/usr/local/bin/xray" ] && xb="/usr/local/bin/xray"
-    echo -e "${CYAN}xray -test:${RESET}"
-    if "$xb" run -test -config "$cfg" 2>&1 | head -n 5; then echo -e "${GREEN}  xray -test OK${RESET}"; else echo -e "${RED}  xray -test FAIL${RESET}"; fi
-  fi
-  if command -v nginx >/dev/null 2>&1; then
-    echo -e "${CYAN}nginx -t:${RESET}"
-    nginx -t 2>&1 | head -n 5 || true
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    ah_notify_admin "$_out" 2>/dev/null || true
+    echo -e "${GREEN}Detail terkirim ke bot ✓${RESET}"
   fi
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
 do_recovery() {
   clear 2>/dev/null || printf '\033c'
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Recovery TROJAN"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  local restored=0 skipped=0
-  local user id exp limit quota used status
+  printf "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}\n"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Recovery TROJAN (Expired)"
+  printf "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}\n"
+  local exp_db="$BASE/db/${PROTO}_expired.txt"
+  if [ ! -f "$exp_db" ] || [ ! -s "$exp_db" ]; then
+    echo -e "${DIM}(tidak ada akun expired — akun expired otomatis pindah kesini jam 00:00)${RESET}"
+    echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _; return 0
+  fi
+  echo -e "${CYAN}Akun expired:${RESET}"
+  local i=1
   while IFS='|' read -r user id exp limit quota used status; do
     [ -z "$user" ] && continue
-    if [ "$status" != "active" ]; then
-      echo -e "${DIM}Skip $user (status $status)${RESET}"
-      skipped=$((skipped+1))
-      continue
-    fi
-    local exists=0
-    if command -v jq >/dev/null 2>&1 && [ -f "$XRAY_CFG" ]; then
-      if jq -e --arg email "$user" '.inbounds[] | select(.tag|startswith("trojan")) | .settings.clients[]? | select(.email==$email)' "$XRAY_CFG" >/dev/null 2>&1; then exists=1; fi
-    fi
-    if [ "$exists" -eq 1 ]; then
-      skipped=$((skipped+1))
-    else
-      echo -e "${YELLOW}Pulihkan $user ...${RESET}"
-      if xray_add_client "$PROTO" "$id" "$user" 2>&1 | head -n 2; then
-        restored=$((restored+1))
-      else
-        echo -e "${RED}Gagal pulihkan $user${RESET}"
-      fi
-    fi
-  done < <(_list_users_raw)
-  if [ "$restored" -gt 0 ]; then xray_reload 2>/dev/null || true; fi
-  echo -e "${GREEN}Recovery selesai: $restored dipulihkan, $skipped sudah ada/skip${RESET}"
+    printf " %2d) %-12s exp:%-10s lim:%-3s q:%-4s [%s]\n" "$i" "$user" "$exp" "${limit:-0}" "${quota:-0}" "${status:-active}"
+    i=$((i+1))
+  done < "$exp_db"
+  echo ""
+  echo -ne "${CYAN}Pilih nomor recovery (0 batal): ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -e "${RED}Input angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local line; line=$(sed -n "${num}p" "$exp_db" 2>/dev/null)
+  [ -z "$line" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  local user id exp limit quota used status
+  IFS='|' read -r user id exp limit quota used status <<< "$line"
+  [ -z "$user" ] && { echo -e "${RED}Data rusak${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  if grep -q "^${user}|" "$DB" 2>/dev/null; then
+    echo -e "${YELLOW}$user sudah ada di DB aktif — hapus dari expired saja${RESET}"
+    local _tmp; _tmp=$(mktemp); grep -v "^${user}|" "$exp_db" > "$_tmp" 2>/dev/null || true; cat "$_tmp" > "$exp_db" 2>/dev/null; chmod 600 "$exp_db" 2>/dev/null || true; rm -f "$_tmp" 2>/dev/null || true
+    echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0
+  fi
+  echo -ne "${CYAN}Hari aktif baru [30]: ${RESET}"
+  read -r add; [ -z "$add" ] && add=30
+  [[ "$add" =~ ^[0-9]+$ ]] || { echo -e "${RED}Harus angka${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$add" -lt 1 ] && add=1; [ "$add" -gt 3650 ] && add=3650
+  local today new_exp
+  today=$(date +%Y-%m-%d 2>/dev/null)
+  if declare -f _expiry_add_days >/dev/null 2>&1; then new_exp=$(_expiry_add_days "$today" "$add"); else new_exp=$(date -d "+${add} days" +%Y-%m-%d 2>/dev/null || date -v+${add}d +%Y-%m-%d 2>/dev/null || echo "2099-01-01"); fi
+  if [ "$PROTO" = "trojan" ]; then
+    [ -z "$id" ] && id=$(gen_password 2>/dev/null || openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
+  else
+    if ! validate_uuid "$id" 2>/dev/null; then echo -e "${RED}UUID rusak, generate baru${RESET}"; id=$(gen_uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null); fi
+  fi
+  echo -e "${DIM}Aktifkan $user -> $new_exp (+$add hari) ...${RESET}"
+  used=0
+  if ! xray_add_client "$PROTO" "$id" "$user" 2>&1 | head -n 3; then
+    echo -e "${RED}Gagal xray_add_client${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0
+  fi
+  xray_reload 2>/dev/null || true
+  local nline="${user}|${id}|${new_exp}|${limit:-0}|${quota:-0}|0|active"
+  local db_lock; db_lock=$(_proto_lockfile "$PROTO" 2>/dev/null || echo "$BASE/db/.${PROTO}.lock")
+  local _tmp2; _tmp2=$(mktemp)
+  (
+    flock -x 200
+    echo "$nline" >> "$DB" 2>/dev/null
+    chmod 600 "$DB" 2>/dev/null || true
+  ) 200>"$db_lock" 2>/dev/null || { echo "$nline" >> "$DB" 2>/dev/null; chmod 600 "$DB" 2>/dev/null || true; }
+  rm -f "$_tmp2" 2>/dev/null || true
+  local _tmp3; _tmp3=$(mktemp); grep -v "^${user}|" "$exp_db" > "$_tmp3" 2>/dev/null || true; cat "$_tmp3" > "$exp_db" 2>/dev/null; chmod 600 "$exp_db" 2>/dev/null || true; rm -f "$_tmp3" 2>/dev/null || true
+  echo -e "${GREEN}Recovery OK: $user -> $new_exp${RESET}"
+  local _out; _out=$(print_proto_account_info "$PROTO" "$user" 2>&1) || _out=$(gen_links "$PROTO" "$user" 2>&1) || _out="Akun $user dipulihkan exp $new_exp"
+  echo "$_out"
+  if declare -f ah_notify_admin >/dev/null 2>&1; then ah_notify_admin "$_out" 2>/dev/null || true; echo -e "${GREEN}Terkirim ke bot ✓${RESET}"; fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $PROTO recovery $user $exp -> $new_exp" >> "$LOG" 2>/dev/null || true
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -7701,6 +7762,7 @@ LOG="${BASE}/var/log/mytunnel.log"
 for f in "$ETC/lib/ssh_helpers.sh" "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 
 _ensure_db() { mkdir -p "$(dirname "$DB")" 2>/dev/null || true; [ -f "$DB" ] || touch "$DB" 2>/dev/null || true; }
+EXP_DB="$ETC/db/ssh_expired.txt"
 
 _today_epoch() { date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || date +%s; }
 _expiry_epoch() { date -d "$1" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || echo 0; }
@@ -7734,8 +7796,8 @@ main() {
   # actually remove expired lines in one pass with flock
   local db_lock="$ETC/db/.ssh.lock"
   [ -f "$db_lock" ] || touch "$db_lock" 2>/dev/null || true
-  local filtered
-  filtered=$(mktemp)
+  local filtered exp_tmp
+  filtered=$(mktemp); exp_tmp=$(mktemp)
   (
     flock -x 200
     while IFS='|' read -r user pass exp limit status; do
@@ -7743,24 +7805,36 @@ main() {
       local exp_s
       exp_s=$(_expiry_epoch "$exp")
       if [ "$exp_s" -le "$today" ] 2>/dev/null; then
-        # skip (expired)
+        # archive expired for Recovery (600, flock)
+        echo "$user|$pass|$exp|$limit|$status" >> "$exp_tmp" 2>/dev/null || true
         continue
       fi
       echo "$user|$pass|$exp|$limit|$status" >> "$filtered" 2>/dev/null || true
     done < "$DB"
     cat "$filtered" > "$DB" 2>/dev/null
     chmod 600 "$DB" 2>/dev/null || true
+    # append expired to archive (dedup by user, keep latest)
+    if [ -s "$exp_tmp" ]; then
+      touch "$EXP_DB" 2>/dev/null || true; chmod 600 "$EXP_DB" 2>/dev/null || true
+      # remove already archived users to avoid dup, then append
+      local _tmp2; _tmp2=$(mktemp)
+      while IFS='|' read -r eu _ep _ee _el _es; do [ -n "$eu" ] && grep -v "^${eu}|" "$EXP_DB" > "$_tmp2" 2>/dev/null && cat "$_tmp2" > "$EXP_DB" 2>/dev/null || true; done < "$exp_tmp"
+      cat "$exp_tmp" >> "$EXP_DB" 2>/dev/null || true
+      chmod 600 "$EXP_DB" 2>/dev/null || true
+      rm -f "$_tmp2" 2>/dev/null || true
+    fi
   ) 200>"$db_lock" 2>/dev/null || {
     # fallback without flock
     while IFS='|' read -r user pass exp limit status; do
       [ -z "$user" ] && continue
       local exp_s; exp_s=$(_expiry_epoch "$exp")
-      [ "$exp_s" -le "$today" ] && continue
+      [ "$exp_s" -le "$today" ] && { echo "$user|$pass|$exp|$limit|$status" >> "$exp_tmp" 2>/dev/null || true; continue; }
       echo "$user|$pass|$exp|$limit|$status"
     done < "$DB" > "$filtered" 2>/dev/null && cat "$filtered" > "$DB" 2>/dev/null
     chmod 600 "$DB" 2>/dev/null || true
+    if [ -s "$exp_tmp" ]; then touch "$EXP_DB" 2>/dev/null || true; chmod 600 "$EXP_DB" 2>/dev/null || true; cat "$exp_tmp" >> "$EXP_DB" 2>/dev/null || true; chmod 600 "$EXP_DB" 2>/dev/null || true; fi
   }
-  rm -f "$tmp" "$filtered" 2>/dev/null || true
+  rm -f "$tmp" "$filtered" "$exp_tmp" 2>/dev/null || true
 }
 main "$@"
 
@@ -7905,6 +7979,18 @@ _expiry_epoch() {
 }
 
 _today_epoch() { date +%s 2>/dev/null; }
+_archive_expired(){
+  local proto="$1" user="$2" line="$3"
+  local adb="$ETC/db/${proto}_expired.txt" lock="$ETC/db/.${proto}.lock"
+  touch "$adb" 2>/dev/null || true; chmod 600 "$adb" 2>/dev/null || true
+  # dedup: remove old entry for same user then append
+  local _tmp; _tmp=$(mktemp)
+  grep -v "^${user}|" "$adb" > "$_tmp" 2>/dev/null || true
+  cat "$_tmp" > "$adb" 2>/dev/null; chmod 600 "$adb" 2>/dev/null || true
+  echo "$line" >> "$adb" 2>/dev/null || true
+  chmod 600 "$adb" 2>/dev/null || true
+  rm -f "$_tmp" 2>/dev/null || true
+}
 
 run_once() {
   local changed=0 proto db user exp exp_s today_s
@@ -7918,9 +8004,9 @@ run_once() {
       exp_s=$(_expiry_epoch "$exp")
       [ "$exp_s" -eq 0 ] && continue
       if [ "$exp_s" -lt "$today_s" ]; then
-        # hapus dari config (jika ada), hapus dari db
+        local _line; _line=$(grep "^${user}|" "$db" 2>/dev/null | head -1)
+        [ -n "$_line" ] && _archive_expired "$proto" "$user" "$_line"
         xray_del_client "$proto" "$user" 2>/dev/null || true
-        # hapus baris dari db pakai flock
         _db_expire_remove "$proto" "$user"
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] autoexpire_xray $proto $user exp=$exp" >> "$LOG" 2>/dev/null || true
         changed=1

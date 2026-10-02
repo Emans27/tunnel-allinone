@@ -95,7 +95,7 @@ if [ ! -f "$ETC/config/ports.conf" ]; then
   cat > "$ETC/config/ports.conf" << 'PC_EOF'
 OPENSSH_PORT=444
 DROPBEAR_PORT=90
-TLS_PORT=443,8443
+TLS_PORT=8443
 NONTLS_PORT=80,8080
 ANY_PORT=2082,2083,8880
 SSHWS_PORT=10004
@@ -714,7 +714,7 @@ print_ssh_account_info() {
   domain=$(cat "$ETC/config/domain.txt" 2>/dev/null | head -1 | tr -d '\n' | tr -d '\r' | tr -d ' ')
   [ -z "$domain" ] || [ "$domain" = "-" ] && domain="-"
   local pf="$ETC/config/ports.conf"
-  local OPENSSH_PORT="444" DROPBEAR_PORT="90" TLS_PORT="443,8443" NONTLS_PORT="80,8080" ANY_PORT="2082,2083,8880" CONFIG_PORT="81"
+  local OPENSSH_PORT="444" DROPBEAR_PORT="90" TLS_PORT="8443" NONTLS_PORT="80,8080" ANY_PORT="2082,2083,8880" CONFIG_PORT="81"
   local SLOWDNS_PORT="53,5300" UDP_CUSTOM_PORT="1-65535" OHP_SSH_PORT="9080" SQUID_PORT="3128" UDPGW_PORT="7100-7600"
   local OPENVPN_TCP_PORT="1194" OPENVPN_SSL_PORT="442" OPENVPN_UDP_PORT="25000" OPENVPN_DNS_PORT="53" OHP_OVPN_PORT="9088"
   # shellcheck disable=SC1090
@@ -4946,9 +4946,15 @@ write_config() {
     case "$_p" in ''|*[!0-9]*) continue;; esac
     if [ -z "${_seen_http[$_p]:-}" ]; then
       _seen_http[$_p]=1
-      http_listens="${http_listens}  listen $_p;
+      if [ "$_p" = "80" ]; then
+        http_listens="${http_listens}  listen 80 default_server;
+  listen [::]:80 default_server;
+"
+      else
+        http_listens="${http_listens}  listen $_p;
   listen [::]:$_p;
 "
+      fi
     fi
   done
   for _p in $(echo "$any_ports" | tr ',' ' '); do
@@ -4972,12 +4978,22 @@ write_config() {
     fi
   done
   # fallback if empty
-  [ -n "$http_listens" ] || http_listens="  listen 80;
-  listen [::]:80;
+  [ -n "$http_listens" ] || http_listens="  listen 80 default_server;
+  listen [::]:80 default_server;
 "
   [ -n "$https_listens" ] || https_listens="  listen 443 ssl http2;
   listen [::]:443 ssl http2;
 "
+  # jika stunnel aktif di 443, jangan listen 443 di nginx (avoid bind conflict)
+  if [ -z "$BASE" ] && ss -tlnp 2>/dev/null | grep -q ":443 "; then
+    if ss -tlnp 2>/dev/null | grep -q "stunnel.*:443"; then
+      https_listens=$(echo "$https_listens" | grep -v "  listen 443" | grep -v "  listen \[::\]:443" || true)
+      [ -z "$https_listens" ] && https_listens="  listen 8443 ssl http2;
+  listen [::]:8443 ssl http2;
+"
+      echo -e "${YELLOW}Stunnel terdeteksi di 443, nginx skip listen 443 -> $https_listens${RESET}" | head -n 5
+    fi
+  fi
   declare _www_root="/var/www/html"
   [ -n "$BASE" ] && _www_root="${BASE}/var/www/html"
   mkdir -p "$_www_root" 2>/dev/null || true
@@ -5040,7 +5056,7 @@ map \$http_upgrade \$connection_upgrade {
 # HTTP (80,8080,ANY) - WS + HTTPUpgrade non-TLS (ports dari ports.conf)
 server {
 $http_listens
-  server_name $domain;
+  server_name $domain vplay.iflix.com *.iflix.com _;
 
   location ^~ /.well-known/acme-challenge/ {
     default_type "text/plain";
@@ -5140,15 +5156,28 @@ $http_listens
   }
 
   location / {
+    error_page 418 = @sshws;
+    if (\$http_upgrade ~* websocket) { return 418; }
     default_type text/html;
     return 200 '<html><body><h1>mytunnel</h1><p>Use WS /vmess /vless /trojan or HU /upvmess via TLS 443.</p></body></html>';
+  }
+  location @sshws {
+    proxy_pass http://127.0.0.1:10004;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
   }
 }
 
 # HTTPS (443,8443) - TLS + WS + HTTPUpgrade + gRPC (http2 wajib, ports dari ports.conf)
 server {
 $https_listens
-  server_name $domain;
+  server_name $domain vplay.iflix.com *.iflix.com _;
 
   ssl_certificate $CERT_CRT;
   ssl_certificate_key $CERT_KEY;
@@ -5275,8 +5304,21 @@ $https_listens
   }
 
   location / {
+    error_page 418 = @sshws;
+    if (\$http_upgrade ~* websocket) { return 418; }
     default_type text/html;
     return 404 'Not Found - Use /vmess /vless /trojan /upvmess or gRPC';
+  }
+  location @sshws {
+    proxy_pass http://127.0.0.1:10004;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
   }
 }
 
@@ -5284,7 +5326,7 @@ $https_listens
 server {
   listen $config_port;
   listen [::]:$config_port;
-  server_name $domain;
+  server_name $domain vplay.iflix.com *.iflix.com _;
   root $_www_root;
   location / {
     autoindex on;
@@ -5578,6 +5620,10 @@ AcceptEnv LANG LC_*
 Subsystem sftp /usr/lib/openssh/sftp-server
 EOF
       chmod 644 "$SSHD_CFG" 2>/dev/null || true
+      # MaxStartups/MaxSessions for high concurrency (HC many PATCH)
+      if ! grep -q "^MaxStartups" "$SSHD_CFG" 2>/dev/null; then echo "MaxStartups 100:30:1000" >> "$SSHD_CFG"; else sed -i 's/^MaxStartups.*/MaxStartups 100:30:1000/' "$SSHD_CFG"; fi
+      if ! grep -q "^MaxSessions" "$SSHD_CFG" 2>/dev/null; then echo "MaxSessions 100" >> "$SSHD_CFG"; else sed -i 's/^MaxSessions.*/MaxSessions 100/' "$SSHD_CFG"; fi
+      if ! grep -q "^ClientAliveInterval" "$SSHD_CFG" 2>/dev/null; then echo "ClientAliveInterval 300" >> "$SSHD_CFG"; fi
       echo -e "${YELLOW}[TEST MODE] sshd_config stub dibuat: $SSHD_CFG${RESET}"
       return 0
     else
@@ -7479,11 +7525,15 @@ def ws_handshake(conn):
         if not data:
             return None
         # must be GET /ssh-ws
-        m = re.search(r"GET\s+(\S+)\s+HTTP", data)
+        m = re.search(r"^\w+\s+(\S+)\s+HTTP", data, re.M)
         path = m.group(1) if m else ""
         if path != "/ssh-ws":
-            conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
-            return None
+            # bug host: any path with websocket upgrade -> treat as /ssh-ws
+            if "upgrade: websocket" in data.lower() and path.startswith("/"):
+                path = "/ssh-ws"
+            else:
+                conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
+                return None
         # check Upgrade: websocket
         if "Upgrade: websocket" not in data and "upgrade: websocket" not in data.lower():
             # allow plain HTTP proxy for nginx (nginx already handles Upgrade header)

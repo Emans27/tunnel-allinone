@@ -1,6 +1,6 @@
 # MyTunnel — TUNNEL PRO v1.1.0
 
-Varian tunneling All-In-One netral (pengganti Sunek/tunnelcore) universal **Debian 11/12 + Ubuntu 18/20/22/24** (disarankan **Debian 12 / Ubuntu 22.04**). Banner/brand edit 1 baris (`menu → 8 SET BRAND`), transport **Xray VMess/VLess/Trojan** WS+gRPC+HTTPUpgrade lewat **Nginx 80/443 exclusive**, SSH/Dropbear/OpenSSH, plus fitur opsional bot/WARP/routing/SlowDNS/Squid/UDPGW/OHP/OpenVPN.
+Varian tunneling All-In-One netral universal **Debian 11/12 + Ubuntu 18/20/22/24** (disarankan **Debian 12 / Ubuntu 22.04**). Banner/brand edit 1 baris (`menu → 8 SET BRAND`), transport **Xray VMess/VLess/Trojan** WS+gRPC+HTTPUpgrade lewat **Nginx 80/443 exclusive**, SSH/Dropbear/OpenSSH, plus fitur opsional bot/WARP/routing/SlowDNS/Squid/UDPGW/OHP/OpenVPN.
 
 > **Aman:** `wget` lalu `less` dulu, baru `bash` — tanpa `curl | bash`. Download hanya HTTPS, verifikasi SHA256.
 

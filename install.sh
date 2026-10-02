@@ -10509,7 +10509,7 @@ __EMBED_EOF__
 chmod 755 "$ETC/features/domain.sh"
 cat > "$ETC/features/banner.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel features/banner.sh - edit banner SSH & response halaman web (60 kolom)
+# mytunnel features/banner.sh - edit banner SSH & response halaman web (60 kolom) - FIX HTML multiline
 # shellcheck disable=SC1091,SC2154,SC1090,SC2034
 BASE="${MYTUNNEL_PREFIX:-}"
 ETC="${BASE}/etc/mytunnel"
@@ -10525,29 +10525,40 @@ BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"
 pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 
 edit_banner() {
-  local cur
-  cur=$(cat "$BANNER_FILE" 2>/dev/null | head -1); [ -z "$cur" ] && cur=" | TUNNEL PRO - No hacking, use legally |"
+  local cur preview
+  if [ -f "$BANNER_FILE" ]; then cur=$(cat "$BANNER_FILE" 2>/dev/null | head -c 200); else cur=""; fi
+  [ -z "$cur" ] && cur=" | TUNNEL PRO - No hacking, use legally |"
+  preview=$(echo "$cur" | head -n 3 | tr -d '\r' | cut -c1-60)
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Change Banner SSH"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  echo -e " Saat ini: ${CYAN}$cur${RESET}"
-  echo -e "${DIM}Banner tampil saat SSH login (Dropbear/OpenSSH)${RESET}"
-  read -rp " Banner baru (kosong batal): " nb 2>/dev/null || return
-  [ -z "$nb" ] && { echo "Batal"; pause; return; }
-  # trim, validate printable, max 80 (display wrap to 56 but allow longer)
-  if printf "%s" "$nb" | grep -q $'[\x00-\x1F\x7F]' 2>/dev/null; then echo -e "${RED}Karakter kontrol tidak boleh${RESET}"; pause; return; fi
-  if [ "${#nb}" -gt 80 ]; then echo -e "${RED}Terlalu panjang (max 80)${RESET}"; pause; return; fi
+  echo -e " Saat ini (${CYAN}$(wc -c < "$BANNER_FILE" 2>/dev/null || echo 0) bytes${RESET}): ${CYAN}$preview${RESET} ..."
+  echo -e "${DIM}Banner tampil saat SSH login (Dropbear/OpenSSH). HTML boleh, multiline OK.${RESET}"
+  echo -e "${YELLOW} Paste banner baru (boleh multi-baris). Akhiri dengan baris tunggal '.' lalu Enter.${RESET}"
+  echo -e "${DIM} Kosong (langsung '.' ) = batal. Ctrl+D juga bisa akhiri.${RESET}"
+  local nb="" line
+  nb=""
+  while IFS= read -r line 2>/dev/null || [ -n "$line" ]; do
+    [ "$line" = "." ] && break
+    if [ -z "$nb" ]; then nb="$line"; else nb="$nb
+$line"; fi
+  done
+  # trim leading/trailing empty lines but keep inner HTML
+  # remove one leading newline if any
+  if [ -z "$nb" ]; then echo "Batal"; pause; return; fi
+  # validate not binary control except newline/tab
+  if printf "%s" "$nb" | grep -q $'[\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0B\x0C\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F\x7F]' 2>/dev/null; then echo -e "${RED}Karakter kontrol tidak boleh${RESET}"; pause; return; fi
+  if [ "${#nb}" -gt 8192 ]; then echo -e "${RED}Terlalu panjang (max 8192)${RESET}"; pause; return; fi
   local bak
-  bak=$(fh_backup_file "$BANNER_FILE" 2>/dev/null)
-  echo "$nb" > "$BANNER_FILE" 2>/dev/null
+  bak=$(fh_backup_file "$BANNER_FILE" 2>/dev/null || echo "")
+  printf "%s" "$nb" > "$BANNER_FILE" 2>/dev/null
   chmod 644 "$BANNER_FILE" 2>/dev/null || true
-  # also sync to /etc/dropbear/banner and /etc/issue.net-like
   mkdir -p "${BASE}/etc/dropbear" 2>/dev/null || true
   cp -a "$BANNER_FILE" "${BASE}/etc/dropbear/banner" 2>/dev/null || true
   if [ -z "$BASE" ]; then
     mkdir -p /etc/dropbear 2>/dev/null || true
     cp -a "$BANNER_FILE" /etc/dropbear/banner 2>/dev/null || true
-    # OpenSSH Banner option: ensure /etc/ssh/sshd_config has Banner line
+    # also ensure sshd banner for openssh
     if [ -f /etc/ssh/sshd_config ]; then
       if grep -q "^Banner" /etc/ssh/sshd_config 2>/dev/null; then
         sed -i "s|^Banner.*|Banner /etc/dropbear/banner|" /etc/ssh/sshd_config 2>/dev/null || true
@@ -10558,40 +10569,83 @@ edit_banner() {
     fi
     systemctl restart dropbear 2>/dev/null || service dropbear restart 2>/dev/null || true
   fi
-  echo -e "${GREEN}Banner diubah${RESET}"
-  fh_log "banner -> $nb"
+  echo -e "${GREEN}Banner diubah ($(wc -c < "$BANNER_FILE" 2>/dev/null | tr -d ' ') bytes)${RESET}"
+  fh_log "banner updated $(wc -c < "$BANNER_FILE" 2>/dev/null | tr -d ' ') bytes" 2>/dev/null || true
   pause
 }
 
 edit_response() {
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Change Response (Nginx 404)"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Change Response (Nginx)"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
   local cur=""
-  if [ -f "$NGINX_CONF" ]; then cur=$(grep -o "return 404.*" "$NGINX_CONF" 2>/dev/null | head -1); [ -z "$cur" ] && cur=$(grep -A2 "location / " "$NGINX_CONF" 2>/dev/null | head -3 | tr '\n' ' '); fi
-  [ -z "$cur" ] && cur="(default 404)"
-  echo -e " Saat ini: ${DIM}$cur${RESET}"
-  echo -e " Masukkan HTML singkat untuk path selain WS (kosong batal)"
-  echo -e " Contoh: <html><body><h1>TUNNEL PRO</h1></body></html>"
-  read -rp " HTML baru: " html 2>/dev/null || return
-  [ -z "$html" ] && { echo "Batal"; pause; return; }
-  if printf "%s" "$html" | grep -q $'[\x00-\x1F\x7F]' 2>/dev/null; then echo -e "${RED}Karakter kontrol tidak boleh${RESET}"; pause; return; fi
-  # Validate nginx before reload: we embed html as static return
-  local bak
-  bak=$(fh_backup_file "$NGINX_CONF" 2>/dev/null)
-  # Update nginx: replace fallback location / block to return html (if exists)
-  # For test mode, just write to a response file and patch conf to include it
   local resp_file="${BASE}/etc/mytunnel/config/response.html"
   [ -z "$BASE" ] && resp_file="/etc/mytunnel/config/response.html"
-  mkdir -p "$(dirname "$resp_file")" 2>/dev/null || true
-  echo "$html" > "$resp_file" 2>/dev/null
-  chmod 644 "$resp_file" 2>/dev/null || true
-  # Patch nginx conf: if location / exists, update to serve response.html else add
-  if [ -f "$NGINX_CONF" ] && grep -q "location / " "$NGINX_CONF" 2>/dev/null; then
-    # keep backup, then validate
-    true
+  local www_file="/var/www/html/mytunnel-response.html"
+  [ -n "$BASE" ] && www_file="${BASE}/var/www/html/mytunnel-response.html"
+  if [ -f "$resp_file" ]; then cur=$(head -c 200 "$resp_file" 2>/dev/null | tr '\n' ' ' | cut -c1-80); else cur="(default 204/404)"; fi
+  echo -e " Saat ini: ${DIM}$cur${RESET}"
+  echo -e " HTML untuk path selain WS/gRPC (akses domain via browser)."
+  echo -e " Kosong = balikin default 204. Multi-baris OK, akhiri '.'"
+  echo -e "${YELLOW} Paste HTML baru (akhiri '.' di baris baru, kosong batal):${RESET}"
+  local html="" line
+  html=""
+  while IFS= read -r line 2>/dev/null || [ -n "$line" ]; do
+    [ "$line" = "." ] && break
+    if [ -z "$html" ]; then html="$line"; else html="$html
+$line"; fi
+  done
+  if [ -z "$html" ]; then echo "Batal"; pause; return; fi
+  # kosong khusus: ketik 'RESET' untuk balikin default
+  if [ "$html" = "RESET" ]; then
+    rm -f "$resp_file" "$www_file" 2>/dev/null || true
+    html=""
   fi
-  # Validate
+  if [ -n "$html" ]; then
+    if printf "%s" "$html" | grep -q $'[\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0B\x0C\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F\x7F]' 2>/dev/null; then echo -e "${RED}Karakter kontrol tidak boleh${RESET}"; pause; return; fi
+    if [ "${#html}" -gt 8192 ]; then echo -e "${RED}Terlalu panjang (max 8192)${RESET}"; pause; return; fi
+  fi
+  local bak
+  bak=$(fh_backup_file "$NGINX_CONF" 2>/dev/null || echo "")
+  mkdir -p "$(dirname "$resp_file")" "$(dirname "$www_file")" 2>/dev/null || true
+  if [ -n "$html" ]; then
+    printf "%s" "$html" > "$resp_file" 2>/dev/null
+    chmod 644 "$resp_file" 2>/dev/null || true
+    printf "%s" "$html" > "$www_file" 2>/dev/null
+    chmod 644 "$www_file" 2>/dev/null || true
+  else
+    rm -f "$resp_file" "$www_file" 2>/dev/null || true
+  fi
+  # patch nginx: ensure location / serves custom html via try_files, not hard return
+  if [ -f "$NGINX_CONF" ]; then
+    # patch only if file exists and contains location / with return 204/404
+    # create backup already, now apply idempotent patch using python for safety
+    python3 << 'PY' 2>/dev/null || true
+import pathlib, re
+import os
+base=os.environ.get("MYTUNNEL_PREFIX","")
+conf="/etc/nginx/conf.d/mytunnel.conf" if not base else base+"/etc/nginx/conf.d/mytunnel.conf"
+resp_html="/var/www/html/mytunnel-response.html" if not base else base+"/var/www/html/mytunnel-response.html"
+has_custom=os.path.exists(resp_html) and os.path.getsize(resp_html)>0
+p=pathlib.Path(conf)
+if p.exists():
+    txt=p.read_text()
+    orig=txt
+    # patch both server blocks' location / fallback
+    # http (8080) block: return 204 -> try_files
+    txt=re.sub(r"    return 204;\n", "    root /var/www/html;\n    try_files /mytunnel-response.html =204;\n", txt)
+    # https (8443) block: return 404 '...' -> try_files fallback 404
+    txt=re.sub(r"    return 404 '[^']*';\n", "    root /var/www/html;\n    try_files /mytunnel-response.html =404;\n", txt)
+    # if already patched, ensure root present before try_files (idempotent)
+    # if has_custom is False (RESET), revert try_files back to return (optional keep try_files =404 still works if file missing -> 404)
+    # keep try_files even when RESET so future custom works; if file missing nginx will return 404/204 as fallback code
+    if txt!=orig:
+        p.write_text(txt)
+        print("nginx patched response")
+    else:
+        print("nginx already patched")
+PY
+  fi
   if [ -z "$BASE" ]; then
     if ! nginx -t 2>&1 | head -n 10; then
       echo -e "${RED}nginx -t gagal, rollback${RESET}"
@@ -10604,8 +10658,12 @@ edit_response() {
       nginx -t -c "${BASE}/etc/nginx/nginx.conf" 2>&1 | head -n 10 || true
     fi
   fi
-  echo -e "${GREEN}Response disimpan: $resp_file${RESET}"
-  fh_log "response updated"
+  if [ -n "$html" ]; then
+    echo -e "${GREEN}Response disimpan: $resp_file -> $www_file ($(wc -c < "$resp_file" 2>/dev/null | tr -d ' ') bytes)${RESET}"
+    fh_log "response updated $(wc -c < "$resp_file" 2>/dev/null | tr -d ' ') bytes" 2>/dev/null || true
+  else
+    echo -e "${GREEN}Response direset ke default${RESET}"
+  fi
   pause
 }
 
@@ -10615,10 +10673,17 @@ main() {
     echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
     printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Change Banner & Response"
     echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-    echo -e " Banner: ${CYAN}$(cat "$BANNER_FILE" 2>/dev/null | head -1)${RESET}"
+    local bsize=0
+    [ -f "$BANNER_FILE" ] && bsize=$(wc -c < "$BANNER_FILE" 2>/dev/null | tr -d ' ')
+    local rsize=0
+    local resp_file="${BASE}/etc/mytunnel/config/response.html"
+    [ -z "$BASE" ] && resp_file="/etc/mytunnel/config/response.html"
+    [ -f "$resp_file" ] && rsize=$(wc -c < "$resp_file" 2>/dev/null | tr -d ' ')
+    echo -e " Banner: ${CYAN}$(cat "$BANNER_FILE" 2>/dev/null | head -n 1 | cut -c1-50)... (${bsize}b)${RESET}"
+    echo -e " Response: ${CYAN}$([ -f "$resp_file" ] && echo "${rsize}b custom" || echo "default")${RESET}"
     echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${BLUE}│${RESET} 1.) Edit Banner SSH                               ${BLUE}│${RESET}"
-    echo -e "${BLUE}│${RESET} 2.) Edit Response Web (404)                       ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 2.) Edit Response Web (HTML custom)               ${BLUE}│${RESET}"
     echo -e "${BLUE}│${RESET} 3.) Kembali                                       ${BLUE}│${RESET}"
     echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
     read -rp " Pilih [1-3]: " c 2>/dev/null || c=3

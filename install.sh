@@ -2,7 +2,7 @@
 # mytunnel install.sh - TUNNEL PRO v1.1.0 (TAHAP 1+2+3+4+5+6+8)
 # Debian 11/12, Ubuntu 18/20/22/24 - disarankan Debian 12 / Ubuntu 22.04
 # Idempotent, testable via MYTUNNEL_PREFIX=... MYTUNNEL_DOMAIN=example.com bash install.sh --no-deps
-# Aman: wget -qO install.sh https://raw.githubusercontent.com/Emans27/tunnel-allinone/main/install.sh && less install.sh && bash install.sh
+# Aman: wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh
 # Non-interaktif: MYTUNNEL_DOMAIN=example.com MYTUNNEL_BRAND="My Brand" MYTUNNEL_YES=1 bash install.sh
 #                 bash install.sh --domain example.com --brand "My Brand" --yes
 set -e
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --brand=*) MYTUNNEL_BRAND="${1#*=}"; shift;;
     --yes|-y) AUTO_YES=1; MYTUNNEL_YES=1; shift;;
     --no-deps) NO_DEPS=1; shift;;
-    --help|-h) echo "Usage: bash install.sh [--domain example.com] [--brand \"My Brand\"] [--yes] [--no-deps]"; echo " Env: MYTUNNEL_DOMAIN, MYTUNNEL_BRAND, MYTUNNEL_YES=1, MYTUNNEL_PREFIX=/tmp/test (test mode)"; echo " Aman: wget -qO install.sh https://raw.githubusercontent.com/Emans27/tunnel-allinone/main/install.sh && less install.sh && bash install.sh"; echo " Non-interaktif: MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh"; exit 0;;
+    --help|-h) echo "Usage: bash install.sh [--domain example.com] [--brand \"My Brand\"] [--yes] [--no-deps]"; echo " Env: MYTUNNEL_DOMAIN, MYTUNNEL_BRAND, MYTUNNEL_YES=1, MYTUNNEL_PREFIX=/tmp/test (test mode)"; echo " Aman: wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh"; echo " Non-interaktif: MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh"; exit 0;;
     *) echo -e "${YELLOW}Arg tidak dikenal: $1${RESET}" >&2; shift;;
   esac
 done
@@ -347,7 +347,7 @@ xray_add_client() {
       vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
       trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
     esac
-    if [ -s "$clean_tmp" ]; then cp -a "$clean_tmp" "$cfg" 2>/dev/null || true; fi
+    if [ -s "$clean_tmp" ]; then cp -a "$clean_tmp" "$cfg" 2>/dev/null || true; chmod 644 "$cfg" 2>/dev/null || true; fi
     rm -f "$clean_tmp" 2>/dev/null || true
   fi
   local add_ok=1
@@ -378,10 +378,12 @@ xray_add_client() {
     echo -e "${RED}Gagal edit config (jq)${RESET}" >&2; cat "$tmp" 2>/dev/null | head -n 20 >&2; rm -f "$tmp"; return 1
   fi
   cp -a "$tmp" "$cfg" 2>/dev/null || { echo -e "${RED}Gagal tulis $cfg${RESET}" >&2; rm -f "$tmp"; return 1; }
+  chmod 644 "$cfg" 2>/dev/null || true
   rm -f "$tmp"
   if ! _validate_cfg; then
     echo -e "${RED}Validasi gagal, rollback ke $bak${RESET}" >&2
     [ -n "$bak" ] && [ -f "$bak" ] && cp -a "$bak" "$cfg" 2>/dev/null || true
+    chmod 644 "$cfg" 2>/dev/null || true
     return 1
   fi
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray add $proto $email (3 inbounds)" >> "$LOG" 2>/dev/null || true
@@ -405,10 +407,12 @@ xray_del_client() {
     trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
   esac
   cp -a "$tmp" "$cfg" 2>/dev/null || { echo -e "${RED}Gagal tulis $cfg${RESET}" >&2; rm -f "$tmp"; return 1; }
+  chmod 644 "$cfg" 2>/dev/null || true
   rm -f "$tmp"
   if ! _validate_cfg; then
     echo -e "${RED}Validasi gagal, rollback${RESET}" >&2
     [ -n "$bak" ] && [ -f "$bak" ] && cp -a "$bak" "$cfg" 2>/dev/null || true
+    chmod 644 "$cfg" 2>/dev/null || true
     return 1
   fi
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray del $proto $email" >> "$LOG" 2>/dev/null || true
@@ -1635,7 +1639,7 @@ cat > "$ETC/menu/ssh.sh" << '__EMBED_EOF__'
 # shellcheck disable=SC1090,SC1091,SC2155
 MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
 if [ -n "$MYTUNNEL_PREFIX" ]; then BASE="$MYTUNNEL_PREFIX/etc/mytunnel"; else BASE="/etc/mytunnel"; fi
-for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh" "$BASE/lib/sysinfo.sh" "$BASE/lib/ssh_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh" "$BASE/lib/sysinfo.sh" "$BASE/lib/ssh_helpers.sh" "$BASE/lib/advanced_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 BLUE="${BLUE:-\033[0;34m}"; CYAN="${CYAN:-\033[0;36m}"; RESET="${RESET:-\033[0m}"
 BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"; GREY="${GREY:-\033[0;37m}"
@@ -1743,6 +1747,11 @@ do_create() {
     local exp
     exp=$(ssh_get_field "$user" 3 2>/dev/null || echo "-")
     print_ssh_account_info "$user" "$pass" "$exp" "$limit_ip" 2>/dev/null || true
+    # notify Telegram admin (auto-kirim akun)
+    if declare -f ah_notify_admin >/dev/null 2>&1; then
+      _ntf=$(print_ssh_account_info "$user" "$pass" "$exp" "$limit_ip" 2>/dev/null || echo "SSH $user | $pass | exp $exp | limit $limit_ip")
+      ah_notify_admin "$_ntf" 2>/dev/null || true
+    fi
   else
     echo -e "${RED}Gagal buat $user${RESET}"
   fi
@@ -1783,6 +1792,11 @@ do_trial() {
   fi
   echo -e "${GREEN}Trial dibuat 60 menit${RESET}"
   print_ssh_account_info "$user" "$pass" "$exp" "1" 2>/dev/null || true
+  # notify Telegram admin (trial)
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    _ntf=$(print_ssh_account_info "$user" "$pass" "$exp" "1" 2>/dev/null || echo "SSH trial $user | $pass | exp $exp")
+    ah_notify_admin "$_ntf" 2>/dev/null || true
+  fi
   echo -e "${YELLOW}Akan dihapus otomatis 60 menit${RESET}"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
@@ -2124,7 +2138,6 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
-
 __EMBED_EOF__
 chmod 755 "$ETC/menu/ssh.sh"
 cat > "$ETC/menu/vmess.sh" << '__EMBED_EOF__'
@@ -2133,7 +2146,7 @@ cat > "$ETC/menu/vmess.sh" << '__EMBED_EOF__'
 # shellcheck disable=SC1091,SC1090,SC2155,SC2034
 MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
 if [ -n "$MYTUNNEL_PREFIX" ]; then BASE="$MYTUNNEL_PREFIX/etc/mytunnel"; else BASE="/etc/mytunnel"; fi
-for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh" "$BASE/lib/sysinfo.sh" "$BASE/lib/xray_helpers.sh" "$BASE/lib/proto_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh" "$BASE/lib/sysinfo.sh" "$BASE/lib/xray_helpers.sh" "$BASE/lib/proto_helpers.sh" "$BASE/lib/advanced_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 BLUE="${BLUE:-\033[0;34m}"; CYAN="${CYAN:-\033[0;36m}"; RESET="${RESET:-\033[0m}"
 BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"; GREY="${GREY:-\033[0;37m}"
@@ -2246,6 +2259,11 @@ do_create() {
   if proto_create "$PROTO" "$user" "$id" "$days" "$limit_ip" "$quota" 2>&1; then
     echo ""
     print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
+    # notify Telegram admin
+    if declare -f ah_notify_admin >/dev/null 2>&1; then
+      _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO $user dibuat")
+      ah_notify_admin "$_ntf" 2>/dev/null || true
+    fi
   else
     echo -e "${RED}Gagal buat $user${RESET}"
   fi
@@ -2326,6 +2344,11 @@ do_trial() {
   if ! proto_create "$PROTO" "$user" "$id" 1 1 1 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
   echo -e "${GREEN}Trial dibuat 60 menit (1 hari, limit 1 IP, quota 1GB)${RESET}"
   print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
+  # notify Telegram admin (trial)
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO trial $user")
+    ah_notify_admin "$_ntf" 2>/dev/null || true
+  fi
   if [ -n "$MYTUNNEL_PREFIX" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial vmess $user scheduled delete in 60m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
     echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user vmess" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
@@ -2594,7 +2617,6 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
-
 __EMBED_EOF__
 chmod 755 "$ETC/menu/vmess.sh"
 cat > "$ETC/menu/vless.sh" << '__EMBED_EOF__'
@@ -2603,7 +2625,7 @@ cat > "$ETC/menu/vless.sh" << '__EMBED_EOF__'
 # shellcheck disable=SC1091,SC1090,SC2155,SC2034
 MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
 if [ -n "$MYTUNNEL_PREFIX" ]; then BASE="$MYTUNNEL_PREFIX/etc/mytunnel"; else BASE="/etc/mytunnel"; fi
-for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh" "$BASE/lib/sysinfo.sh" "$BASE/lib/xray_helpers.sh" "$BASE/lib/proto_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh" "$BASE/lib/sysinfo.sh" "$BASE/lib/xray_helpers.sh" "$BASE/lib/proto_helpers.sh" "$BASE/lib/advanced_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 BLUE="${BLUE:-\033[0;34m}"; CYAN="${CYAN:-\033[0;36m}"; RESET="${RESET:-\033[0m}"
 BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"; GREY="${GREY:-\033[0;37m}"
@@ -2716,6 +2738,11 @@ do_create() {
   if proto_create "$PROTO" "$user" "$id" "$days" "$limit_ip" "$quota" 2>&1; then
     echo ""
     print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
+    # notify Telegram admin
+    if declare -f ah_notify_admin >/dev/null 2>&1; then
+      _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO $user dibuat")
+      ah_notify_admin "$_ntf" 2>/dev/null || true
+    fi
   else
     echo -e "${RED}Gagal buat $user${RESET}"
   fi
@@ -2796,6 +2823,11 @@ do_trial() {
   if ! proto_create "$PROTO" "$user" "$id" 1 1 1 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
   echo -e "${GREEN}Trial dibuat 60 menit (1 hari, limit 1 IP, quota 1GB)${RESET}"
   print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
+  # notify Telegram admin (trial)
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO trial $user")
+    ah_notify_admin "$_ntf" 2>/dev/null || true
+  fi
   if [ -n "$MYTUNNEL_PREFIX" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial vless $user scheduled delete in 60m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
     echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user vless" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
@@ -3064,7 +3096,6 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
-
 __EMBED_EOF__
 chmod 755 "$ETC/menu/vless.sh"
 cat > "$ETC/menu/trojan.sh" << '__EMBED_EOF__'
@@ -3073,7 +3104,7 @@ cat > "$ETC/menu/trojan.sh" << '__EMBED_EOF__'
 # shellcheck disable=SC1091,SC1090,SC2155,SC2034
 MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
 if [ -n "$MYTUNNEL_PREFIX" ]; then BASE="$MYTUNNEL_PREFIX/etc/mytunnel"; else BASE="/etc/mytunnel"; fi
-for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh" "$BASE/lib/sysinfo.sh" "$BASE/lib/xray_helpers.sh" "$BASE/lib/proto_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh" "$BASE/lib/sysinfo.sh" "$BASE/lib/xray_helpers.sh" "$BASE/lib/proto_helpers.sh" "$BASE/lib/advanced_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 BLUE="${BLUE:-\033[0;34m}"; CYAN="${CYAN:-\033[0;36m}"; RESET="${RESET:-\033[0m}"
 BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"; GREY="${GREY:-\033[0;37m}"
@@ -3186,6 +3217,11 @@ do_create() {
   if proto_create "$PROTO" "$user" "$id" "$days" "$limit_ip" "$quota" 2>&1; then
     echo ""
     print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
+    # notify Telegram admin
+    if declare -f ah_notify_admin >/dev/null 2>&1; then
+      _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO $user dibuat")
+      ah_notify_admin "$_ntf" 2>/dev/null || true
+    fi
   else
     echo -e "${RED}Gagal buat $user${RESET}"
   fi
@@ -3266,6 +3302,11 @@ do_trial() {
   if ! proto_create "$PROTO" "$user" "$id" 1 1 1 2>&1; then echo -e "${RED}Gagal buat trial${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 1; fi
   echo -e "${GREEN}Trial dibuat 60 menit (1 hari, limit 1 IP, quota 1GB)${RESET}"
   print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || true
+  # notify Telegram admin (trial)
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    _ntf=$(print_proto_account_info "$PROTO" "$user" 2>/dev/null || gen_links "$PROTO" "$user" 2>/dev/null || echo "$PROTO trial $user")
+    ah_notify_admin "$_ntf" 2>/dev/null || true
+  fi
   if [ -n "$MYTUNNEL_PREFIX" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] trial trojan $user scheduled delete in 60m (TEST simulasi)" >> "$LOG" 2>/dev/null || true
     echo "$(date -d '+60 minutes' +%s 2>/dev/null || echo 0) $user trojan" >> "$BASE/db/.trial_schedule" 2>/dev/null || true
@@ -3533,7 +3574,6 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
-
 __EMBED_EOF__
 chmod 755 "$ETC/menu/trojan.sh"
 cat > "$ETC/menu/features.sh" << '__EMBED_EOF__'
@@ -10022,7 +10062,7 @@ check_update() {
   if [ -z "$remote_ver" ]; then
     echo -e "${YELLOW}Tidak bisa ambil VERSION dari repo${RESET}"
     echo -e "${DIM}Pastikan $REPO_FILE berisi URL raw, contoh:${RESET}"
-    echo -e "${DIM}https://raw.githubusercontent.com/Emans27/tunnel-allinone/main${RESET}"
+    echo -e "${DIM}https://raw.githubusercontent.com/USER/REPO/main${RESET}"
     pause; return
   fi
   echo -e " Remote: ${GREEN}$remote_ver${RESET}"
@@ -10851,7 +10891,7 @@ echo -e "    ${CYAN}menu${RESET}  (atau ${CYAN}/usr/local/bin/menu${RESET}, ${CY
 echo -e "  ${BOLD}Update:${RESET}  ${CYAN}menu -> FEATURES -> Auto Update${RESET}  atau  ${CYAN}bash $ETC/features/autoupdate.sh${RESET}"
 echo -e "  ${BOLD}Uninstall:${RESET} ${CYAN}bash ${BASE}/uninstall.sh${RESET}  (ketik ${BOLD}hapus${RESET})"
 echo -e "  ${BOLD}Satu perintah (baru):${RESET}"
-echo -e "    ${DIM}wget -qO install.sh https://raw.githubusercontent.com/Emans27/tunnel-allinone/main/install.sh && less install.sh && bash install.sh${RESET}"
+echo -e "    ${DIM}wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh${RESET}"
 echo -e "    ${DIM}MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh  # non-interaktif${RESET}"
 echo ""
 _log "install selesai: domain=$DOMAIN brand=$BRAND ver=$VER"

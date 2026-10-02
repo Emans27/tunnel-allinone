@@ -1661,15 +1661,15 @@ setup_bot_stub() {
 
 dispatch() {
   case "$1" in
-    1) "$BASE/menu/ssh.sh" 2>/dev/null || { echo -e "${RED}menu ssh belum ada${RESET}"; pause; };;
-    2) "$BASE/menu/vmess.sh" 2>/dev/null || { echo -e "${RED}menu vmess belum ada${RESET}"; pause; };;
-    3) "$BASE/menu/vless.sh" 2>/dev/null || { echo -e "${RED}menu vless belum ada${RESET}"; pause; };;
-    4) "$BASE/menu/trojan.sh" 2>/dev/null || { echo -e "${RED}menu trojan belum ada${RESET}"; pause; };;
+    1) bash "$BASE/menu/ssh.sh" 2>/dev/null || { echo -e "${RED}menu ssh belum ada${RESET}"; pause; };;
+    2) bash "$BASE/menu/vmess.sh" 2>/dev/null || { echo -e "${RED}menu vmess belum ada${RESET}"; pause; };;
+    3) bash "$BASE/menu/vless.sh" 2>/dev/null || { echo -e "${RED}menu vless belum ada${RESET}"; pause; };;
+    4) bash "$BASE/menu/trojan.sh" 2>/dev/null || { echo -e "${RED}menu trojan belum ada${RESET}"; pause; };;
     5) setup_bot_stub;;
-    6) "$BASE/menu/features.sh" 2>/dev/null || { echo -e "${RED}menu features belum ada${RESET}"; pause; };;
+    6) bash "$BASE/menu/features.sh" 2>/dev/null || { echo -e "${RED}menu features belum ada${RESET}"; pause; };;
     7) set_brand_name;;
     8) check_services;;
-    9) "$BASE/menu/doctor.sh" 2>/dev/null || { echo -e "${RED}doctor belum ada${RESET}"; pause; };;
+    9) bash "$BASE/menu/doctor.sh" 2>/dev/null || { echo -e "${RED}doctor belum ada${RESET}"; pause; };;
     x|X) echo -e "${GREEN}Keluar...${RESET}"; exit 0;;
     *) echo -e "${RED}Pilihan tidak valid: $1${RESET}"; sleep 1;;
   esac

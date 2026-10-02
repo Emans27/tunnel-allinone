@@ -1734,7 +1734,8 @@ _show_user_list_numbered() {
     while IFS='|' read -r user _pass exp limit status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
-      printf "${BLUE}│${RESET} %2d) %-16s exp:%-10s %3sd %-6s ${BLUE}│${RESET}\n" "$i" "$user" "$exp" "$days" "$status"
+      printf -v _inner "%2d) %-16s exp:%-10s %3sd %-6s" "$i" "$user" "$exp" "$days" "$status"
+      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
       i=$((i+1))
     done < <(_list_users_raw)
   fi
@@ -1947,7 +1948,7 @@ do_check_login() {
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login SSH"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
   _ensure_db
-  local found=0 user
+  local found=0 user i=1
   while IFS='|' read -r user _pass _exp _limit _status; do
     [ -z "$user" ] && continue
     local ips cnt
@@ -1968,8 +1969,8 @@ do_check_login() {
       fi
     fi
     if [ -n "$ips" ] || [ "$cnt" -gt 0 ] 2>/dev/null; then
-      printf " %-12s : %2s/%-2s IP  %s ${GREY}[%s]${RESET}\n" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
-      found=1
+      printf "%2d) %-12s : %2s/%-2s IP  %s ${GREY}[%s]${RESET}\n" "$i" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
+      found=1; i=$((i+1))
     fi
   done < <(_list_users_raw)
   [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada user login / belum ada sesi)${RESET}"
@@ -1994,22 +1995,38 @@ do_list() {
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users SSH"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %3s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "Lim" "On" "Status"
+  printf -v _inner "%2s %-10s %-10s %3s %3s %3s %-6s" "No" "User" "Expiry" "Sisa" "Lim" "On" "Status"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$_inner"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   if [ ! -s "$DB" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
   else
-    local user pass exp limit status days cnt
+    local user pass exp limit status days cnt i=1
     while IFS='|' read -r user pass exp limit status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
       cnt=$(_ssh_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      printf "${BLUE}│${RESET} %-12s %-10s %3sd %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "$cnt" "$status"
+      printf -v _inner "%2d %-10s %-10s %3sd %3s %3s %-6s" "$i" "$user" "$exp" "$days" "${limit:-0}" "$cnt" "$status"
+      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
+      i=$((i+1))
     done < <(_list_users_raw)
   fi
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
   echo -e "${GREY}Lim=Limit IP, On=IP login sekarang${RESET}"
+  echo -e "${GREY}Pilih nomor untuk detail (0 kembali):${RESET}"
+  echo -ne "${CYAN}Nomor: ${RESET}"
+  read -r num
+  [[ "$num" =~ ^[0-9]+$ ]] || { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  [ "$num" -eq 0 ] && return 0
+  local _u; _u=$(_pick_user_by_number "$num")
+  [ -z "$_u" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
+  clear 2>/dev/null || printf '\033c'
+  local _pass _exp _lim
+  _pass=$(ssh_get_field "$_u" 2 2>/dev/null || echo "-")
+  _exp=$(ssh_get_field "$_u" 3 2>/dev/null || echo "-")
+  _lim=$(ssh_get_field "$_u" 4 2>/dev/null || echo "0")
+  print_ssh_account_info "$_u" "$_pass" "$_exp" "$_lim" 2>/dev/null || echo "User tidak ada"
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
@@ -2283,7 +2300,8 @@ _show_user_list_numbered() {
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
-      printf "${BLUE}│${RESET} %2d) %-14s exp:%-10s %3sd q:%-3s lim:%-2s %-6s ${BLUE}│${RESET}\n" "$i" "$user" "$exp" "$days" "${quota:-0}" "${limit:-0}" "$status"
+      printf -v _inner "%2d) %-12s exp:%-10s %3sd q:%-3s lim:%-2s %-6s" "$i" "$user" "$exp" "$days" "${quota:-0}" "${limit:-0}" "$status"
+      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
       i=$((i+1))
     done < <(_list_users_raw)
   fi
@@ -2542,7 +2560,7 @@ do_check_login() {
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login VMESS"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
   _ensure_db
-  local found=0 user
+  local found=0 user i=1
   while IFS='|' read -r user _id _exp _limit _quota _used _status; do
     [ -z "$user" ] && continue
     local cnt ips logf
@@ -2555,8 +2573,8 @@ do_check_login() {
       ips=$(echo "$ips" | head -c 42)
     fi
     if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
-      printf " %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
-      found=1
+      printf "%2d) %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$i" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
+      found=1; i=$((i+1))
     else
       # tetap tampilkan yang limit 0? tidak — hanya yang online
       true
@@ -2584,18 +2602,21 @@ do_list() {
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users VMESS"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %3s %3s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
+  printf -v _inner "%2s %-10s %-10s %3s %3s %3s %3s %-6s" "No" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$_inner"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   if [ ! -s "$DB" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
   else
-    local user exp limit quota status days cnt
+    local user exp limit quota status days cnt i=1
     while IFS='|' read -r user _id exp limit quota _used status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
       cnt=$(_xray_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      printf "${BLUE}│${RESET} %-12s %-10s %3sd %3s %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
+      printf -v _inner "%2d %-10s %-10s %3sd %3s %3s %3s %-6s" "$i" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
+      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
+      i=$((i+1))
     done < <(_list_users_raw)
   fi
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
@@ -2810,7 +2831,8 @@ _show_user_list_numbered() {
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
-      printf "${BLUE}│${RESET} %2d) %-14s exp:%-10s %3sd q:%-3s lim:%-2s %-6s ${BLUE}│${RESET}\n" "$i" "$user" "$exp" "$days" "${quota:-0}" "${limit:-0}" "$status"
+      printf -v _inner "%2d) %-12s exp:%-10s %3sd q:%-3s lim:%-2s %-6s" "$i" "$user" "$exp" "$days" "${quota:-0}" "${limit:-0}" "$status"
+      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
       i=$((i+1))
     done < <(_list_users_raw)
   fi
@@ -3069,7 +3091,7 @@ do_check_login() {
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login VLESS"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
   _ensure_db
-  local found=0 user
+  local found=0 user i=1
   while IFS='|' read -r user _id _exp _limit _quota _used _status; do
     [ -z "$user" ] && continue
     local cnt ips logf
@@ -3082,8 +3104,8 @@ do_check_login() {
       ips=$(echo "$ips" | head -c 42)
     fi
     if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
-      printf " %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
-      found=1
+      printf "%2d) %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$i" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
+      found=1; i=$((i+1))
     else
       # tetap tampilkan yang limit 0? tidak — hanya yang online
       true
@@ -3111,18 +3133,21 @@ do_list() {
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users VLESS"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %3s %3s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
+  printf -v _inner "%2s %-10s %-10s %3s %3s %3s %3s %-6s" "No" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$_inner"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   if [ ! -s "$DB" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
   else
-    local user exp limit quota status days cnt
+    local user exp limit quota status days cnt i=1
     while IFS='|' read -r user _id exp limit quota _used status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
       cnt=$(_xray_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      printf "${BLUE}│${RESET} %-12s %-10s %3sd %3s %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
+      printf -v _inner "%2d %-10s %-10s %3sd %3s %3s %3s %-6s" "$i" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
+      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
+      i=$((i+1))
     done < <(_list_users_raw)
   fi
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
@@ -3337,7 +3362,8 @@ _show_user_list_numbered() {
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
-      printf "${BLUE}│${RESET} %2d) %-14s exp:%-10s %3sd q:%-3s lim:%-2s %-6s ${BLUE}│${RESET}\n" "$i" "$user" "$exp" "$days" "${quota:-0}" "${limit:-0}" "$status"
+      printf -v _inner "%2d) %-12s exp:%-10s %3sd q:%-3s lim:%-2s %-6s" "$i" "$user" "$exp" "$days" "${quota:-0}" "${limit:-0}" "$status"
+      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
       i=$((i+1))
     done < <(_list_users_raw)
   fi
@@ -3595,7 +3621,7 @@ do_check_login() {
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login TROJAN"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
   _ensure_db
-  local found=0 user
+  local found=0 user i=1
   while IFS='|' read -r user _id _exp _limit _quota _used _status; do
     [ -z "$user" ] && continue
     local cnt ips logf
@@ -3608,8 +3634,8 @@ do_check_login() {
       ips=$(echo "$ips" | head -c 42)
     fi
     if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
-      printf " %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
-      found=1
+      printf "%2d) %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$i" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
+      found=1; i=$((i+1))
     else
       # tetap tampilkan yang limit 0? tidak — hanya yang online
       true
@@ -3637,18 +3663,21 @@ do_list() {
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users TROJAN"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %3s %3s %3s %3s %-6s${RESET} ${BLUE}│${RESET}\n" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
+  printf -v _inner "%2s %-10s %-10s %3s %3s %3s %3s %-6s" "No" "User" "Expiry" "Sisa" "Lim" "Q" "On" "Status"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$_inner"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   if [ ! -s "$DB" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
   else
-    local user exp limit quota status days cnt
+    local user exp limit quota status days cnt i=1
     while IFS='|' read -r user _id exp limit quota _used status; do
       [ -z "$user" ] && continue
       days=$(_days_left_calc "$exp")
       [ "$days" -lt 0 ] && days=0
       cnt=$(_xray_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      printf "${BLUE}│${RESET} %-12s %-10s %3sd %3s %3s %3s %-6s ${BLUE}│${RESET}\n" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
+      printf -v _inner "%2d %-10s %-10s %3sd %3s %3s %3s %-6s" "$i" "$user" "$exp" "$days" "${limit:-0}" "${quota:-0}" "$cnt" "$status"
+      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
+      i=$((i+1))
     done < <(_list_users_raw)
   fi
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"

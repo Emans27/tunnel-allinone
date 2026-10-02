@@ -5254,7 +5254,7 @@ $http_listens
     error_page 418 = @sshws;
     if (\$http_upgrade ~* websocket) { return 418; }
     default_type text/html;
-    return 200 '<html><body><h1>mytunnel</h1><p>Use WS /vmess /vless /trojan or HU /upvmess via TLS 443.</p></body></html>';
+    return 204;
   }
   location @sshws {
     proxy_pass http://127.0.0.1:10004;

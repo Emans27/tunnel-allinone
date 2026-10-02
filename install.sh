@@ -7541,9 +7541,10 @@ def ws_handshake(conn):
             return "raw"
         key_m = re.search(r"Sec-WebSocket-Key:\s*(.+)\r\n", data, re.I)
         if not key_m:
-            conn.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-            return None
-        key = key_m.group(1).strip()
+            # HC on port 80 sends PATCH Upgrade without Sec-WebSocket-Key
+            key = "dGhlIHNhbXBsZSBub25jZQ=="
+        else:
+            key = key_m.group(1).strip()
         accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
         resp = (
             "HTTP/1.1 101 Switching Protocols\r\n"

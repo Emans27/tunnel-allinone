@@ -5030,8 +5030,8 @@ write_config() {
     if [ -z "${_seen_http[$_p]:-}" ]; then
       _seen_http[$_p]=1
       if [ "$_p" = "80" ]; then
-        http_listens="${http_listens}  listen 80 default_server;
-  listen [::]:80 default_server;
+        http_listens="${http_listens}  listen 8080 default_server;
+  listen [::]:8080 default_server;
 "
       else
         http_listens="${http_listens}  listen $_p;
@@ -5061,8 +5061,8 @@ write_config() {
     fi
   done
   # fallback if empty
-  [ -n "$http_listens" ] || http_listens="  listen 80 default_server;
-  listen [::]:80 default_server;
+  [ -n "$http_listens" ] || http_listens="  listen 8080 default_server;
+  listen [::]:8080 default_server;
 "
   [ -n "$https_listens" ] || https_listens="  listen 443 ssl http2;
   listen [::]:443 ssl http2;
@@ -7751,6 +7751,230 @@ main "$@"
 
 __EMBED_EOF__
 chmod 755 "$ETC/setup/sshws.sh"
+cat > "$ETC/setup/httpmux.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel setup/httpmux.sh - HTTP mux port 80 (CONNECT enhanced support for HC)
+# shellcheck disable=SC1091,SC1090,SC2034,SC2155
+set -e
+BASE="${MYTUNNEL_PREFIX:-}"
+ETC="${BASE}/etc/mytunnel"
+BIN="${BASE}/usr/local/bin"
+LOG="${BASE}/var/log/mytunnel.log"
+for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"; RESET="${RESET:-\033[0m}"
+
+install_httpmux() {
+  local dst="$BIN/mytunnel-httpmux.py"
+  if [ -n "$BASE" ]; then
+    echo -e "${YELLOW}[TEST] httpmux -> $dst${RESET}"
+    return 0
+  fi
+  cat > "$dst" << 'PYEOF'
+#!/usr/bin/env python3
+import socket, threading, time, hashlib, base64, re
+LISTEN_HOST="0.0.0.0"
+LISTEN_PORT=80
+SSH_HOST="127.0.0.1"
+SSH_PORT=22
+NGINX_BACKEND_HOST="127.0.0.1"
+NGINX_BACKEND_PORT=8080
+LOG="/tmp/httpmux.log"
+def log(msg):
+    try:
+        with open(LOG,"a") as f: f.write(time.strftime("%Y-%m-%d %H:%M:%S ")+msg+"\n")
+    except: pass
+def pipe(a,b):
+    try:
+        while True:
+            d=a.recv(8192)
+            if not d: break
+            b.sendall(d)
+    except: pass
+    finally:
+        try: a.shutdown(socket.SHUT_RDWR)
+        except: pass
+        try: b.shutdown(socket.SHUT_RDWR)
+        except: pass
+def ws_accept(key):
+    return base64.b64encode(hashlib.sha1((key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+def handle_client(conn, addr):
+    conn.settimeout(8)
+    try:
+        data=b""
+        while b"\r\n\r\n" not in data:
+            c=conn.recv(4096)
+            if not c: break
+            data+=c
+            if len(data)>16384: break
+        if not data:
+            log(f"{addr} no data"); conn.close(); return
+        txt=data.decode(errors="ignore")
+        first_line=txt.splitlines()[0] if txt else ""
+        log(f"{addr} {first_line} len={len(data)}")
+        is_connect = txt.lstrip().upper().startswith("CONNECT")
+        has_upgrade = "upgrade: websocket" in txt.lower()
+        m=re.search(r"Sec-WebSocket-Key:\s*(.+)\r\n", txt, re.I)
+        key=m.group(1).strip() if m else "dGhlIHNhbXBsZSBub25jZQ=="
+        accept=ws_accept(key)
+        hdr_end=data.find(b"\r\n\r\n")+4
+        leftover=data[hdr_end:] if hdr_end>3 else b""
+        if is_connect:
+            if has_upgrade:
+                conn.sendall(f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n".encode())
+                log(f"{addr} CONNECT+Upgrade ->101")
+                if leftover.startswith(b"HTTP/"):
+                    leftover=b""
+                try:
+                    ssh=socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
+                    ssh.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                    conn.settimeout(None); ssh.settimeout(None)
+                    if leftover: ssh.sendall(leftover)
+                    log(f"{addr} ssh connected via CONNECT+Upgrade")
+                except Exception as e:
+                    log(f"{addr} ssh fail {e}"); conn.close(); return
+                t1=threading.Thread(target=pipe, args=(conn,ssh), daemon=True)
+                t2=threading.Thread(target=pipe, args=(ssh,conn), daemon=True)
+                t1.start(); t2.start(); t1.join(); t2.join()
+                log(f"{addr} CONNECT+Upgrade done"); return
+            else:
+                conn.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                log(f"{addr} CONNECT ->200")
+                if leftover and b"upgrade: websocket" in leftover.lower():
+                    mm=re.search(br"Sec-WebSocket-Key:\s*(.+)\r\n", leftover, re.I)
+                    k2=mm.group(1).strip().decode() if mm else key
+                    acc2=ws_accept(k2)
+                    conn.sendall(f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {acc2}\r\n\r\n".encode())
+                    log(f"{addr} pipelined inner Upgrade ->101")
+                    hh=leftover.rfind(b"\r\n\r\n")
+                    leftover=leftover[hh+4:] if hh!=-1 else b""
+                    if leftover.startswith(b"HTTP/"): leftover=b""
+                elif leftover.startswith(b"HTTP/"):
+                    leftover=b""
+                try:
+                    ssh=socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
+                    ssh.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                    if not leftover or len(leftover)==0:
+                        conn.settimeout(3)
+                        try:
+                            nxt=conn.recv(4096)
+                            if nxt:
+                                if b"upgrade: websocket" in nxt.lower():
+                                    mm=re.search(br"Sec-WebSocket-Key:\s*(.+)\r\n", nxt, re.I)
+                                    k2=mm.group(1).strip().decode() if mm else key
+                                    acc2=ws_accept(k2)
+                                    conn.sendall(f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {acc2}\r\n\r\n".encode())
+                                    log(f"{addr} inner Upgrade ->101")
+                                    hh=nxt.rfind(b"\r\n\r\n")
+                                    rest=nxt[hh+4:] if hh!=-1 else b""
+                                    if rest.startswith(b"HTTP/"): rest=b""
+                                    if rest: ssh.sendall(rest)
+                                elif nxt.lstrip().startswith(b"HTTP/") or nxt.lstrip().startswith(b"GET "):
+                                    log(f"{addr} inner GET without Upgrade ignored {nxt[:50]!r}")
+                                    try:
+                                        conn.settimeout(2)
+                                        nxt2=conn.recv(4096)
+                                        if nxt2 and b"upgrade: websocket" in nxt2.lower():
+                                            mm2=re.search(br"Sec-WebSocket-Key:\s*(.+)\r\n", nxt2, re.I)
+                                            k3=mm2.group(1).strip().decode() if mm2 else key
+                                            acc3=ws_accept(k3)
+                                            conn.sendall(f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {acc3}\r\n\r\n".encode())
+                                            log(f"{addr} second inner Upgrade ->101")
+                                            hh2=nxt2.rfind(b"\r\n\r\n")
+                                            rest2=nxt2[hh2+4:] if hh2!=-1 else b""
+                                            if not rest2.startswith(b"HTTP/") and rest2: ssh.sendall(rest2)
+                                        elif nxt2 and not nxt2.startswith(b"HTTP/"):
+                                            ssh.sendall(nxt2)
+                                    except socket.timeout:
+                                        log(f"{addr} no second PATCH after GET")
+                                else:
+                                    ssh.sendall(nxt)
+                        except socket.timeout:
+                            log(f"{addr} no inner Upgrade within 3s, raw SSH pipe")
+                        finally:
+                            conn.settimeout(None)
+                    else:
+                        if leftover: ssh.sendall(leftover)
+                    ssh.settimeout(None); conn.settimeout(None)
+                    log(f"{addr} ssh connected via CONNECT tunnel")
+                except Exception as e:
+                    log(f"{addr} ssh fail after CONNECT {e}"); conn.close(); return
+                t1=threading.Thread(target=pipe, args=(conn,ssh), daemon=True)
+                t2=threading.Thread(target=pipe, args=(ssh,conn), daemon=True)
+                t1.start(); t2.start(); t1.join(); t2.join()
+                log(f"{addr} CONNECT tunnel done"); return
+        else:
+            try:
+                backend=socket.create_connection((NGINX_BACKEND_HOST, NGINX_BACKEND_PORT), timeout=5)
+                backend.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                backend.sendall(data)
+                conn.settimeout(None); backend.settimeout(None)
+                log(f"{addr} forward to nginx {NGINX_BACKEND_PORT}")
+            except Exception as e:
+                log(f"{addr} backend fail {e}"); conn.close(); return
+            t1=threading.Thread(target=pipe, args=(conn,backend), daemon=True)
+            t2=threading.Thread(target=pipe, args=(backend,conn), daemon=True)
+            t1.start(); t2.start(); t1.join(); t2.join()
+            log(f"{addr} forward done"); return
+    except Exception as e:
+        log(f"{addr} exc {e}")
+        try: conn.close()
+        except: pass
+
+def main():
+    s=socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
+    try: s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT,1)
+    except: pass
+    s.bind((LISTEN_HOST, LISTEN_PORT))
+    s.listen(128)
+    print(f"mytunnel-httpmux listening {LISTEN_HOST}:{LISTEN_PORT} -> ssh {SSH_HOST}:{SSH_PORT} / nginx {NGINX_BACKEND_HOST}:{NGINX_BACKEND_PORT}", flush=True)
+    log("httpmux started")
+    while True:
+        conn,addr=s.accept()
+        threading.Thread(target=handle_client, args=(conn,addr), daemon=True).start()
+if __name__=="__main__": main()
+PYEOF
+  chmod 755 "$dst"
+  cat > /etc/systemd/system/mytunnel-httpmux.service << EOF
+[Unit]
+Description=mytunnel HTTP mux port 80 (CONNECT enhanced support)
+After=network.target nginx.service
+Wants=nginx.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 $dst
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable mytunnel-httpmux 2>/dev/null || true
+  systemctl restart mytunnel-httpmux 2>/dev/null || true
+  echo -e "${GREEN}httpmux installed on :80 -> ssh :22 / nginx :8080${RESET}"
+}
+
+uninstall_httpmux() {
+  systemctl stop mytunnel-httpmux 2>/dev/null || true
+  systemctl disable mytunnel-httpmux 2>/dev/null || true
+  rm -f /etc/systemd/system/mytunnel-httpmux.service /usr/local/bin/mytunnel-httpmux.py 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+}
+
+case "${1:-install}" in
+  install) install_httpmux ;;
+  uninstall) uninstall_httpmux ;;
+  *) echo "Usage: $0 {install|uninstall}" >&2; exit 1 ;;
+esac
+
+__EMBED_EOF__
+chmod 755 "$ETC/setup/httpmux.sh"
 cat > "$ETC/setup/tlsmux.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel setup/tlsmux.sh - stunnel 443 -> mux 1443 -> ssh/http

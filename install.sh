@@ -697,18 +697,15 @@ print_ssh_account_info() {
   local domain
   domain=$(cat "$ETC/config/domain.txt" 2>/dev/null | head -1 | tr -d '\n' | tr -d '\r' | tr -d ' ')
   [ -z "$domain" ] || [ "$domain" = "-" ] && domain="-"
-  # port dari config/ports.conf - jangan hardcode
   local pf="$ETC/config/ports.conf"
-  # default port (diganti via ports.conf tanpa edit script) - ponytail: edit ports.conf saja
   local OPENSSH_PORT="444" DROPBEAR_PORT="90" TLS_PORT="443,8443" NONTLS_PORT="80,8080" ANY_PORT="2082,2083,8880" CONFIG_PORT="81"
   local SLOWDNS_PORT="53,5300" UDP_CUSTOM_PORT="1-65535" OHP_SSH_PORT="9080" SQUID_PORT="3128" UDPGW_PORT="7100-7600"
   local OPENVPN_TCP_PORT="1194" OPENVPN_SSL_PORT="442" OPENVPN_UDP_PORT="25000" OPENVPN_DNS_PORT="53" OHP_OVPN_PORT="9088"
   # shellcheck disable=SC1090
   [ -f "$pf" ] && . "$pf" 2>/dev/null || true
   local DASH="------------------------------------"
-  # header
   echo ""
-  echo -e "${GREEN}   Account Created Successfully${RESET}"
+  echo -e "${GREEN}Account Created Successfully${RESET}"
   echo -e "${GREY}${DASH}${RESET}"
   printf "${CYAN}%-15s${RESET} : %s\n" "HOST" "$domain"
   printf "${CYAN}%-15s${RESET} : %s\n" "Username" "$user"
@@ -716,46 +713,52 @@ print_ssh_account_info() {
   echo -e "${GREY}${DASH}${RESET}"
   printf "${CYAN}%-15s${RESET} : %s\n" "Expired" "$expiry"
   echo -e "${GREY}${DASH}${RESET}"
-  # core ports - tampil hanya jika service aktif / port listening; baca dari ports.conf
+  # core ports (only if service active)
   if [ -n "${TLS_PORT:-}" ] && _mt_port_active "nginx" "$TLS_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "TLS" "$TLS_PORT"; fi
   if [ -n "${NONTLS_PORT:-}" ] && _mt_port_active "nginx" "$NONTLS_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "None TLS" "$NONTLS_PORT"; fi
   if [ -n "${ANY_PORT:-}" ] && _mt_port_active "nginx" "$ANY_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "Any" "$ANY_PORT"; fi
   if [ -n "${OPENSSH_PORT:-}" ] && _mt_port_active "sshd" "$OPENSSH_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "OpenSSH" "$OPENSSH_PORT"; fi
-  # dropbear cek 'dropbear' atau 'sshd' fallback
   if [ -n "${DROPBEAR_PORT:-}" ]; then
     if _mt_port_active "dropbear" "$DROPBEAR_PORT" || _mt_port_active "sshd" "$DROPBEAR_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "Dropbear" "$DROPBEAR_PORT"; fi
   fi
   echo -e "${GREY}${DASH}${RESET}"
-  # blok opsional - per baris cek aktif, tampil hanya jika terpasang
+  # optional block (1:1 TUNNELING labels, only if service active)
   local _shown=0
   if [ -n "${SLOWDNS_PORT:-}" ] && _mt_port_active "mytunnel-slowdns" "$SLOWDNS_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "SlowDNS" "$SLOWDNS_PORT"; _shown=1; fi
   if [ -n "${UDP_CUSTOM_PORT:-}" ] && _mt_port_active "mytunnel-udp-custom" "$UDP_CUSTOM_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "UDP-Custom" "$UDP_CUSTOM_PORT"; _shown=1; fi
-  if [ -n "${OHP_SSH_PORT:-}" ] && (_mt_port_active "mytunnel-ohp-ssh" "$OHP_SSH_PORT" || _mt_port_active "ohp" "$OHP_SSH_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "OHP+SSH" "$OHP_SSH_PORT"; _shown=1; fi
-  if [ -n "${SQUID_PORT:-}" ] && _mt_port_active "squid" "$SQUID_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "Squid" "$SQUID_PORT"; _shown=1; fi
+  if [ -n "${OHP_SSH_PORT:-}" ] && (_mt_port_active "mytunnel-ohp-ssh" "$OHP_SSH_PORT" || _mt_port_active "ohp" "$OHP_SSH_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "OHP + SSH" "$OHP_SSH_PORT"; _shown=1; fi
+  if [ -n "${SQUID_PORT:-}" ] && _mt_port_active "squid" "$SQUID_PORT"; then printf "${CYAN}%-15s${RESET} : %s\n" "Squid Proxy" "$SQUID_PORT"; _shown=1; fi
   if [ -n "${UDPGW_PORT:-}" ] && (_mt_port_active "mytunnel-udpgw" "$UDPGW_PORT" || _mt_port_active "badproxy" "$UDPGW_PORT" || _mt_port_active "badvpn-udpgw" "$UDPGW_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "UDPGW" "$UDPGW_PORT"; _shown=1; fi
-  # UDPGW fallback cek badvpn (legacy)
-  if [ -n "${UDPGW_PORT:-}" ] && _mt_port_active "badvpn-udpgw" "$UDPGW_PORT"; then
-    if [ "$_shown" = "0" ] || ! grep -q "UDPGW" <<< "$(printf "%s" "$UDPGW_PORT" 2>/dev/null)"; then :; fi
-  fi
   if [ -n "${OPENVPN_TCP_PORT:-}" ] && (_mt_port_active "openvpn" "$OPENVPN_TCP_PORT" || _mt_port_active "mytunnel-openvpn-tcp" "$OPENVPN_TCP_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "OpenVPN TCP" "$OPENVPN_TCP_PORT"; _shown=1; fi
   if [ -n "${OPENVPN_SSL_PORT:-}" ] && (_mt_port_active "openvpn" "$OPENVPN_SSL_PORT" || _mt_port_active "mytunnel-openvpn-ssl" "$OPENVPN_SSL_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "OpenVPN SSL" "$OPENVPN_SSL_PORT"; _shown=1; fi
   if [ -n "${OPENVPN_UDP_PORT:-}" ] && (_mt_port_active "openvpn" "$OPENVPN_UDP_PORT" || _mt_port_active "mytunnel-openvpn-udp" "$OPENVPN_UDP_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "OpenVPN UDP" "$OPENVPN_UDP_PORT"; _shown=1; fi
-  # OpenVPN DNS 53 mutual exclusion: kalah vs SlowDNS 53 (default SlowDNS menang). Jika SlowDNS aktif, hide OpenVPN DNS agar tidak duplikat :53
   if [ -n "${OPENVPN_DNS_PORT:-}" ] && ! _mt_port_active "mytunnel-slowdns" "$SLOWDNS_PORT" && (_mt_port_active "openvpn" "$OPENVPN_DNS_PORT" || _mt_port_active "mytunnel-openvpn-dns" "$OPENVPN_DNS_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "OpenVPN DNS" "$OPENVPN_DNS_PORT"; _shown=1; fi
-  if [ -n "${OHP_OVPN_PORT:-}" ] && (_mt_port_active "mytunnel-ohp-ovpn" "$OHP_OVPN_PORT" || _mt_port_active "ohp" "$OHP_OVPN_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "OHP+OVPN" "$OHP_OVPN_PORT"; _shown=1; fi
-  if [ "$_shown" = "1" ]; then echo -e "${GREY}${DASH}${RESET}"; fi
-  local _cfg_port="${CONFIG_PORT:-81}"
-  # Link config hanya jika openvpn/zip ada (hasil install OpenVPN) - conditional hide jika belum install
-  if [ -f "${MYTUNNEL_PREFIX:-}/var/www/html/myvpn-config.zip" ] || [ -f "/var/www/html/myvpn-config.zip" ] || [ -f "${MYTUNNEL_PREFIX:-}/etc/openvpn/ca.crt" ] || [ -f "/etc/openvpn/ca.crt" ]; then printf "Link config: http://%s:%s/myvpn-config.zip\n" "$domain" "$_cfg_port"; fi
-  echo -e "${GREY}${DASH}${RESET}"
+  if [ -n "${OHP_OVPN_PORT:-}" ] && (_mt_port_active "mytunnel-ohp-ovpn" "$OHP_OVPN_PORT" || _mt_port_active "ohp" "$OHP_OVPN_PORT"); then printf "${CYAN}%-15s${RESET} : %s\n" "OHP + OVPN" "$OHP_OVPN_PORT"; _shown=1; fi
+  # close optional block + link (avoid double dash)
+  local _has_link=0
+  if [ -f "${MYTUNNEL_PREFIX:-}/var/www/html/myvpn-config.zip" ] || [ -f "/var/www/html/myvpn-config.zip" ] || [ -f "${MYTUNNEL_PREFIX:-}/etc/openvpn/ca.crt" ] || [ -f "/etc/openvpn/ca.crt" ]; then _has_link=1; fi
+  if [ "$_shown" = "1" ] && [ "$_has_link" = "1" ]; then
+    echo -e "${GREY}${DASH}${RESET}"
+    printf "http://%s:%s/myvpn-config.zip\n" "$domain" "${CONFIG_PORT:-81}"
+    echo -e "${GREY}${DASH}${RESET}"
+  elif [ "$_shown" = "1" ]; then
+    echo -e "${GREY}${DASH}${RESET}"
+  elif [ "$_has_link" = "1" ]; then
+    printf "http://%s:%s/myvpn-config.zip\n" "$domain" "${CONFIG_PORT:-81}"
+    echo -e "${GREY}${DASH}${RESET}"
+  else
+    # no optional, no link: dash after core already printed, no extra needed (avoid double)
+    :
+  fi
   echo ""
 }
+
+
 
 # wrapper kompatibilitas: jika proto belum load, SSH tetap jalan (satu fungsi reuse)
 print_account_info() {
   print_ssh_account_info "$@" 2>/dev/null || return $?
 }
-
 __EMBED_EOF__
 chmod 644 "$ETC/lib/ssh_helpers.sh"
 cat > "$ETC/lib/proto_helpers.sh" << '__EMBED_EOF__'
@@ -1459,12 +1462,24 @@ ah_notify_admin(){
   # shellcheck disable=SC1090
   . "$conf" 2>/dev/null || return 0
   [ -z "${BOT_TOKEN:-}" ] || [ -z "${ADMIN_ID:-}" ] && return 0
-  # never log token
-  curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=${msg}" >/dev/null 2>&1 || true
-  ah_log "notify admin: ${msg:0:80}"
+  local clean
+  # strip ANSI agar Telegram rapi 1:1
+  # shellcheck disable=SC2001
+  clean=$(printf "%s" "$msg" | sed 's/\x1b\[[0-9;]*m//g' 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' 2>/dev/null || printf "%s" "$msg")
+  clean=$(printf "%s" "$clean" | tr -d '\r' 2>/dev/null || printf "%s" "$clean")
+  # Telegram monospace: wrap in code block agar alignment rapi (jika belum ada fence)
+  local send_text="$clean"
+  # jika panjang >0 dan belum diawali fence, bungkus ```
+  if [ -n "$clean" ] && ! printf "%s" "$clean" | grep -q '^```'; then
+    send_text="\`\`\`\n${clean}\n\`\`\`"
+  fi
+  curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=Markdown" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
+    # fallback plain tanpa markdown jika gagal
+    curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=${clean}" >/dev/null 2>&1 || true
+  }
+  ah_log "notify admin: ${clean:0:80}"
 }
 # ponytail: checksum DB optional; upgrade to sig verify when upstream publishes
-
 __EMBED_EOF__
 chmod 644 "$ETC/lib/advanced_helpers.sh"
 cat > "$ETC/menu/main.sh" << '__EMBED_EOF__'

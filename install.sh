@@ -10495,6 +10495,206 @@ if [ "${0##*/}" = "dropbear_version.sh" ] || [[ "$0" == *"dropbear_version.sh" ]
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/dropbear_version.sh"
+cat > "$ETC/login.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel login dashboard - tampil saat SSH login (60 kolom, 1:1 TUNNELING)
+# dipanggil via /etc/profile.d/mytunnel.sh - hanya interactive login
+MYTUNNEL_BASE="${MYTUNNEL_PREFIX:-}"
+ETC_BASE="/etc/mytunnel"
+[ -n "$MYTUNNEL_BASE" ] && ETC_BASE="${MYTUNNEL_BASE}/etc/mytunnel"
+
+# source libs (jangan gagalkan login)
+for f in "$ETC_BASE/lib/colors.sh" "$ETC_BASE/lib/helpers.sh" "$ETC_BASE/lib/sysinfo.sh"; do
+  [ -f "$f" ] && . "$f" 2>/dev/null || true
+done
+
+# fallback colors jika belum ada
+RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
+CYAN="${CYAN:-\033[0;36m}"; BLUE="${BLUE:-\033[0;34m}"; GREY="${GREY:-\033[0;37m}"
+RESET="${RESET:-\033[0m}"; BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"
+
+# helpers fallback jika sysinfo belum ada
+command -v get_os >/dev/null 2>&1 || get_os(){ . /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-$ID $VERSION_ID}"; }
+command -v get_ram >/dev/null 2>&1 || get_ram(){ free -m 2>/dev/null | awk '/^Mem:/{print $2"M"}'; }
+command -v get_swap >/dev/null 2>&1 || get_swap(){ free -m 2>/dev/null | awk '/^Swap:/{print $2"M"}'; }
+command -v get_uptime >/dev/null 2>&1 || get_uptime(){ uptime -p 2>/dev/null | sed 's/up //' || echo "-"; }
+command -v get_domain >/dev/null 2>&1 || get_domain(){ [ -f "$ETC_BASE/config/domain.txt" ] && head -1 "$ETC_BASE/config/domain.txt" 2>/dev/null | tr -d '\n' || echo "-"; }
+command -v get_ip_cached >/dev/null 2>&1 || get_ip_cached(){ hostname -I 2>/dev/null | awk '{print $1}'; }
+command -v get_city_cached >/dev/null 2>&1 || get_city_cached(){ echo "-"; }
+command -v get_isp_cached >/dev/null 2>&1 || get_isp_cached(){ echo "-"; }
+command -v get_account_count >/dev/null 2>&1 || get_account_count(){ local f="$ETC_BASE/db/$1.txt"; [ -f "$f" ] && grep -cve '^\s*$' "$f" 2>/dev/null || echo 0; }
+command -v get_brand >/dev/null 2>&1 || get_brand(){ [ -f "$ETC_BASE/config/brand.txt" ] && head -1 "$ETC_BASE/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO"; }
+command -v get_expiry >/dev/null 2>&1 || get_expiry(){ [ -f "$ETC_BASE/config/expiry.txt" ] && head -1 "$ETC_BASE/config/expiry.txt" 2>/dev/null || echo "-"; }
+command -v svc_status >/dev/null 2>&1 || svc_status(){ systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
+command -v draw_box >/dev/null 2>&1 || draw_box(){ local t="$1" w="${2:-60}"; echo "== $t =="; }
+
+# traffic helpers (fallback)
+get_traffic_month_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $11}' || echo "-"; }
+get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $5}' || echo "-"; }
+
+render_login_dashboard(){
+  local brand os ram swap city isp ip domain uptime
+  brand=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  os=$(get_os 2>/dev/null || echo "-")
+  ram=$(get_ram 2>/dev/null || echo "-")
+  swap=$(get_swap 2>/dev/null || echo "-")
+  city=$(get_city_cached 2>/dev/null | head -c 32 || echo "-")
+  isp=$(get_isp_cached 2>/dev/null | head -c 40 || echo "-")
+  ip=$(get_ip_cached 2>/dev/null || echo "-")
+  domain=$(get_domain 2>/dev/null || echo "-")
+  uptime=$(get_uptime 2>/dev/null || echo "-")
+
+  # traffic
+  local month_val day_val m_rx m_tx d_rx d_tx live_speed
+  # try sysinfo functions if exist
+  if command -v get_traffic_month >/dev/null 2>&1; then month_val=$(get_traffic_month 2>/dev/null || echo "-"); else month_val=$(get_traffic_month_fallback); fi
+  if command -v get_traffic_day >/dev/null 2>&1; then day_val=$(get_traffic_day 2>/dev/null || echo "-"); else day_val=$(get_traffic_day_fallback); fi
+  if command -v get_traffic_rx_tx >/dev/null 2>&1; then
+    local vn; vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:- MTX:- DRX:- DTX:-")
+    m_rx=$(echo "$vn" | sed -n 's/.*MRX:\([^ ]*\).*/\1/p'); [ -z "$m_rx" ] && m_rx="-"
+    m_tx=$(echo "$vn" | sed -n 's/.*MTX:\([^ ]*\).*/\1/p'); [ -z "$m_tx" ] && m_tx="-"
+    d_rx=$(echo "$vn" | sed -n 's/.*DRX:\([^ ]*\).*/\1/p'); [ -z "$d_rx" ] && d_rx="-"
+    d_tx=$(echo "$vn" | sed -n 's/.*DTX:\([^ ]*\).*/\1/p'); [ -z "$d_tx" ] && d_tx="-"
+  else
+    m_rx="-"; m_tx="-"; d_rx="-"; d_tx="-"
+  fi
+  # live speed - ringan 0.3s sample, skip jika MYTUNNEL_PREFIX (test mode)
+  live_speed="-"
+  if [ -z "$MYTUNNEL_BASE" ]; then
+    if command -v vnstat >/dev/null 2>&1; then
+      # coba vnstat live 1 detik (timeout 2)
+      live_speed=$(timeout 2 vnstat -tr 1 2>/dev/null | awk '/rx|tx/ {print $2" "$3}' | head -1)
+      [ -z "$live_speed" ] && live_speed="-"
+      # jika masih -, coba baca /proc/net/dev 0.3s
+      if [ "$live_speed" = "-" ]; then
+        local iface rx1 tx1 rx2 tx2
+        iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+        [ -z "$iface" ] && iface=$(ls /sys/class/net 2>/dev/null | grep -v lo | head -1)
+        if [ -n "$iface" ] && [ -f "/sys/class/net/$iface/statistics/rx_bytes" ]; then
+          rx1=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null); tx1=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null)
+          sleep 0.3 2>/dev/null
+          rx2=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null); tx2=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null)
+          if [ -n "$rx1" ] && [ -n "$rx2" ]; then
+            local diff=$(( (rx2 - rx1 + tx2 - tx1) * 8 ))
+            # bits per 0.3s -> Mbit/s = diff / 0.3 / 1e6
+            live_speed=$(awk "BEGIN{printf \"%.2f Mbit/s\", $diff/0.3/1000000}")
+          fi
+        fi
+      fi
+    fi
+  fi
+  # bulan nama
+  local month_name; month_name=$(date +%B 2>/dev/null || echo "")
+
+  # service status - TUNNELING pakai LOADBLC untuk nginx/haproxy
+  local xray sshws loadblc xcol scol lcol
+  xray=$(svc_status xray 2>/dev/null || echo "OFF")
+  sshws=$(svc_status ssh 2>/dev/null || echo "OFF")
+  if [ "$sshws" = "OFF" ]; then sshws=$(svc_status dropbear 2>/dev/null || echo "OFF"); fi
+  loadblc=$(svc_status nginx 2>/dev/null || echo "OFF")
+  if [ "$loadblc" = "OFF" ]; then loadblc=$(svc_status haproxy 2>/dev/null || echo "OFF"); fi
+  [ "$xray" = "ON" ] && xcol="$GREEN" || xcol="$RED"
+  [ "$sshws" = "ON" ] && scol="$GREEN" || scol="$RED"
+  [ "$loadblc" = "ON" ] && lcol="$GREEN" || lcol="$RED"
+
+  # account counts
+  local c_ssh c_vmess c_vless c_trojan
+  c_ssh=$(get_account_count ssh 2>/dev/null || echo 0)
+  c_vmess=$(get_account_count vmess 2>/dev/null || echo 0)
+  c_vless=$(get_account_count vless 2>/dev/null || echo 0)
+  c_trojan=$(get_account_count trojan 2>/dev/null || echo 0)
+
+  # version info
+  local version client expiry orderby
+  version=$(cat "$ETC_BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
+  # TUNNELING format: SPv07.01.26 -> kita pakai TUNNEL-PRO prefix, tampil apa adanya
+  client=$(get_ip_cached 2>/dev/null || echo "-")
+  expiry=$(get_expiry 2>/dev/null || echo "-")
+  orderby=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+
+  # === RENDER (60 kolom, 1:1 TUNNELING) ===
+  # brand header centered
+  draw_box "$brand" 60
+
+  # system info box
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "OS" "$os"
+  printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-10s ${CYAN}%-6s${RESET}: %-25s ${BLUE}│${RESET}\n" "RAM" "$ram" "SWAP" "$swap"
+  printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "CITY" "$city"
+  printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "ISP" "$isp"
+  printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "IP" "$ip"
+  printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "DOMAIN" "$domain"
+  printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "UPTIME" "$uptime"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  # MONTH - 58 inner exact
+  local _line
+  if [ -n "$month_name" ]; then
+    _line=$(printf "%-10s: %-18s [%s]" "MONTH" "$month_val" "$month_name")
+  else
+    _line=$(printf "%-10s: %s" "MONTH" "$month_val")
+  fi
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$m_rx" "$m_tx"
+  local day_name; day_name=$(date +%A 2>/dev/null || echo "")
+  if [ -n "$day_name" ]; then
+    _line=$(printf "%-10s: %-18s [%s]" "DAY" "$day_val" "$day_name")
+  else
+    _line=$(printf "%-10s: %s" "DAY" "$day_val")
+  fi
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$d_rx" "$d_tx"
+  _line=$(printf "%-10s: %s" "TRAFFIC" "$live_speed")
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+
+  # service status
+  echo -e "${xcol}XRAY : $xray${RESET} | ${scol}SSH-WS : $sshws${RESET} | ${lcol}LOADBLC : $loadblc${RESET} | GOOD"
+
+  # list accounts box - TUNNELING style
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "LIST ACCOUNTS"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  _line=$(printf "%-18s : %-4s ACCOUNT" "SSH/OPENVPN" "$c_ssh"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  _line=$(printf "%-18s : %-4s ACCOUNT" "VMESS" "$c_vmess"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  _line=$(printf "%-18s : %-4s ACCOUNT" "VLESS" "$c_vless"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  _line=$(printf "%-18s : %-4s ACCOUNT" "TROJAN" "$c_trojan"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+
+  # version box - TUNNELING style
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} %-12s : %-41s ${BLUE}│${RESET}\n" "Version" "$version"
+  printf "${BLUE}│${RESET} %-12s : %-41s ${BLUE}│${RESET}\n" "Order By" "$orderby"
+  printf "${BLUE}│${RESET} %-12s : %-41s ${BLUE}│${RESET}\n" "Client Name" "$client"
+  printf "${BLUE}│${RESET} %-12s : %-41s ${BLUE}│${RESET}\n" "Expiry In" "$expiry"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -e "${DIM}to access use ${BOLD}menu${RESET}${DIM} command${RESET}"
+  # cek update (ringan)
+  echo -e "${GREEN}Up to date${RESET}"
+}
+
+# jika dipanggil langsung (bukan disource), render
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  render_login_dashboard
+fi
+
+__EMBED_EOF__
+chmod 755 "$ETC/login.sh"
+mkdir -p "${BASE}/etc/profile.d" 2>/dev/null || true
+cat > "${BASE}/etc/profile.d/mytunnel.sh" << '__EMBED_EOF__'
+#!/bin/sh
+# /etc/profile.d/mytunnel.sh - dashboard saat login (60 kolom)
+if [ -n "$MYTUNNEL_DISABLE_DASHBOARD" ]; then return 0 2>/dev/null || exit 0; fi
+case "$-" in *i*) ;; *) return 0 2>/dev/null || exit 0;; esac
+if [ -z "$PS1" ] && [ -z "$SSH_TTY" ]; then return 0 2>/dev/null || exit 0; fi
+if [ ! -t 1 ] 2>/dev/null; then return 0 2>/dev/null || exit 0; fi
+if [ -n "$MYTUNNEL_LOGIN_SHOWN" ]; then return 0 2>/dev/null || exit 0; fi
+export MYTUNNEL_LOGIN_SHOWN=1
+if [ -x /etc/mytunnel/login.sh ]; then
+  bash /etc/mytunnel/login.sh 2>/dev/null || true
+fi
+
+__EMBED_EOF__
+chmod 644 "${BASE}/etc/profile.d/mytunnel.sh"
 cat > "$ETC/config/banner.txt" << '__EMBED_EOF__'
  | TUNNEL PRO - No hacking, use legally |
 

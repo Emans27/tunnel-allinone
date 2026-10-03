@@ -8077,76 +8077,145 @@ cat > "$ETC/setup/tlsmux.sh" << '__EMBED_EOF__'
 # mytunnel setup/tlsmux.sh - stunnel 443 -> mux 1443 -> ssh/http
 set -e
 BASE="${MYTUNNEL_PREFIX:-}"
-# This file is the live mux code, embedded below for idempotent reinstall
 cat > "${BASE}/usr/local/bin/mytunnel-tlsmux.py" << 'PYEOF'
 #!/usr/bin/env python3
-import socket, threading, select, sys
+import socket, threading, select, sys, time, os
 LISTEN_HOST="127.0.0.1"
 LISTEN_PORT=1443
 SSH_HOST="127.0.0.1"
 SSH_PORT=22
 HTTP_HOST="127.0.0.1"
-HTTP_PORT=80
-def pipe(a,b):
+HTTP_PORT=8080
+LOG="/tmp/tlsmux.log"
+def log(m):
+    try:
+        with open(LOG,"a") as f: f.write(time.strftime("%Y-%m-%d %H:%M:%S ")+m+"\n")
+    except: pass
+def pipe(a,b, tag):
     try:
         while True:
-            rr,_,_ = select.select([a,b], [], [], 60)
-            if not rr:
-                break
-            for sock in rr:
-                try:
-                    data = sock.recv(8192)
-                except:
-                    return
-                if not data:
-                    return
-                try:
-                    (b if sock is a else a).sendall(data)
-                except:
-                    return
-    except:
-        pass
+            d=a.recv(16384)
+            if not d: return
+            b.sendall(d)
+    except Exception as e:
+        try: log(f"{tag} pipe exc {e}")
+        except: pass
+        return
     finally:
+        try: a.shutdown(socket.SHUT_RDWR)
+        except: pass
+        try: b.shutdown(socket.SHUT_RDWR)
+        except: pass
         try: a.close()
         except: pass
         try: b.close()
         except: pass
 def handle(conn, addr):
-    conn.settimeout(3)
-    peek = b""
-    try:
-        peek = conn.recv(8192, socket.MSG_PEEK)
-    except: peek = b""
-    is_http = False
-    if peek:
-        if peek.startswith((b"GET ", b"POST ", b"HEAD ", b"PUT ", b"DELETE ", b"OPTIONS ", b"CONNECT ", b"PATCH ", b"PRI * HTTP/2")):
-            is_http = True
-        elif b"HTTP/1." in peek[:1024]:
-            is_http = True
-    target_host = HTTP_HOST if is_http else SSH_HOST
-    target_port = HTTP_PORT if is_http else SSH_PORT
-    try:
-        upstream = socket.create_connection((target_host, target_port), timeout=5)
-    except Exception as e:
-        sys.stderr.write(f"mux connect {target_host}:{target_port} fail {e} peer {addr}\n")
+    peer=str(addr)
+    conn.settimeout(5)
+    peek=b""
+    try: peek = conn.recv(4096, socket.MSG_PEEK)
+    except Exception as e: peek=b""; log(f"{peer} peek exc {e}")
+    if not peek:
+        log(f"{peer} empty peek close")
         try: conn.close()
         except: pass
         return
-    t1 = threading.Thread(target=pipe, args=(conn, upstream), daemon=True)
-    t2 = threading.Thread(target=pipe, args=(upstream, conn), daemon=True)
+    log(f"{peer} peek {peek[:120]!r} len={len(peek)}")
+    # CONNECT -> raw SSH (SNI bugfix)
+    if peek.lstrip().startswith(b"CONNECT "):
+        log(f"{peer} CONNECT branch")
+        try:
+            data=b""
+            while b"\r\n\r\n" not in data:
+                c=conn.recv(4096)
+                if not c: break
+                data+=c
+                if len(data)>8192: break
+            log(f"{peer} CONNECT hdr {data[:200]!r}")
+        except Exception as e: data=peek; log(f"{peer} CONNECT read exc {e}")
+        try: conn.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        except Exception as e:
+            log(f"{peer} send 200 fail {e}")
+            try: conn.close()
+            except: pass
+            return
+        hdr_end=data.find(b"\r\n\r\n")
+        leftover=data[hdr_end+4:] if hdr_end!=-1 else b""
+        if leftover: log(f"{peer} leftover {leftover[:120]!r}")
+        try:
+            upstream = socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
+            upstream.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            for _s in (upstream, conn):
+                try:
+                    _s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                    _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 120)
+                    _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
+                    _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 8)
+                except: pass
+            if leftover and not leftover.lstrip().startswith(b"HTTP/"):
+                upstream.sendall(leftover)
+                log(f"{peer} sent leftover to sshd {len(leftover)}")
+            elif leftover: log(f"{peer} discard HTTP leftover")
+        except Exception as e:
+            log(f"{peer} CONNECT upstream fail {e}")
+            try: conn.close()
+            except: pass
+            return
+        try:
+            conn.settimeout(None)
+            upstream.settimeout(None)
+        except: pass
+        t1=threading.Thread(target=pipe, args=(conn, upstream, f"{peer} c2s"), daemon=True)
+        t2=threading.Thread(target=pipe, args=(upstream, conn, f"{peer} s2c"), daemon=True)
+        t1.start(); t2.start()
+        t1.join(); t2.join()
+        log(f"{peer} CONNECT done")
+        return
+    # HTTP via nginx: any method starting with GET/POST/PATCH etc (including GET-WSS hyphen)
+    stripped=peek.lstrip()
+    if stripped.startswith((b"GET",b"POST",b"HEAD",b"PUT",b"DELETE",b"OPTIONS",b"PATCH",b"PRI")):
+        target_host, target_port = HTTP_HOST, HTTP_PORT
+        log(f"{peer} -> nginx {target_port} (method)")
+    elif b"upgrade: websocket" in peek.lower() or b"http/" in peek.lower():
+        target_host, target_port = HTTP_HOST, HTTP_PORT
+        log(f"{peer} -> nginx {target_port} (http hint)")
+    else:
+        target_host, target_port = SSH_HOST, SSH_PORT
+        log(f"{peer} -> sshd raw")
+    try:
+        upstream = socket.create_connection((target_host, target_port), timeout=5)
+        upstream.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        for _s in (upstream, conn):
+            try:
+                _s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 120)
+                _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
+                _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 8)
+            except: pass
+    except Exception as e:
+        log(f"{peer} connect {target_host}:{target_port} fail {e}")
+        try: conn.close()
+        except: pass
+        return
+    t1=threading.Thread(target=pipe, args=(conn, upstream, f"{peer} c2s"), daemon=True)
+    t2=threading.Thread(target=pipe, args=(upstream, conn, f"{peer} s2c"), daemon=True)
     t1.start(); t2.start()
     t1.join(); t2.join()
+    log(f"{peer} pipe done")
 def main():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind((LISTEN_HOST, LISTEN_PORT))
-    s.listen(128)
-    sys.stderr.write(f"mux listening {LISTEN_HOST}:{LISTEN_PORT} -> ssh {SSH_HOST}:{SSH_PORT} http {HTTP_HOST}:{HTTP_PORT}\n")
+    s.listen(256)
+    msg=f"mux listening {LISTEN_HOST}:{LISTEN_PORT} -> ssh {SSH_HOST}:{SSH_PORT} http {HTTP_HOST}:{HTTP_PORT} (CONNECT->raw) log {LOG}"
+    sys.stderr.write(msg+"\n"); log(msg)
     while True:
         conn, addr = s.accept()
         threading.Thread(target=handle, args=(conn, addr), daemon=True).start()
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
 
 PYEOF
 chmod 755 "${BASE}/usr/local/bin/mytunnel-tlsmux.py"

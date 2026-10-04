@@ -586,8 +586,10 @@ ssh_create() {
   else
     # ensure /bin/false in shells
     grep -qx "/bin/false" /etc/shells 2>/dev/null || echo "/bin/false" >> /etc/shells 2>/dev/null || true
-    # useradd: -M no home, -s /bin/false, -e expiry
-    if ! useradd -M -s /bin/false -e "$expiry" "$user" 2>&1; then
+    # useradd: -M no home, -s /bin/false, -e expiry+1 (system expiry tomorrow 00:00 = valid till 23:59:59 of expiry day)
+    local _sys_exp
+    _sys_exp=$(date -d "$expiry +1 day" +%Y-%m-%d 2>/dev/null || date -d "$expiry" +%Y-%m-%d 2>/dev/null || echo "$expiry")
+    if ! useradd -M -s /bin/false -e "$_sys_exp" "$user" 2>&1; then
       echo -e "${RED}Gagal useradd $user${RESET}" >&2; return 1
     fi
     if ! echo "$user:$pass" | chpasswd 2>&1; then
@@ -778,63 +780,73 @@ print_account_info() {
   print_ssh_account_info "$@" 2>/dev/null || return $?
 }
 
-# Robust online count: counts sshd + dropbear sessions owned by user (incl. tunnel -N, no pts)
-# Returns integer count (0..), 0 if none
+# Accurate online count: 1 HP = 1 (distinct inbound IP, not per-channel)
+# Counts distinct remote IPs of inbound sshd: user sessions; fallback to session count
 _ssh_online_cnt() {
   local u="$1" cnt=0 pids ips
-  if [ -z "$u" ]; then echo 0; return; fi
-  # Method A: ps matching sshd: user / dropbear: user (covers -N tunnels)
-  if command -v ps >/dev/null 2>&1; then
-    pids=$(ps -o pid= -o user= -o args= 2>/dev/null | awk -v u="$u" '$2==u && ($3=="sshd" || $3=="dropbear" || $3 ~ /^sshd:/ || $3 ~ /^dropbear/) {print $1}' | tr '\n' ',' | sed 's/,$//;s/,$//')
-    # also include pgrep -u as fallback (covers sessions not caught)
-    if [ -z "$pids" ] && command -v pgrep >/dev/null 2>&1; then
-      pids=$(pgrep -u "$u" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-      # filter to only sshd/dropbear children? keep as is for count fallback
+  [ -z "$u" ] && echo 0 && return
+  if command -v pgrep >/dev/null 2>&1; then
+    # get session pids via pgrep -a (one per HP, multiplexed channels share pid)
+    pids=$(pgrep -a -u "$u" 2>/dev/null | grep -F "sshd: $u" 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
+    if [ -z "$pids" ]; then
+      # dropbear case or pgrep without -a
+      pids=$(pgrep -a -u "$u" 2>/dev/null | grep -E "dropbear|sshd: $u" 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
     fi
-    if [ -n "$pids" ]; then
-      # Try ss to deduplicate by unique remote IPs (NAT may share IP, but we count IPs)
-      if command -v ss >/dev/null 2>&1; then
-        ips=$(ss -tnp 2>/dev/null | grep -E "$(echo "$pids" | tr ',' '|')" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' | cut -d: -f1 | sort -u | tr '\n' ' ' 2>/dev/null)
-        # also try ss without pids filter (ss with user in args) - for dropbear
-        if [ -z "$ips" ]; then
-          ips=$(ss -tnp 2>/dev/null | grep -E "sshd|dropbear" 2>/dev/null | grep -E "$u" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' | cut -d: -f1 | sort -u | tr '\n' ' ' 2>/dev/null)
+    if [ -n "$pids" ] && command -v ss >/dev/null 2>&1; then
+      # inbound only: local port is sshd/dropbear (22/90/444/10004) — excludes outbound forwards to 443/80
+      ips=$(ss -tnp 2>/dev/null | grep -E "$(echo "$pids" | tr ',' '|')" 2>/dev/null | awk '$4 ~ /:(22|90|444|10004)$/ {print $5}' | cut -d: -f1 | sort -u | tr '\n' ' ' 2>/dev/null)
+      ips=$(echo "$ips" | tr -s ' ' | sed 's/^ //;s/ $//')
+      # if only loopback (ws via nginx), count sessions not IPs — still 1 per session but deduped
+      if [ -n "$ips" ]; then
+        # if mixed, drop loopback so ws doesn't inflate
+        if echo "$ips" | grep -q -v '^127\.0\.0\.1$' 2>/dev/null; then
+          ips=$(echo "$ips" | tr ' ' '\n' | grep -v '^127\.0\.0\.1$' | sort -u | tr '\n' ' ' | sed 's/ $//')
         fi
-        if [ -n "$ips" ]; then
-          cnt=$(echo "$ips" | wc -w | tr -d ' ')
-        else
-          # no IP in ss (maybe local tests), count pids as sessions
+        # handle case where ws only shows 127.0.0.1 — count distinct sessions (pgrep) but should be 1 per session; distinct IPs would be 1
+        if echo "$ips" | grep -q '^127\.0\.0\.1$' 2>/dev/null && [ "$(echo "$ips" | wc -w | tr -d ' ')" -eq 1 ]; then
+          cnt=$(echo "$pids" | tr ',' '\n' | grep -v '^$' | wc -l | tr -d ' ')
+          [ -n "$cnt" ] && echo "$cnt" && return
+        fi
+        cnt=$(echo "$ips" | wc -w | tr -d ' ')
+        [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+        # if ss gives 0 but pids exist (race), fallback to session count
+        if [ "$cnt" -eq 0 ]; then
           cnt=$(echo "$pids" | tr ',' '\n' | grep -v '^$' | wc -l | tr -d ' ')
         fi
-      else
-        cnt=$(echo "$pids" | tr ',' '\n' | grep -v '^$' | wc -l | tr -d ' ')
+        echo "${cnt:-0}"
+        return
       fi
-      [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      echo "$cnt"
+    fi
+    if [ -n "$pids" ]; then
+      cnt=$(echo "$pids" | tr ',' '\n' | grep -v '^$' | wc -l | tr -d ' ')
+      echo "${cnt:-0}"
       return
     fi
   fi
-  # Method B: who (pts sessions only)
+  if command -v ps >/dev/null 2>&1; then
+    cnt=$(ps -eo user,args 2>/dev/null | grep -F "sshd: $u" 2>/dev/null | grep -v grep | wc -l | tr -d ' ')
+    if [ -n "$cnt" ] && [ "$cnt" -gt 0 ] 2>/dev/null; then echo "$cnt"; return; fi
+  fi
   if command -v who >/dev/null 2>&1; then
     cnt=$(who 2>/dev/null | awk -v u="$u" '$1==u{c++} END{print c+0}')
-    [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-    # also count pts via ps if who=0 but pgrep had something
-    echo "$cnt"
+    echo "${cnt:-0}"
     return
   fi
   echo 0
 }
-
-# Helper: get unique IPs for user (for debug/expanded view)
 _ssh_online_ips() {
   local u="$1" pids ips
-  if command -v ps >/dev/null 2>&1; then
-    pids=$(ps -o pid= -o user= -o args= 2>/dev/null | awk -v u="$u" '$2==u && ($3=="sshd" || $3=="dropbear" || $3 ~ /^sshd:/) {print $1}' | tr '\n' ',' | sed 's/,$//')
+  [ -z "$u" ] && echo "" && return
+  if command -v pgrep >/dev/null 2>&1 && command -v ss >/dev/null 2>&1; then
+    pids=$(pgrep -a -u "$u" 2>/dev/null | grep -F "sshd: $u" 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
     [ -z "$pids" ] && pids=$(pgrep -u "$u" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-    if [ -n "$pids" ] && command -v ss >/dev/null 2>&1; then
-      ips=$(ss -tnp 2>/dev/null | grep -E "$(echo "$pids" | tr ',' '|')" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' 2>/dev/null)
+    if [ -n "$pids" ]; then
+      ips=$(ss -tnp 2>/dev/null | grep -E "$(echo "$pids" | tr ',' '|')" 2>/dev/null | awk '$4 ~ /:(22|90|444|10004)$/ {print $5}' | cut -d: -f1 | sort -u | tr '\n' ' ' 2>/dev/null)
       ips=$(echo "$ips" | tr -s ' ' | sed 's/^ //;s/ $//')
-      echo "$ips"
-      return
+      if echo "$ips" | grep -q -v '^127\.0\.0\.1$' 2>/dev/null; then
+        ips=$(echo "$ips" | tr ' ' '\n' | grep -v '^127\.0\.0\.1$' | sort -u | tr '\n' ' ' | sed 's/ $//')
+      fi
+      [ -n "$ips" ] && { echo "$ips"; return; }
     fi
   fi
   if command -v who >/dev/null 2>&1; then
@@ -2025,7 +2037,7 @@ do_renew() {
   # update system
   if [ -z "$MYTUNNEL_PREFIX" ]; then
     if id "$user" >/dev/null 2>&1; then
-      chage -E "$(date -d "$new_exp" +%Y-%m-%d 2>/dev/null)" "$user" 2>/dev/null || usermod -e "$new_exp" "$user" 2>/dev/null || true
+      chage -E "$(date -d "$new_exp +1 day" +%Y-%m-%d 2>/dev/null || date -d "$new_exp" +%Y-%m-%d 2>/dev/null)" "$user" 2>/dev/null || usermod -e "$new_exp" "$user" 2>/dev/null || true
     fi
   fi
   ssh_set_field "$user" 3 "$new_exp" 2>/dev/null || true
@@ -8386,26 +8398,24 @@ _ensure_state() { mkdir -p "$STATE_DIR" 2>/dev/null || true; }
 _get_user_ips() {
   local user="$1"
   local ips=""
-  # Method 1: ss -tnp (ssh sessions)
   if command -v ss >/dev/null 2>&1; then
-    # find pids for user, then ss
     local pids
-    pids=$(pgrep -u "$user" 2>/dev/null | tr '\n' ',' | sed 's/,$//') || true
+    # inbound sessions only via ps filter (sshd: user without [priv])
+    pids=$(ps -o pid= -o user= -o args= 2>/dev/null | awk -v u="$user" '$2==u && $3 ~ /^sshd:/ && $0 ~ "sshd: "u && $0 !~ /\[priv\]/ {print $1}' | tr '\n' ',' | sed 's/,$//') || true
+    [ -z "$pids" ] && pids=$(pgrep -u "$user" 2>/dev/null | tr '\n' ',' | sed 's/,$//') || true
     if [ -n "$pids" ]; then
-      ips=$(ss -tnp 2>/dev/null | grep -E "$pids" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' | cut -d: -f1 | sort -u | tr '\n' ' ') || true
+      # inbound only: local port 22/90/444/10004
+      ips=$(ss -tnp 2>/dev/null | grep -E "$pids" 2>/dev/null | awk '$4 ~ /:(22|90|444|10004)$/ {print $5}' | cut -d: -f1 | sort -u | tr '\n' ' ' 2>/dev/null) || true
+      # hide loopback if mixed, but keep single loopback (ws)
+      if echo "$ips" | grep -q -v '^127\.0\.0\.1$' 2>/dev/null; then
+        ips=$(echo "$ips" | tr ' ' '\n' | grep -v '^127\.0\.0\.1$' | sort -u | tr '\n' ' ' | sed 's/ $//' 2>/dev/null) || true
+      fi
     fi
-    # fallback: who
     if [ -z "$ips" ]; then
       ips=$(who 2>/dev/null | awk -v u="$user" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ') || true
     fi
   else
     ips=$(who 2>/dev/null | awk -v u="$user" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ') || true
-  fi
-  # also try last log for dropbear: journalctl / auth.log
-  if [ -z "$ips" ] && [ -z "$BASE" ]; then
-    if [ -f /var/log/auth.log ]; then
-      ips=$(grep -E "Password auth succeeded for.*$user" /var/log/auth.log 2>/dev/null | tail -n 20 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ') || true
-    fi
   fi
   echo "$ips" | tr -s ' ' | sed 's/^ //;s/ $//'
 }

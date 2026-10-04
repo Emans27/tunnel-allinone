@@ -1380,31 +1380,37 @@ print_proto_account_info() {
     printf "${CYAN}%-15s${RESET} : %s\n" "Quota" "$quota_h"
     printf "${CYAN}%-15s${RESET} : %s\n" "Limit IP" "${limit_ip:-0} (0=No Limit)"
   fi
-  # For trojan, don't print Expired/Quota/Limit here — moved below links
+  # Generate titles matching gen_links dual-TLS (443,8443)
   local links
   links=$(gen_links "$proto" "$user" 2>/dev/null || true)
+  # Build expected titles in same order as gen_links
+  local _tls_csv _nontls
+  _tls_csv=$(echo "$TLS_PORT" | tr -d ' ')
+  _nontls=$(echo "$NONTLS_PORT" | tr -d ' ' | cut -d',' -f1)
+  [ -z "$_tls_csv" ] && _tls_csv="443"
+  local _ports_arr
+  IFS=',' read -ra _ports_arr <<< "$_tls_csv"
+  local _titles=()
+  case "$proto" in
+    vmess|vless)
+      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} WS TLS :${_p}"); done
+      _titles+=("${proto_upper} WS NO TLS :${_nontls}")
+      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} GRPC TLS :${_p}"); done
+      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} UPGRADE TLS :${_p}"); done
+      _titles+=("${proto_upper} UPGRADE NO TLS :${_nontls}")
+      ;;
+    trojan)
+      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN WS TLS :${_p}"); done
+      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN GRPC :${_p}"); done
+      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN UPGRADE TLS :${_p}"); done
+      ;;
+  esac
   local idx=1
   local link
   while IFS= read -r link; do
     [ -z "$link" ] && continue
     local ttitle=""
-    if [ "$proto" = "trojan" ]; then
-      case "$idx" in
-        1) ttitle="TROJAN WS TLS" ;;
-        2) ttitle="TROJAN GRPC" ;;
-        3) ttitle="TROJAN Upgrade TLS" ;;
-        *) ttitle="TROJAN LINK $idx" ;;
-      esac
-    else
-      case "$idx" in
-        1) ttitle="${proto_upper} WS TLS" ;;
-        2) ttitle="${proto_upper} WS NO TLS" ;;
-        3) ttitle="${proto_upper} GRPC TLS" ;;
-        4) ttitle="${proto_upper} UPGRADE TLS" ;;
-        5) ttitle="${proto_upper} UPGRADE NO TLS" ;;
-        *) ttitle="${proto_upper} LINK $idx" ;;
-      esac
-    fi
+    if [ "$idx" -le "${#_titles[@]}" ]; then ttitle="${_titles[$((idx-1))]}"; else ttitle="${proto_upper} LINK $idx"; fi
     echo -e "${GREY}${DASH}${RESET}"
     local pad2=$(( (36 - ${#ttitle}) / 2 ))
     printf "%*s%s\n" "$pad2" "" "$ttitle" | cut -c1-60
@@ -1413,7 +1419,6 @@ print_proto_account_info() {
     idx=$((idx+1))
   done <<< "$links"
   if [ "$proto" = "trojan" ]; then
-    # Expired On + Quota + Limit IP BELOW links, with DASH before/after
     echo -e "${GREY}${DASH}${RESET}"
     local _w2=12
     printf "${CYAN}%-${_w2}s${RESET} : %s\n" "Expired On" "$expiry"

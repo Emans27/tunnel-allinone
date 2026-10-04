@@ -4991,6 +4991,8 @@ CFG_EOF
   chmod 644 "$XRAY_CFG" 2>/dev/null || true
   touch "$XRAY_LOGDIR/access.log" "$XRAY_LOGDIR/error.log" 2>/dev/null || true
   chmod 644 "$XRAY_LOGDIR/"*.log 2>/dev/null || true
+  chown nobody:nogroup "$XRAY_LOGDIR" 2>/dev/null || true
+  chown nobody:nogroup "$XRAY_LOGDIR/"*.log 2>/dev/null || true
   echo -e "${GREEN}Config Xray ditulis: $XRAY_CFG (9 inbounds)${RESET}"
 }
 
@@ -7567,7 +7569,7 @@ cat > "$ETC/logrotate.d/mytunnel" << '__EMBED_EOF__'
     delaycompress
     missingok
     notifempty
-    create 644 root root
+    create 644 nobody nogroup
     postrotate
         systemctl restart xray 2>/dev/null || true
     endscript

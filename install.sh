@@ -2640,33 +2640,48 @@ do_modify() {
 
 do_check_login() {
   clear 2>/dev/null || printf '\033c'
+  local brand
+  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
+  [ -z "$brand" ] && brand="TUNNEL PRO"
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login VMESS"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VMESS USER LOGIN"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %-10s %-14s${RESET} ${BLUE}│${RESET}\n" "USER" "USAGE" "TOTAL" "LOG"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   _ensure_db
-  local found=0 user i=1
-  while IFS='|' read -r user _id _exp _limit _quota _used _status; do
-    [ -z "$user" ] && continue
-    local cnt ips logf
-    logf="/var/log/xray/access.log"
-    [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-    cnt=0; ips=""
-    if [ -f "$logf" ]; then
-      ips=$(tail -n 5000 "$logf" 2>/dev/null | grep -F "email: $user" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | sed 's/ $//')
-      cnt=$(echo "$ips" | wc -w 2>/dev/null | tr -d ' '); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      ips=$(echo "$ips" | head -c 42)
-    fi
-    if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
-      printf "%2d) %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$i" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
-      found=1; i=$((i+1))
-    else
-      # tetap tampilkan yang limit 0? tidak — hanya yang online
-      true
-    fi
-  done < <(_list_users_raw)
-  [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada hit di access.log / belum ada trafik)${RESET}"
-  echo -e "${GREY}Format: online/limit IP | On=IP unik 5k log terakhir${RESET}"
-  echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
+  local total
+  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
+  [ -z "$total" ] && total=0
+  if [ "$total" -eq 0 ] 2>/dev/null; then
+    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
+  else
+    local user _id _exp _limit _quota _used _status
+    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
+      [ -z "$user" ] && continue
+      local usage_h total_s log_c
+      if [ -n "$_used" ] && [ "$_used" -gt 0 ] 2>/dev/null; then
+        usage_h=$(awk -v b="$_used" 'BEGIN{gb=b/1024/1024/1024; if(gb>=10) printf "%.1fGB",gb; else if(gb>=1) printf "%.1fGB",gb; else if(gb>=0.01) printf "%.2fGB",gb; else printf "%.0fB",b}')
+        [ -z "$usage_h" ] && usage_h="0B"
+      else
+        usage_h="0GB"
+      fi
+      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_s="${_limit} IP"; else total_s="0"; fi
+      local _log="/var/log/xray/access.log"
+      [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+      log_c=0
+      if [ -f "$_log" ]; then
+        log_c=$(tail -n 20000 "$_log" 2>/dev/null | grep -F "email: $user" 2>/dev/null | wc -l 2>/dev/null | tr -d ' ')
+        [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
+      fi
+      printf "${BLUE}│${RESET} %-12s %-10s %-10s %-14s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_s" "$log_c"
+    done < <(_list_users_raw)
+  fi
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
 }
 
 _xray_online_cnt() {
@@ -3196,33 +3211,48 @@ do_modify() {
 
 do_check_login() {
   clear 2>/dev/null || printf '\033c'
+  local brand
+  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
+  [ -z "$brand" ] && brand="TUNNEL PRO"
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login VLESS"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VLESS USER LOGIN"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %-10s %-14s${RESET} ${BLUE}│${RESET}\n" "USER" "USAGE" "TOTAL" "LOG"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   _ensure_db
-  local found=0 user i=1
-  while IFS='|' read -r user _id _exp _limit _quota _used _status; do
-    [ -z "$user" ] && continue
-    local cnt ips logf
-    logf="/var/log/xray/access.log"
-    [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-    cnt=0; ips=""
-    if [ -f "$logf" ]; then
-      ips=$(tail -n 5000 "$logf" 2>/dev/null | grep -F "email: $user" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | sed 's/ $//')
-      cnt=$(echo "$ips" | wc -w 2>/dev/null | tr -d ' '); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      ips=$(echo "$ips" | head -c 42)
-    fi
-    if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
-      printf "%2d) %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$i" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
-      found=1; i=$((i+1))
-    else
-      # tetap tampilkan yang limit 0? tidak — hanya yang online
-      true
-    fi
-  done < <(_list_users_raw)
-  [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada hit di access.log / belum ada trafik)${RESET}"
-  echo -e "${GREY}Format: online/limit IP | On=IP unik 5k log terakhir${RESET}"
-  echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
+  local total
+  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
+  [ -z "$total" ] && total=0
+  if [ "$total" -eq 0 ] 2>/dev/null; then
+    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
+  else
+    local user _id _exp _limit _quota _used _status
+    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
+      [ -z "$user" ] && continue
+      local usage_h total_s log_c
+      if [ -n "$_used" ] && [ "$_used" -gt 0 ] 2>/dev/null; then
+        usage_h=$(awk -v b="$_used" 'BEGIN{gb=b/1024/1024/1024; if(gb>=10) printf "%.1fGB",gb; else if(gb>=1) printf "%.1fGB",gb; else if(gb>=0.01) printf "%.2fGB",gb; else printf "%.0fB",b}')
+        [ -z "$usage_h" ] && usage_h="0B"
+      else
+        usage_h="0GB"
+      fi
+      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_s="${_limit} IP"; else total_s="0"; fi
+      local _log="/var/log/xray/access.log"
+      [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+      log_c=0
+      if [ -f "$_log" ]; then
+        log_c=$(tail -n 20000 "$_log" 2>/dev/null | grep -F "email: $user" 2>/dev/null | wc -l 2>/dev/null | tr -d ' ')
+        [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
+      fi
+      printf "${BLUE}│${RESET} %-12s %-10s %-10s %-14s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_s" "$log_c"
+    done < <(_list_users_raw)
+  fi
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
 }
 
 _xray_online_cnt() {
@@ -3751,33 +3781,48 @@ do_modify() {
 
 do_check_login() {
   clear 2>/dev/null || printf '\033c'
+  local brand
+  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
+  [ -z "$brand" ] && brand="TUNNEL PRO"
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login TROJAN"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "TROJAN USER LOGIN"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %-10s %-14s${RESET} ${BLUE}│${RESET}\n" "USER" "USAGE" "TOTAL" "LOG"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   _ensure_db
-  local found=0 user i=1
-  while IFS='|' read -r user _id _exp _limit _quota _used _status; do
-    [ -z "$user" ] && continue
-    local cnt ips logf
-    logf="/var/log/xray/access.log"
-    [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && logf="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-    cnt=0; ips=""
-    if [ -f "$logf" ]; then
-      ips=$(tail -n 5000 "$logf" 2>/dev/null | grep -F "email: $user" 2>/dev/null | grep -oE 'from [0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | awk '{print $2}' 2>/dev/null | sort -u 2>/dev/null | tr '\n' ' ' 2>/dev/null | sed 's/ $//')
-      cnt=$(echo "$ips" | wc -w 2>/dev/null | tr -d ' '); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      ips=$(echo "$ips" | head -c 42)
-    fi
-    if [ "$cnt" -gt 0 ] 2>/dev/null || [ -n "$ips" ]; then
-      printf "%2d) %-12s : %2s/%-2s IP  %-28s ${GREY}[%s]${RESET}\n" "$i" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
-      found=1; i=$((i+1))
-    else
-      # tetap tampilkan yang limit 0? tidak — hanya yang online
-      true
-    fi
-  done < <(_list_users_raw)
-  [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada hit di access.log / belum ada trafik)${RESET}"
-  echo -e "${GREY}Format: online/limit IP | On=IP unik 5k log terakhir${RESET}"
-  echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
+  local total
+  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
+  [ -z "$total" ] && total=0
+  if [ "$total" -eq 0 ] 2>/dev/null; then
+    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
+  else
+    local user _id _exp _limit _quota _used _status
+    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
+      [ -z "$user" ] && continue
+      local usage_h total_s log_c
+      if [ -n "$_used" ] && [ "$_used" -gt 0 ] 2>/dev/null; then
+        usage_h=$(awk -v b="$_used" 'BEGIN{gb=b/1024/1024/1024; if(gb>=10) printf "%.1fGB",gb; else if(gb>=1) printf "%.1fGB",gb; else if(gb>=0.01) printf "%.2fGB",gb; else printf "%.0fB",b}')
+        [ -z "$usage_h" ] && usage_h="0B"
+      else
+        usage_h="0GB"
+      fi
+      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_s="${_limit} IP"; else total_s="0"; fi
+      local _log="/var/log/xray/access.log"
+      [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+      log_c=0
+      if [ -f "$_log" ]; then
+        log_c=$(tail -n 20000 "$_log" 2>/dev/null | grep -F "email: $user" 2>/dev/null | wc -l 2>/dev/null | tr -d ' ')
+        [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
+      fi
+      printf "${BLUE}│${RESET} %-12s %-10s %-10s %-14s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_s" "$log_c"
+    done < <(_list_users_raw)
+  fi
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
 }
 
 _xray_online_cnt() {

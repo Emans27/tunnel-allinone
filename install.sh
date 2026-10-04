@@ -778,6 +778,71 @@ print_account_info() {
   print_ssh_account_info "$@" 2>/dev/null || return $?
 }
 
+# Robust online count: counts sshd + dropbear sessions owned by user (incl. tunnel -N, no pts)
+# Returns integer count (0..), 0 if none
+_ssh_online_cnt() {
+  local u="$1" cnt=0 pids ips
+  if [ -z "$u" ]; then echo 0; return; fi
+  # Method A: ps matching sshd: user / dropbear: user (covers -N tunnels)
+  if command -v ps >/dev/null 2>&1; then
+    pids=$(ps -o pid= -o user= -o args= 2>/dev/null | awk -v u="$u" '$2==u && ($3=="sshd" || $3=="dropbear" || $3 ~ /^sshd:/ || $3 ~ /^dropbear/) {print $1}' | tr '\n' ',' | sed 's/,$//;s/,$//')
+    # also include pgrep -u as fallback (covers sessions not caught)
+    if [ -z "$pids" ] && command -v pgrep >/dev/null 2>&1; then
+      pids=$(pgrep -u "$u" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+      # filter to only sshd/dropbear children? keep as is for count fallback
+    fi
+    if [ -n "$pids" ]; then
+      # Try ss to deduplicate by unique remote IPs (NAT may share IP, but we count IPs)
+      if command -v ss >/dev/null 2>&1; then
+        ips=$(ss -tnp 2>/dev/null | grep -E "$(echo "$pids" | tr ',' '|')" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' | cut -d: -f1 | sort -u | tr '\n' ' ' 2>/dev/null)
+        # also try ss without pids filter (ss with user in args) - for dropbear
+        if [ -z "$ips" ]; then
+          ips=$(ss -tnp 2>/dev/null | grep -E "sshd|dropbear" 2>/dev/null | grep -E "$u" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' | cut -d: -f1 | sort -u | tr '\n' ' ' 2>/dev/null)
+        fi
+        if [ -n "$ips" ]; then
+          cnt=$(echo "$ips" | wc -w | tr -d ' ')
+        else
+          # no IP in ss (maybe local tests), count pids as sessions
+          cnt=$(echo "$pids" | tr ',' '\n' | grep -v '^$' | wc -l | tr -d ' ')
+        fi
+      else
+        cnt=$(echo "$pids" | tr ',' '\n' | grep -v '^$' | wc -l | tr -d ' ')
+      fi
+      [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      echo "$cnt"
+      return
+    fi
+  fi
+  # Method B: who (pts sessions only)
+  if command -v who >/dev/null 2>&1; then
+    cnt=$(who 2>/dev/null | awk -v u="$u" '$1==u{c++} END{print c+0}')
+    [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+    # also count pts via ps if who=0 but pgrep had something
+    echo "$cnt"
+    return
+  fi
+  echo 0
+}
+
+# Helper: get unique IPs for user (for debug/expanded view)
+_ssh_online_ips() {
+  local u="$1" pids ips
+  if command -v ps >/dev/null 2>&1; then
+    pids=$(ps -o pid= -o user= -o args= 2>/dev/null | awk -v u="$u" '$2==u && ($3=="sshd" || $3=="dropbear" || $3 ~ /^sshd:/) {print $1}' | tr '\n' ',' | sed 's/,$//')
+    [ -z "$pids" ] && pids=$(pgrep -u "$u" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$pids" ] && command -v ss >/dev/null 2>&1; then
+      ips=$(ss -tnp 2>/dev/null | grep -E "$(echo "$pids" | tr ',' '|')" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' 2>/dev/null)
+      ips=$(echo "$ips" | tr -s ' ' | sed 's/^ //;s/ $//')
+      echo "$ips"
+      return
+    fi
+  fi
+  if command -v who >/dev/null 2>&1; then
+    who 2>/dev/null | awk -v u="$u" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' | sed 's/^ //;s/ $//'
+  fi
+}
+
+
 __EMBED_EOF__
 chmod 644 "$ETC/lib/ssh_helpers.sh"
 cat > "$ETC/lib/proto_helpers.sh" << '__EMBED_EOF__'
@@ -1992,91 +2057,40 @@ do_chpass() {
 
 do_check_login() {
   clear 2>/dev/null || printf '\033c'
+  local brand
+  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
+  [ -z "$brand" ] && brand="TUNNEL PRO"
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Check Users Login SSH"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "SSH/DropBear User Login"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-20s %-15s %-15s${RESET} ${BLUE}│${RESET}\n" "Username" "Usage" "Total"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   _ensure_db
-  local found=0 user i=1
-  while IFS='|' read -r user _pass _exp _limit _status; do
-    [ -z "$user" ] && continue
-    local ips cnt
-    # reuse helper if available
-    if declare -f _ssh_online_cnt >/dev/null 2>&1; then
-      ips=$(who 2>/dev/null | awk -v u="$user" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' | head -c 40)
-      [ -z "$ips" ] && ips=$(ss -tnp 2>/dev/null | grep -E "$(pgrep -u "$user" 2>/dev/null | tr '\n' '|' | sed 's/|$//')" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' | head -c 40)
-      [ -z "$ips" ] && [ -f /var/log/auth.log ] && ips=$(grep -E "Accepted.* $user " /var/log/auth.log 2>/dev/null | tail -n 20 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' | head -c 40)
-      ips=$(echo "$ips" | tr -s ' ' | sed 's/^ //;s/ $//')
-      cnt=$(echo "$ips" | wc -w 2>/dev/null | tr -d ' '); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      [ -z "$ips" ] && cnt=0
-    else
-      cnt=$(who 2>/dev/null | awk -v u="$user" '$1==u{c++} END{print c+0}')
-      ips=$(who 2>/dev/null | awk -v u="$user" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' | head -c 40)
-      if [ "$cnt" -eq 0 ] && command -v ss >/dev/null 2>&1; then
-        local pids; pids=$(pgrep -u "$user" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-        if [ -n "$pids" ]; then cnt=$(ss -tnp 2>/dev/null | grep -c "$pids" 2>/dev/null || echo 0); fi
-      fi
-    fi
-    if [ -n "$ips" ] || [ "$cnt" -gt 0 ] 2>/dev/null; then
-      printf "%2d) %-12s : %2s/%-2s IP  %s ${GREY}[%s]${RESET}\n" "$i" "$user" "$cnt" "${_limit:-0}" "$ips" "$_status"
-      found=1; i=$((i+1))
-    fi
-  done < <(_list_users_raw)
-  [ "$found" -eq 0 ] && echo -e "${DIM}(tidak ada user login / belum ada sesi)${RESET}"
-  echo -e "${GREY}Limit = batas IP, angka pertama = IP unik online${RESET}"
-  echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
-}
-
-_ssh_online_cnt() {
-  local _u="$1" _ips _cnt
-  _ips=$(who 2>/dev/null | awk -v u="$_u" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' 2>/dev/null)
-  if [ -z "$_ips" ] && command -v ss >/dev/null 2>&1; then
-    local _pids; _pids=$(pgrep -u "$_u" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-    [ -n "$_pids" ] && _ips=$(ss -tnp 2>/dev/null | grep -E "$_pids" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' 2>/dev/null)
-  fi
-  if [ -z "$_ips" ] && [ -f /var/log/auth.log ]; then _ips=$(grep -E "Accepted.* $_u |sshd.* $_u.*Accepted" /var/log/auth.log 2>/dev/null | tail -n 20 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ' 2>/dev/null); fi
-  _ips=$(echo "$_ips" | tr -s ' ' | sed 's/^ //;s/ $//')
-  [ -z "$_ips" ] && echo "0" && return
-  echo "$_ips" | wc -w | tr -d ' '
-}
-do_list() {
-  clear 2>/dev/null || printf '\033c'
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "List Users SSH"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf -v _inner "%2s %-10s %-10s %3s %3s %3s %-6s" "No" "User" "Expiry" "Sisa" "Lim" "On" "Status"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$_inner"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  if [ ! -s "$DB" ]; then
-    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(kosong)"
+  local total
+  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
+  [ -z "$total" ] && total=0
+  if [ "$total" -eq 0 ] 2>/dev/null; then
+    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
   else
-    local user pass exp limit status days cnt i=1
-    while IFS='|' read -r user pass exp limit status; do
+    local user _pass _exp _limit _status
+    while IFS='|' read -r user _pass _exp _limit _status; do
       [ -z "$user" ] && continue
-      days=$(_days_left_calc "$exp")
-      [ "$days" -lt 0 ] && days=0
+      local cnt usage_str total_str
       cnt=$(_ssh_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      printf -v _inner "%2d %-10s %-10s %3sd %3s %3s %-6s" "$i" "$user" "$exp" "$days" "${limit:-0}" "$cnt" "$status"
-      printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_inner"
-      i=$((i+1))
+      if [ "$cnt" -eq 0 ]; then usage_str="No Usage"; else usage_str="$cnt"; fi
+      total_str="${_limit:-0}"; [ -z "$total_str" ] && total_str="0"
+      # align inside 56 inner: 20+1+15+1+15=51 + spaces = 56
+      printf "${BLUE}│${RESET} %-20s %-15s %-15s ${BLUE}│${RESET}\n" "$user" "$usage_str" "$total_str"
     done < <(_list_users_raw)
   fi
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total user login"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  echo -e "${GREY}Lim=Limit IP, On=IP login sekarang${RESET}"
-  echo -e "${GREY}Pilih nomor untuk detail (0 kembali):${RESET}"
-  echo -ne "${CYAN}Nomor: ${RESET}"
-  read -r num
-  [[ "$num" =~ ^[0-9]+$ ]] || { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
-  [ "$num" -eq 0 ] && return 0
-  local _u; _u=$(_pick_user_by_number "$num")
-  [ -z "$_u" ] && { echo -e "${RED}Nomor tidak ada${RESET}"; echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
-  clear 2>/dev/null || printf '\033c'
-  local _pass _exp _lim
-  _pass=$(ssh_get_field "$_u" 2 2>/dev/null || echo "-")
-  _exp=$(ssh_get_field "$_u" 3 2>/dev/null || echo "-")
-  _lim=$(ssh_get_field "$_u" 4 2>/dev/null || echo "0")
-  print_ssh_account_info "$_u" "$_pass" "$_exp" "$_lim" 2>/dev/null || echo "User tidak ada"
-  echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
 }
+
 
 do_lock() {
   _show_user_list_numbered

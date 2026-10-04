@@ -10199,6 +10199,55 @@ main "$@"
 
 __EMBED_EOF__
 chmod 755 "$ETC/advanced/ssh_extra.sh"
+cat > "$ETC/features/lock_time.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel features/lock_time.sh - SET REDUCE/TIME / Time Banned (Tunneling 1:1)
+# shellcheck disable=SC1091,SC1090
+MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
+if [ -n "$MYTUNNEL_PREFIX" ]; then BASE="$MYTUNNEL_PREFIX/etc/mytunnel"; else BASE="/etc/mytunnel"; fi
+for f in "$BASE/lib/colors.sh" "$BASE/lib/helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
+CYAN="${CYAN:-\033[0;36m}"; BLUE="${BLUE:-\033[0;34m}"; GREY="${GREY:-\033[0;37m}"; RESET="${RESET:-\033[0m}"; BOLD="${BOLD:-\033[1m}"
+CONF="$BASE/config/lock_time.conf"
+_get_cur() { local v=15; [ -f "$CONF" ] && . "$CONF" 2>/dev/null || true; v="${LOCK_MIN:-15}"; [[ "$v" =~ ^[0-9]+$ ]] || v=15; echo "$v"; }
+while true; do
+  cur=$(_get_cur)
+  clear 2>/dev/null || printf '\033c'
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "SUNEK VPN" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "SUNEK VPN"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
+  # Time Banned Active line - centered inside 60 box
+  _t="Time Banned Active : ${cur}m:0s"
+  _len=${#_t}; _inner=58; _left=$(( (_inner - _len)/2 )); _right=$(( _inner - _len - _left ))
+  printf "${BLUE}│${RESET}%*s${BOLD}%s${RESET}%*s${BLUE}│${RESET}\n" "$_left" "" "$_t" "$_right" ""
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  echo -e "${BLUE}│${RESET} 1.) Set Time Banned                                ${BLUE}│${RESET}"
+  echo -e "${BLUE}│${RESET} 2.) Back to Menu                                   ${BLUE}│${RESET}"
+  echo -e "${BLUE}│${RESET} x.) Exit                                           ${BLUE}│${RESET}"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -ne "${BOLD}Select From Options [1-2 or x] : ${RESET}"
+  read -r c
+  case "$c" in
+    1)
+      echo ""
+      echo -ne "${CYAN}Set lock time (1-1440 menit, kosongkan batal) [${cur}]: ${RESET}"
+      read -r inp
+      [ -z "$inp" ] && continue
+      inp=$(echo "$inp" | tr -d ' ')
+      if ! [[ "$inp" =~ ^[0-9]+$ ]] || [ "$inp" -lt 1 ] || [ "$inp" -gt 1440 ]; then echo -e "${RED}Harus angka 1-1440${RESET}"; sleep 1; continue; fi
+      mkdir -p "$(dirname "$CONF")" 2>/dev/null || true
+      if [ -f "$CONF" ]; then grep -v '^LOCK_MIN=' "$CONF" 2>/dev/null > "$CONF.tmp" || true; echo "LOCK_MIN=$inp" >> "$CONF.tmp"; cat "$CONF.tmp" > "$CONF" 2>/dev/null; rm -f "$CONF.tmp" 2>/dev/null || true; else echo "LOCK_MIN=$inp" > "$CONF" 2>/dev/null; fi
+      chmod 644 "$CONF" 2>/dev/null || true
+      echo -e "${GREEN}✓ Time Banned diubah: ${cur}m -> ${inp}m${RESET}"
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] set lock_time ${cur} -> ${inp}" >> "${MYTUNNEL_PREFIX:-}/var/log/mytunnel.log" 2>/dev/null || true
+      sleep 1
+      ;;
+    2|b|B) break ;;
+    x|X) exit 0 ;;
+    *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
+  esac
+done
+
+__EMBED_EOF__
+chmod 755 "$ETC/features/lock_time.sh"
 cat > "$ETC/features/bandwidth.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel features/bandwidth.sh - vnstat harian/bulanan/live (60 kolom)
@@ -11549,6 +11598,11 @@ cat > "$ETC/config/banner.txt" << '__EMBED_EOF__'
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/banner.txt"
+cat > "$ETC/config/brand.txt" << '__EMBED_EOF__'
+TUNNEL PRO
+
+__EMBED_EOF__
+chmod 644 "$ETC/config/brand.txt"
 cat > "$ETC/config/dropbear_versions.txt" << '__EMBED_EOF__'
 2020.81
 2022.83

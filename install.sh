@@ -1734,10 +1734,10 @@ show_version() {
 show_menu() {
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 1.) SSH                 6.) FEATURES"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 2.) VMESS               7.) SET BRAND NAME"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 3.) VLESS               8.) CHECK SERVICES"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 4.) TROJAN              x.) EXIT"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 5.) SETUP BOT             9.) DOCTOR (cek data)"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 2.) VMESS               7.) SET REDUCE/TIME"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 3.) VLESS               8.) SET BRAND NAME"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 4.) TROJAN              9.) CHECK SERVICES"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 5.) SETUP BOT             x.) EXIT"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -1786,9 +1786,9 @@ dispatch() {
     4) bash "$BASE/menu/trojan.sh" 2>/dev/null || { echo -e "${RED}menu trojan belum ada${RESET}"; pause; };;
     5) setup_bot_stub;;
     6) bash "$BASE/menu/features.sh" 2>/dev/null || { echo -e "${RED}menu features belum ada${RESET}"; pause; };;
-    7) set_brand_name;;
-    8) check_services;;
-    9) bash "$BASE/menu/doctor.sh" 2>/dev/null || { echo -e "${RED}doctor belum ada${RESET}"; pause; };;
+    7) bash "$BASE/features/lock_time.sh" 2>/dev/null || { echo -e "${YELLOW}lock_time belum ada${RESET}"; pause; };;
+    8) set_brand_name;;
+    9) check_services;;
     x|X) echo -e "${GREEN}Keluar...${RESET}"; exit 0;;
     *) echo -e "${RED}Pilihan tidak valid: $1${RESET}"; sleep 1;;
   esac
@@ -8476,14 +8476,15 @@ main() {
     [ -z "$user" ] && continue
     [[ "$user" =~ ^# ]] && continue
     [ "$status" = "locked" ] && {
-      # check if lock expired (15 min)
+      # check if lock expired (LOCK_MIN from config, default 15)
       local lockfile="$STATE_DIR/${user}.lock"
       if [ -f "$lockfile" ]; then
         local lock_time now diff
         lock_time=$(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || echo 0)
         now=$(date +%s 2>/dev/null)
         diff=$((now - lock_time))
-        if [ "$diff" -ge 900 ]; then
+                local _lm=15; [ -f "$ETC/config/lock_time.conf" ] && . "$ETC/config/lock_time.conf" 2>/dev/null || true; _lm="${LOCK_MIN:-15}"; [[ "$_lm" =~ ^[0-9]+$ ]] || _lm=15
+        if [ "$diff" -ge $((_lm*60)) ]; then
           # unlock
           if [ -n "$BASE" ]; then
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] limitip: unlock $user (TEST)" >> "$LOG" 2>/dev/null || true
@@ -8752,6 +8753,8 @@ XRAY_LOG="${BASE}/var/log/xray/access.log"
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/xray_helpers.sh" "$ETC/lib/proto_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 
 LOCK_MIN=15
+[ -f "$ETC/config/lock_time.conf" ] && . "$ETC/config/lock_time.conf" 2>/dev/null || true
+LOCK_MIN="${LOCK_MIN:-15}"; [[ "$LOCK_MIN" =~ ^[0-9]+$ ]] || LOCK_MIN=15
 
 _state_file() { echo "$STATE_DIR/limitip_${1}_${2}.lock"; }
 

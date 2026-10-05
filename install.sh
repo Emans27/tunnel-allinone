@@ -1594,19 +1594,14 @@ ah_notify_admin(){
   # shellcheck disable=SC1090
   . "$conf" 2>/dev/null || return 0
   [ -z "${BOT_TOKEN:-}" ] || [ -z "${ADMIN_ID:-}" ] && return 0
-  local clean
-  # strip ANSI agar Telegram rapi 1:1
-  # shellcheck disable=SC2001
+  local clean esc send_text
+  # strip ANSI
   clean=$(printf "%s" "$msg" | sed 's/\x1b\[[0-9;]*m//g' 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' 2>/dev/null || printf "%s" "$msg")
   clean=$(printf "%s" "$clean" | tr -d '\r' 2>/dev/null || printf "%s" "$clean")
-  # Telegram monospace: wrap in code block agar alignment rapi (jika belum ada fence)
-  local send_text="$clean"
-  # jika panjang >0 dan belum diawali fence, bungkus ```
-  if [ -n "$clean" ] && ! printf "%s" "$clean" | grep -q '^```'; then
-    send_text="\`\`\`\n${clean}\n\`\`\`"
-  fi
-  curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=Markdown" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
-    # fallback plain tanpa markdown jika gagal
+  # HTML escape untuk <pre>
+  esc=$(printf "%s" "$clean" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+  send_text="<pre>${esc}</pre>"
+  curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=HTML" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
     curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=${clean}" >/dev/null 2>&1 || true
   }
   ah_log "notify admin: ${clean:0:80}"

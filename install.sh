@@ -1197,117 +1197,60 @@ gen_links() {
   domain=$(_get_domain)
   [ -z "$id" ] && { echo -e "${RED}User tidak ada${RESET}" >&2; return 1; }
   local ports; ports=$(_get_ports)
-  local tls_csv nontls_port
-  tls_csv=$(echo "$ports" | cut -d'|' -f1 | tr -d ' ')
+  local tls_port nontls_port
+  tls_port=$(echo "$ports" | cut -d'|' -f1 | tr -d ' ' | cut -d',' -f1)
   nontls_port=$(echo "$ports" | cut -d'|' -f2 | tr -d ' ' | cut -d',' -f1)
-  [ -z "$tls_csv" ] && tls_csv=443
+  [ -z "$tls_port" ] && tls_port=443
   [ -z "$nontls_port" ] && nontls_port=80
   local ws_path hu_path grpc_svc xhttp_path
   ws_path=$(_proto_ws_path "$proto")
   hu_path=$(_proto_hu_path "$proto")
   grpc_svc=$(_proto_grpc_service "$proto")
   xhttp_path=$(_proto_xhttp_path "$proto")
-  # split tls_csv by comma for dual-port (443 via stunnel + 8443 via nginx)
-  local _tls_ports
-  IFS=',' read -ra _tls_ports <<< "$tls_csv"
   case "$proto" in
     vmess)
       local b64
       local json
-      # WS TLS (per TLS port)
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"ws","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$ws_path" "$domain" "$domain")
-        b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
-        echo "vmess://$b64"
-      done
-      # WS none 80
+      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"ws","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$ws_path" "$domain" "$domain")
+      b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
+      echo "vmess://$b64"
       json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"ws","path":"%s","type":"none","host":"%s","tls":"none"}' "$user" "$domain" "$nontls_port" "$id" "$ws_path" "$domain")
       b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
       echo "vmess://$b64"
-      # gRPC TLS (per TLS port)
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"grpc","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$grpc_svc" "$domain" "$domain")
-        b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
-        echo "vmess://$b64"
-      done
-      # HTTPUpgrade TLS (per TLS port)
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"httpupgrade","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$hu_path" "$domain" "$domain")
-        b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
-        echo "vmess://$b64"
-      done
-      # HTTPUpgrade none
+      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"grpc","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$grpc_svc" "$domain" "$domain")
+      b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
+      echo "vmess://$b64"
+      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"httpupgrade","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$hu_path" "$domain" "$domain")
+      b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
+      echo "vmess://$b64"
       json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"httpupgrade","path":"%s","type":"none","host":"%s","tls":"none"}' "$user" "$domain" "$nontls_port" "$id" "$hu_path" "$domain")
       b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
       echo "vmess://$b64"
-      # XHTTP TLS (per TLS port)
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"xhttp","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$xhttp_path" "$domain" "$domain")
-        b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
-        echo "vmess://$b64"
-      done
-      # XHTTP none
+      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"xhttp","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$xhttp_path" "$domain" "$domain")
+      b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
+      echo "vmess://$b64"
       json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"xhttp","path":"%s","type":"none","host":"%s","tls":"none"}' "$user" "$domain" "$nontls_port" "$id" "$xhttp_path" "$domain")
       b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
       echo "vmess://$b64"
       ;;
     vless)
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        echo "vless://${id}@${domain}:${tls_port}?path=/vless&security=tls&encryption=none&host=${domain}&type=ws&sni=${domain}#${user}"
-      done
+      echo "vless://${id}@${domain}:${tls_port}?path=/vless&security=tls&encryption=none&host=${domain}&type=ws&sni=${domain}#${user}"
       echo "vless://${id}@${domain}:${nontls_port}?path=/vless&security=none&encryption=none&host=${domain}&type=ws#${user}"
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        echo "vless://${id}@${domain}:${tls_port}?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless&sni=${domain}#${user}"
-      done
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        echo "vless://${id}@${domain}:${tls_port}?path=/upvless&security=tls&encryption=none&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
-      done
+      echo "vless://${id}@${domain}:${tls_port}?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless&sni=${domain}#${user}"
+      echo "vless://${id}@${domain}:${tls_port}?path=/upvless&security=tls&encryption=none&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
       echo "vless://${id}@${domain}:${nontls_port}?path=/upvless&security=none&encryption=none&host=${domain}&type=httpupgrade#${user}"
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        echo "vless://${id}@${domain}:${tls_port}?path=${xhttp_path}&security=tls&encryption=none&host=${domain}&type=xhttp&mode=auto&sni=${domain}#${user}"
-      done
+      echo "vless://${id}@${domain}:${tls_port}?path=${xhttp_path}&security=tls&encryption=none&host=${domain}&type=xhttp&mode=auto&sni=${domain}#${user}"
       echo "vless://${id}@${domain}:${nontls_port}?path=${xhttp_path}&security=none&encryption=none&host=${domain}&type=xhttp&mode=auto#${user}"
       ;;
     trojan)
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        echo "trojan://${id}@${domain}:${tls_port}?path=/trojan&security=tls&host=${domain}&type=ws&sni=${domain}#${user}"
-      done
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        echo "trojan://${id}@${domain}:${tls_port}?mode=gun&security=tls&type=grpc&serviceName=trojan&sni=${domain}#${user}"
-      done
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        echo "trojan://${id}@${domain}:${tls_port}?path=/uptrojan&security=tls&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
-      done
-      for tls_port in "${_tls_ports[@]}"; do
-        tls_port=$(echo "$tls_port" | tr -d ' ')
-        [ -z "$tls_port" ] && continue
-        echo "trojan://${id}@${domain}:${tls_port}?path=${xhttp_path}&security=tls&host=${domain}&type=xhttp&mode=auto&sni=${domain}#${user}"
-      done
+      echo "trojan://${id}@${domain}:${tls_port}?path=/trojan&security=tls&host=${domain}&type=ws&sni=${domain}#${user}"
+      echo "trojan://${id}@${domain}:${tls_port}?mode=gun&security=tls&type=grpc&serviceName=trojan&sni=${domain}#${user}"
+      echo "trojan://${id}@${domain}:${tls_port}?path=/uptrojan&security=tls&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
+      echo "trojan://${id}@${domain}:${tls_port}?path=${xhttp_path}&security=tls&host=${domain}&type=xhttp&mode=auto&sni=${domain}#${user}"
       ;;
   esac
 }
+
 
 print_proto_account_info() {
   local proto="$1" user="$2"
@@ -1415,29 +1358,27 @@ print_proto_account_info() {
   # Generate titles matching gen_links dual-TLS (443,8443)
   local links
   links=$(gen_links "$proto" "$user" 2>/dev/null || true)
-  # Build expected titles in same order as gen_links
-  local _tls_csv _nontls
-  _tls_csv=$(echo "$TLS_PORT" | tr -d ' ')
+  local _tls_single _nontls
+  _tls_single=$(echo "$TLS_PORT" | tr -d ' ' | cut -d',' -f1)
   _nontls=$(echo "$NONTLS_PORT" | tr -d ' ' | cut -d',' -f1)
-  [ -z "$_tls_csv" ] && _tls_csv="443"
-  local _ports_arr
-  IFS=',' read -ra _ports_arr <<< "$_tls_csv"
+  [ -z "$_tls_single" ] && _tls_single="443"
+  [ -z "$_nontls" ] && _nontls="80"
   local _titles=()
   case "$proto" in
     vmess|vless)
-      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} WS TLS :${_p}"); done
+      _titles+=("${proto_upper} WS TLS :${_tls_single}")
       _titles+=("${proto_upper} WS NO TLS :${_nontls}")
-      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} GRPC TLS :${_p}"); done
-      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} UPGRADE TLS :${_p}"); done
+      _titles+=("${proto_upper} GRPC TLS :${_tls_single}")
+      _titles+=("${proto_upper} UPGRADE TLS :${_tls_single}")
       _titles+=("${proto_upper} UPGRADE NO TLS :${_nontls}")
-      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} XHTTP TLS :${_p}"); done
+      _titles+=("${proto_upper} XHTTP TLS :${_tls_single}")
       _titles+=("${proto_upper} XHTTP NO TLS :${_nontls}")
       ;;
     trojan)
-      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN WS TLS :${_p}"); done
-      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN GRPC :${_p}"); done
-      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN UPGRADE TLS :${_p}"); done
-      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN XHTTP TLS :${_p}"); done
+      _titles+=("TROJAN WS TLS :${_tls_single}")
+      _titles+=("TROJAN GRPC :${_tls_single}")
+      _titles+=("TROJAN UPGRADE TLS :${_tls_single}")
+      _titles+=("TROJAN XHTTP TLS :${_tls_single}")
       ;;
   esac
   local idx=1

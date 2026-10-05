@@ -262,7 +262,7 @@ __EMBED_EOF__
 chmod 644 "$ETC/lib/sysinfo.sh"
 cat > "$ETC/lib/xray_helpers.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel lib/xray_helpers.sh - helpers untuk 9 inbounds (ws/grpc/hu)
+# mytunnel lib/xray_helpers.sh - helpers untuk 12 inbounds (ws/grpc/hu/xhttp)
 # shellcheck disable=SC1091,SC1090
 # Preserve BASE if caller already set full /etc/mytunnel path (menu)
 if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
@@ -312,9 +312,9 @@ _validate_cfg() {
 
 _proto_tags() {
   case "$1" in
-    vmess) echo "vmess-ws vmess-grpc vmess-hu" ;;
-    vless) echo "vless-ws vless-grpc vless-hu" ;;
-    trojan) echo "trojan-ws trojan-grpc trojan-hu" ;;
+    vmess) echo "vmess-ws vmess-grpc vmess-hu vmess-xh" ;;
+    vless) echo "vless-ws vless-grpc vless-hu vless-xh" ;;
+    trojan) echo "trojan-ws trojan-grpc trojan-hu trojan-xh" ;;
     *) echo "" ;;
   esac
 }
@@ -353,9 +353,9 @@ xray_add_client() {
     local clean_tmp
     clean_tmp=$(mktemp)
     case "$proto" in
-      vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
-      vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
-      trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
+      vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu" or .tag=="vmess-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
+      vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu" or .tag=="vless-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
+      trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu" or .tag=="trojan-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
     esac
     if [ -s "$clean_tmp" ]; then cp -a "$clean_tmp" "$cfg" 2>/dev/null || true; chmod 644 "$cfg" 2>/dev/null || true; fi
     rm -f "$clean_tmp" 2>/dev/null || true
@@ -366,21 +366,24 @@ xray_add_client() {
       jq --arg id "$secret" --arg email "$email" '
         (.inbounds[] | select(.tag=="vmess-ws")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
         (.inbounds[] | select(.tag=="vmess-grpc")| .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="vmess-hu")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}]
+        (.inbounds[] | select(.tag=="vmess-hu")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
+        (.inbounds[] | select(.tag=="vmess-xh")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}]
       ' "$cfg" > "$tmp" 2>&1 || add_ok=0
       ;;
     vless)
       jq --arg id "$secret" --arg email "$email" '
         (.inbounds[] | select(.tag=="vless-ws")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
         (.inbounds[] | select(.tag=="vless-grpc")| .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="vless-hu")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}]
+        (.inbounds[] | select(.tag=="vless-hu")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
+        (.inbounds[] | select(.tag=="vless-xh")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}]
       ' "$cfg" > "$tmp" 2>&1 || add_ok=0
       ;;
     trojan)
       jq --arg pw "$secret" --arg email "$email" '
         (.inbounds[] | select(.tag=="trojan-ws")  | .settings.clients) += [{"password": $pw, "level": 0, "email": $email}] |
         (.inbounds[] | select(.tag=="trojan-grpc")| .settings.clients) += [{"password": $pw, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="trojan-hu")  | .settings.clients) += [{"password": $pw, "level": 0, "email": $email}]
+        (.inbounds[] | select(.tag=="trojan-hu")  | .settings.clients) += [{"password": $pw, "level": 0, "email": $email}] |
+        (.inbounds[] | select(.tag=="trojan-xh")  | .settings.clients) += [{"password": $pw, "level": 0, "email": $email}]
       ' "$cfg" > "$tmp" 2>&1 || add_ok=0
       ;;
   esac
@@ -396,8 +399,8 @@ xray_add_client() {
     chmod 644 "$cfg" 2>/dev/null || true
     return 1
   fi
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray add $proto $email (3 inbounds)" >> "$LOG" 2>/dev/null || true
-  echo -e "${GREEN}Client $email ditambahkan ke $proto (3 transports)${RESET}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray add $proto $email (4 inbounds ws/grpc/hu/xhttp)" >> "$LOG" 2>/dev/null || true
+  echo -e "${GREEN}Client $email ditambahkan ke $proto (4 transports ws/grpc/hu/xhttp)${RESET}"
 }
 
 xray_del_client() {
@@ -412,9 +415,9 @@ xray_del_client() {
   bak=$(_backup_cfg)
   tmp=$(mktemp)
   case "$proto" in
-    vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
-    vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
-    trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu" or .tag=="vmess-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu" or .tag=="vless-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu" or .tag=="trojan-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
   esac
   cp -a "$tmp" "$cfg" 2>/dev/null || { echo -e "${RED}Gagal tulis $cfg${RESET}" >&2; rm -f "$tmp"; return 1; }
   chmod 644 "$cfg" 2>/dev/null || true
@@ -884,15 +887,16 @@ _proto_tag() { case "$1" in vmess) echo "vmess-ws";; vless) echo "vless-ws";; tr
 # shellcheck disable=SC2317
 _proto_tags_all() {
   case "$1" in
-    vmess) echo "vmess-ws vmess-grpc vmess-hu";;
-    vless) echo "vless-ws vless-grpc vless-hu";;
-    trojan) echo "trojan-ws trojan-grpc trojan-hu";;
+    vmess) echo "vmess-ws vmess-grpc vmess-hu vmess-xh";;
+    vless) echo "vless-ws vless-grpc vless-hu vless-xh";;
+    trojan) echo "trojan-ws trojan-grpc trojan-hu trojan-xh";;
     *) echo "";;
   esac
 }
 _proto_ws_path() { case "$1" in vmess) echo "/vmess";; vless) echo "/vless";; trojan) echo "/trojan";; *) echo "";; esac; }
 _proto_hu_path() { case "$1" in vmess) echo "/upvmess";; vless) echo "/upvless";; trojan) echo "/uptrojan";; *) echo "";; esac; }
 _proto_grpc_service() { case "$1" in vmess) echo "vmess";; vless) echo "vless";; trojan) echo "trojan";; *) echo "";; esac; }
+_proto_xhttp_path() { case "$1" in vmess) echo "/xvmess";; vless) echo "/xvless";; trojan) echo "/xtrojan";; *) echo "";; esac; }
 _proto_db() { echo "$ETC/db/$1.txt"; }
 _proto_lockfile() { echo "$ETC/db/.$1.lock"; }
 
@@ -1198,10 +1202,11 @@ gen_links() {
   nontls_port=$(echo "$ports" | cut -d'|' -f2 | tr -d ' ' | cut -d',' -f1)
   [ -z "$tls_csv" ] && tls_csv=443
   [ -z "$nontls_port" ] && nontls_port=80
-  local ws_path hu_path grpc_svc
+  local ws_path hu_path grpc_svc xhttp_path
   ws_path=$(_proto_ws_path "$proto")
   hu_path=$(_proto_hu_path "$proto")
   grpc_svc=$(_proto_grpc_service "$proto")
+  xhttp_path=$(_proto_xhttp_path "$proto")
   # split tls_csv by comma for dual-port (443 via stunnel + 8443 via nginx)
   local _tls_ports
   IFS=',' read -ra _tls_ports <<< "$tls_csv"
@@ -1241,6 +1246,18 @@ gen_links() {
       json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"httpupgrade","path":"%s","type":"none","host":"%s","tls":"none"}' "$user" "$domain" "$nontls_port" "$id" "$hu_path" "$domain")
       b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
       echo "vmess://$b64"
+      # XHTTP TLS (per TLS port)
+      for tls_port in "${_tls_ports[@]}"; do
+        tls_port=$(echo "$tls_port" | tr -d ' ')
+        [ -z "$tls_port" ] && continue
+        json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"xhttp","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$xhttp_path" "$domain" "$domain")
+        b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
+        echo "vmess://$b64"
+      done
+      # XHTTP none
+      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"xhttp","path":"%s","type":"none","host":"%s","tls":"none"}' "$user" "$domain" "$nontls_port" "$id" "$xhttp_path" "$domain")
+      b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
+      echo "vmess://$b64"
       ;;
     vless)
       for tls_port in "${_tls_ports[@]}"; do
@@ -1260,6 +1277,12 @@ gen_links() {
         echo "vless://${id}@${domain}:${tls_port}?path=/upvless&security=tls&encryption=none&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
       done
       echo "vless://${id}@${domain}:${nontls_port}?path=/upvless&security=none&encryption=none&host=${domain}&type=httpupgrade#${user}"
+      for tls_port in "${_tls_ports[@]}"; do
+        tls_port=$(echo "$tls_port" | tr -d ' ')
+        [ -z "$tls_port" ] && continue
+        echo "vless://${id}@${domain}:${tls_port}?path=${xhttp_path}&security=tls&encryption=none&host=${domain}&type=xhttp&mode=auto&sni=${domain}#${user}"
+      done
+      echo "vless://${id}@${domain}:${nontls_port}?path=${xhttp_path}&security=none&encryption=none&host=${domain}&type=xhttp&mode=auto#${user}"
       ;;
     trojan)
       for tls_port in "${_tls_ports[@]}"; do
@@ -1277,6 +1300,11 @@ gen_links() {
         [ -z "$tls_port" ] && continue
         echo "trojan://${id}@${domain}:${tls_port}?path=/uptrojan&security=tls&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
       done
+      for tls_port in "${_tls_ports[@]}"; do
+        tls_port=$(echo "$tls_port" | tr -d ' ')
+        [ -z "$tls_port" ] && continue
+        echo "trojan://${id}@${domain}:${tls_port}?path=${xhttp_path}&security=tls&host=${domain}&type=xhttp&mode=auto&sni=${domain}#${user}"
+      done
       ;;
   esac
 }
@@ -1292,10 +1320,11 @@ print_proto_account_info() {
   used=$(proto_get_field "$proto" "$user" 6)
   status=$(proto_get_field "$proto" "$user" 7)
   domain=$(_get_domain)
-  local ws_path hu_path grpc_svc
+  local ws_path hu_path grpc_svc xhttp_path
   ws_path=$(_proto_ws_path "$proto")
   hu_path=$(_proto_hu_path "$proto")
   grpc_svc=$(_proto_grpc_service "$proto")
+  xhttp_path=$(_proto_xhttp_path "$proto")
   local pf="$ETC/config/ports.conf"
   local TLS_PORT="443" NONTLS_PORT="80" ANY_PORT="80,443"
   # shellcheck disable=SC1090
@@ -1346,14 +1375,15 @@ print_proto_account_info() {
     if [ -n "${TLS_PORT:-}" ] && _mt_port_active "nginx" "$TLS_PORT"; then printf "${CYAN}%-${_w}s${RESET} : %s\n" "Port" "$TLS_PORT"; fi
     if [ -n "${ANY_PORT:-}" ] && _mt_port_active "nginx" "$ANY_PORT"; then printf "${CYAN}%-${_w}s${RESET} : %s\n" "Port any" "$ANY_PORT"; fi
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "Key" "$id"
-    printf "${CYAN}%-${_w}s${RESET} : %s\n" "Network" "ws,grpc,upgrade"
+    printf "${CYAN}%-${_w}s${RESET} : %s\n" "Network" "ws,grpc,upgrade,xhttp"
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "Path ws" "/trojan"
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "serviceName" "trojan"
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "Path upgrade" "/uptrojan"
+  printf "${CYAN}%-${_w}s${RESET} : %s\n" "Path xhttp" "/xtrojan"
   elif [ "$proto" = "vless" ]; then
     printf "${CYAN}%-15s${RESET} : %s\n" "id" "$id"
     printf "${CYAN}%-15s${RESET} : %s\n" "Encryption" "none"
-    printf "${CYAN}%-15s${RESET} : %s\n" "Network" "ws,grpc,upgrade"
+    printf "${CYAN}%-15s${RESET} : %s\n" "Network" "ws,grpc,upgrade,xhttp"
     if [ "$proto" = "vmess" ]; then
       printf "${CYAN}%-15s${RESET} : %s\n" "path ws" "/vmess - /whatever"
     else
@@ -1361,6 +1391,7 @@ print_proto_account_info() {
     fi
     printf "${CYAN}%-15s${RESET} : %s\n" "serviceName" "$grpc_svc"
     printf "${CYAN}%-15s${RESET} : %s\n" "path upgrade" "$hu_path"
+  printf "${CYAN}%-15s${RESET} : %s\n" "path xhttp" "$xhttp_path"
     printf "${CYAN}%-15s${RESET} : %s\n" "Expired On" "$expiry"
     printf "${CYAN}%-15s${RESET} : %s\n" "Quota" "$quota_h"
     printf "${CYAN}%-15s${RESET} : %s\n" "Limit IP" "${limit_ip:-0} (0=No Limit)"
@@ -1368,7 +1399,7 @@ print_proto_account_info() {
     printf "${CYAN}%-15s${RESET} : %s\n" "id" "$id"
     printf "${CYAN}%-15s${RESET} : %s\n" "alterId" "0"
     printf "${CYAN}%-15s${RESET} : %s\n" "Security" "auto"
-    printf "${CYAN}%-15s${RESET} : %s\n" "network" "ws,grpc,upgrade"
+    printf "${CYAN}%-15s${RESET} : %s\n" "network" "ws,grpc,upgrade,xhttp"
     if [ "$proto" = "vmess" ]; then
       printf "${CYAN}%-15s${RESET} : %s\n" "path ws" "/vmess - /whatever"
     else
@@ -1376,6 +1407,7 @@ print_proto_account_info() {
     fi
     printf "${CYAN}%-15s${RESET} : %s\n" "serviceName" "$grpc_svc"
     printf "${CYAN}%-15s${RESET} : %s\n" "path upgrade" "$hu_path"
+  printf "${CYAN}%-15s${RESET} : %s\n" "path xhttp" "$xhttp_path"
     printf "${CYAN}%-15s${RESET} : %s\n" "Expired On" "$expiry"
     printf "${CYAN}%-15s${RESET} : %s\n" "Quota" "$quota_h"
     printf "${CYAN}%-15s${RESET} : %s\n" "Limit IP" "${limit_ip:-0} (0=No Limit)"
@@ -1398,11 +1430,14 @@ print_proto_account_info() {
       for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} GRPC TLS :${_p}"); done
       for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} UPGRADE TLS :${_p}"); done
       _titles+=("${proto_upper} UPGRADE NO TLS :${_nontls}")
+      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("${proto_upper} XHTTP TLS :${_p}"); done
+      _titles+=("${proto_upper} XHTTP NO TLS :${_nontls}")
       ;;
     trojan)
       for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN WS TLS :${_p}"); done
       for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN GRPC :${_p}"); done
       for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN UPGRADE TLS :${_p}"); done
+      for _p in "${_ports_arr[@]}"; do _p=$(echo "$_p" | tr -d ' '); [ -z "$_p" ] && continue; _titles+=("TROJAN XHTTP TLS :${_p}"); done
       ;;
   esac
   local idx=1
@@ -1720,7 +1755,7 @@ show_status() {
   [ "$xray" = "ON" ] && xcol="$GREEN" || xcol="$RED"
   [ "$sshws" = "ON" ] && scol="$GREEN" || scol="$RED"
   [ "$nginx" = "ON" ] && ncol="$GREEN" || ncol="$RED"
-  echo -e "${xcol}XRAY : $xray${RESET} | ${scol}SSH-WS : $sshws${RESET} | ${ncol}NGINX : $nginx${RESET} | GOOD"
+  echo -e "${xcol}XRAY : $xray${RESET} | ${scol}SSH-WS : $sshws${RESET} | ${ncol}LOADBLC : $nginx${RESET} | GOOD"
 }
 
 show_version() {
@@ -2425,7 +2460,7 @@ do_create() {
     read -r user
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username tidak boleh kosong${RESET}"; continue; fi
-    if ! grep -qE '^[a-z0-9]{3,16}$' <<< "$user" 2>/dev/null; then
+    if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then
       echo -e "${RED}Username hanya a-z0-9 3-16, tanpa spasi/simbol/huruf besar${RESET}"; continue
     fi
     if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah dipakai di protokol lain: $user${RESET}"; continue; fi
@@ -2486,7 +2521,7 @@ do_create_custom() {
     read -r user
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username kosong${RESET}"; continue; fi
-    if ! grep -qE '^[a-z0-9]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
+    if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
     if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid${RESET}"; continue; fi
     break
@@ -2996,7 +3031,7 @@ do_create() {
     read -r user
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username tidak boleh kosong${RESET}"; continue; fi
-    if ! grep -qE '^[a-z0-9]{3,16}$' <<< "$user" 2>/dev/null; then
+    if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then
       echo -e "${RED}Username hanya a-z0-9 3-16, tanpa spasi/simbol/huruf besar${RESET}"; continue
     fi
     if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah dipakai di protokol lain: $user${RESET}"; continue; fi
@@ -3057,7 +3092,7 @@ do_create_custom() {
     read -r user
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username kosong${RESET}"; continue; fi
-    if ! grep -qE '^[a-z0-9]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
+    if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
     if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid${RESET}"; continue; fi
     break
@@ -3567,7 +3602,7 @@ do_create() {
     read -r user
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username tidak boleh kosong${RESET}"; continue; fi
-    if ! grep -qE '^[a-z0-9]{3,16}$' <<< "$user" 2>/dev/null; then
+    if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then
       echo -e "${RED}Username hanya a-z0-9 3-16, tanpa spasi/simbol/huruf besar${RESET}"; continue
     fi
     if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah dipakai di protokol lain: $user${RESET}"; continue; fi
@@ -3628,7 +3663,7 @@ do_create_custom() {
     read -r user
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username kosong${RESET}"; continue; fi
-    if ! grep -qE '^[a-z0-9]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
+    if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
     if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid${RESET}"; continue; fi
     break
@@ -4867,7 +4902,7 @@ __EMBED_EOF__
 chmod 755 "$ETC/usr/local/bin/mytunnel-tlsmux.py"
 cat > "$ETC/setup/xray.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel setup/xray.sh - install & config Xray (9 inbounds: ws+grpc+httpupgrade)
+# mytunnel setup/xray.sh - install & config Xray (12 inbounds (ws/grpc/hu/xhttp + api): ws+grpc+httpupgrade)
 # shellcheck disable=SC1091,SC1090
 set -e
 BASE="${MYTUNNEL_PREFIX:-}"
@@ -4910,9 +4945,9 @@ write_config() {
     cp -a "$XRAY_CFG" "$bak" 2>/dev/null || true
     echo -e "${YELLOW}Backup config lama: $bak${RESET}"
   fi
-  local keep_vmess_ws="[]" keep_vmess_grpc="[]" keep_vmess_hu="[]"
-  local keep_vless_ws="[]" keep_vless_grpc="[]" keep_vless_hu="[]"
-  local keep_trojan_ws="[]" keep_trojan_grpc="[]" keep_trojan_hu="[]"
+  local keep_vmess_ws="[]" keep_vmess_grpc="[]" keep_vmess_hu="[]" keep_vmess_xh="[]"
+  local keep_vless_ws="[]" keep_vless_grpc="[]" keep_vless_hu="[]" keep_vless_xh="[]"
+  local keep_trojan_ws="[]" keep_trojan_grpc="[]" keep_trojan_hu="[]" keep_trojan_xh="[]"
   local keep_outbounds="[]" keep_routing="[]"
   if [ -f "$XRAY_CFG" ] && command -v jq >/dev/null 2>&1; then
     keep_vmess_ws=$(jq -c '[.inbounds[] | select(.tag=="vmess-ws") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
@@ -4924,7 +4959,10 @@ write_config() {
     keep_trojan_ws=$(jq -c '[.inbounds[] | select(.tag=="trojan-ws") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
     keep_trojan_grpc=$(jq -c '[.inbounds[] | select(.tag=="trojan-grpc") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
     keep_trojan_hu=$(jq -c '[.inbounds[] | select(.tag=="trojan-hu") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
-    for v in keep_vmess_ws keep_vmess_grpc keep_vmess_hu keep_vless_ws keep_vless_grpc keep_vless_hu keep_trojan_ws keep_trojan_grpc keep_trojan_hu; do
+    keep_vmess_xh=$(jq -c '[.inbounds[] | select(.tag=="vmess-xh") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
+    keep_vless_xh=$(jq -c '[.inbounds[] | select(.tag=="vless-xh") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
+    keep_trojan_xh=$(jq -c '[.inbounds[] | select(.tag=="trojan-xh") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
+    for v in keep_vmess_ws keep_vmess_grpc keep_vmess_hu keep_vmess_xh keep_vless_ws keep_vless_grpc keep_vless_hu keep_vless_xh keep_trojan_ws keep_trojan_grpc keep_trojan_hu keep_trojan_xh; do
       # no eval: cek via indirect expansion, reset jika bukan array JSON
       _val="${!v}"
       if ! printf '%s' "$_val" | jq -e 'type=="array"' >/dev/null 2>&1; then
@@ -5027,6 +5065,30 @@ write_config() {
       "streamSettings": { "network": "httpupgrade", "httpupgradeSettings": { "path": "/uptrojan" } }
     },
     {
+      "tag": "vmess-xh",
+      "port": 10031,
+      "listen": "127.0.0.1",
+      "protocol": "vmess",
+      "settings": { "clients": [] },
+      "streamSettings": { "network": "xhttp", "xhttpSettings": { "path": "/xvmess", "mode": "auto" } }
+    },
+    {
+      "tag": "vless-xh",
+      "port": 10032,
+      "listen": "127.0.0.1",
+      "protocol": "vless",
+      "settings": { "clients": [], "decryption": "none" },
+      "streamSettings": { "network": "xhttp", "xhttpSettings": { "path": "/xvless", "mode": "auto" } }
+    },
+    {
+      "tag": "trojan-xh",
+      "port": 10033,
+      "listen": "127.0.0.1",
+      "protocol": "trojan",
+      "settings": { "clients": [] },
+      "streamSettings": { "network": "xhttp", "xhttpSettings": { "path": "/xtrojan", "mode": "auto" } }
+    },
+    {
       "tag": "api",
       "port": 10085,
       "listen": "127.0.0.1",
@@ -5047,19 +5109,22 @@ write_config() {
 CFG_EOF
   if command -v jq >/dev/null 2>&1; then
     local tmp="$XRAY_CFG.tmp"
-    jq --argjson a "$keep_vmess_ws" --argjson b "$keep_vmess_grpc" --argjson c "$keep_vmess_hu" \
-       --argjson d "$keep_vless_ws" --argjson e "$keep_vless_grpc" --argjson f "$keep_vless_hu" \
-       --argjson g "$keep_trojan_ws" --argjson h "$keep_trojan_grpc" --argjson i "$keep_trojan_hu" \
+    jq --argjson a "$keep_vmess_ws" --argjson b "$keep_vmess_grpc" --argjson c "$keep_vmess_hu" --argjson j "$keep_vmess_xh" \
+       --argjson d "$keep_vless_ws" --argjson e "$keep_vless_grpc" --argjson f "$keep_vless_hu" --argjson k "$keep_vless_xh" \
+       --argjson g "$keep_trojan_ws" --argjson h "$keep_trojan_grpc" --argjson i "$keep_trojan_hu" --argjson l "$keep_trojan_xh" \
        --argjson extra_out "$keep_outbounds" --argjson extra_rules "$keep_routing" '
       (.inbounds[] | select(.tag=="vmess-ws") | .settings.clients) = $a |
       (.inbounds[] | select(.tag=="vmess-grpc") | .settings.clients) = $b |
       (.inbounds[] | select(.tag=="vmess-hu") | .settings.clients) = $c |
+      (.inbounds[] | select(.tag=="vmess-xh") | .settings.clients) = $j |
       (.inbounds[] | select(.tag=="vless-ws") | .settings.clients) = $d |
       (.inbounds[] | select(.tag=="vless-grpc") | .settings.clients) = $e |
       (.inbounds[] | select(.tag=="vless-hu") | .settings.clients) = $f |
+      (.inbounds[] | select(.tag=="vless-xh") | .settings.clients) = $k |
       (.inbounds[] | select(.tag=="trojan-ws") | .settings.clients) = $g |
       (.inbounds[] | select(.tag=="trojan-grpc") | .settings.clients) = $h |
       (.inbounds[] | select(.tag=="trojan-hu") | .settings.clients) = $i |
+      (.inbounds[] | select(.tag=="trojan-xh") | .settings.clients) = $l |
       .outbounds += $extra_out |
       .routing.rules += $extra_rules
     ' "$XRAY_CFG" > "$tmp" 2>/dev/null && mv "$tmp" "$XRAY_CFG" || echo -e "${YELLOW}jq inject gagal, lanjut default${RESET}"
@@ -5069,7 +5134,7 @@ CFG_EOF
   chmod 644 "$XRAY_LOGDIR/"*.log 2>/dev/null || true
   chown nobody:nogroup "$XRAY_LOGDIR" 2>/dev/null || true
   chown nobody:nogroup "$XRAY_LOGDIR/"*.log 2>/dev/null || true
-  echo -e "${GREEN}Config Xray ditulis: $XRAY_CFG (9 inbounds)${RESET}"
+  echo -e "${GREEN}Config Xray ditulis: $XRAY_CFG (12 inbounds ws+grpc+hu+xhttp)${RESET}"
 }
 
 validate_config() {
@@ -5135,7 +5200,7 @@ __EMBED_EOF__
 chmod 755 "$ETC/setup/xray.sh"
 cat > "$ETC/setup/nginx.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel setup/nginx.sh - install & config Nginx (80 WS+HU + 443 TLS WS/HU/gRPC)
+# mytunnel setup/nginx.sh - install & config Nginx (80 WS+HU+XHTTP + 443 TLS WS/HU/gRPC+XHTTP)
 # shellcheck disable=SC1091,SC1090,SC2034,SC2155
 set -e
 BASE="${MYTUNNEL_PREFIX:-}"
@@ -5192,8 +5257,9 @@ write_config() {
   for _p in $(echo "$nontls_ports" | tr ',' ' '); do
     _p=$(echo "$_p" | tr -d ' ' | cut -d'-' -f1)
     case "$_p" in ''|*[!0-9]*) continue;; esac
-    if [ -z "${_seen_http[$_p]:-}" ]; then
-      _seen_http[$_p]=1
+    _lp="$_p"; [ "$_p" = "80" ] && _lp=8080
+    if [ -z "${_seen_http[$_lp]:-}" ]; then
+      _seen_http[$_lp]=1
       if [ "$_p" = "80" ]; then
         http_listens="${http_listens}  listen 8080 default_server;
   listen [::]:8080 default_server;
@@ -5208,8 +5274,9 @@ write_config() {
   for _p in $(echo "$any_ports" | tr ',' ' '); do
     _p=$(echo "$_p" | tr -d ' ' | cut -d'-' -f1)
     case "$_p" in ''|*[!0-9]*) continue;; esac
-    if [ -z "${_seen_http[$_p]:-}" ]; then
-      _seen_http[$_p]=1
+    _lp="$_p"; [ "$_p" = "80" ] && _lp=8080
+    if [ -z "${_seen_http[$_lp]:-}" ]; then
+      _seen_http[$_lp]=1
       http_listens="${http_listens}  listen $_p;
   listen [::]:$_p;
 "
@@ -5347,6 +5414,39 @@ location = /uptrojan {
   proxy_read_timeout 3600s;
   proxy_buffering off;
   proxy_send_timeout 3600s;
+}
+location /xvmess {
+  proxy_pass http://127.0.0.1:10031;
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+  proxy_request_buffering off;
+}
+location /xvless {
+  proxy_pass http://127.0.0.1:10032;
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+  proxy_request_buffering off;
+}
+location /xtrojan {
+  proxy_pass http://127.0.0.1:10033;
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_read_timeout 3600s;
+  proxy_buffering off;
+  proxy_send_timeout 3600s;
+  proxy_request_buffering off;
 }
 location = /ssh-ws {
   proxy_pass http://127.0.0.1:10004;
@@ -11739,8 +11839,8 @@ check_proto() {
     cnt=$(jq --arg email "$user" --arg prefix "$proto" '[.inbounds[] | select(.tag | startswith($prefix)) | .settings.clients[]? | select(.email==$email)] | length' "$XRAY_CFG" 2>/dev/null || echo 0)
     if [ "$cnt" -eq 0 ]; then
       echo -e "  ${YELLOW}⚠ $user ada di db tapi HILANG di Xray${RESET} (exp $exp)"; miss_xray=$((miss_xray+1))
-    elif [ "$cnt" -lt 3 ] 2>/dev/null; then
-      echo -e "  ${YELLOW}⚠ $user ada di db tapi PARSIAL di Xray ($cnt/3 transports)${RESET} (exp $exp)"; miss_xray=$((miss_xray+1))
+    elif [ "$cnt" -lt 4 ] 2>/dev/null; then
+      echo -e "  ${YELLOW}⚠ $user ada di db tapi PARSIAL di Xray ($cnt/4 transports)${RESET} (exp $exp)"; miss_xray=$((miss_xray+1))
     fi
   done < "$db"
   # reverse: Xray clients not in db

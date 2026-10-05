@@ -47,6 +47,7 @@ case "$OS" in ubuntu|debian) echo -e "${GREEN}OS: $OS $VER${RESET}";; *) echo -e
 # BAGIAN D-2: preflight (skip jika MYTUNNEL_PREFIX test mode)
 if [ -z "$MYTUNNEL_PREFIX" ]; then
   echo -e "${CYAN}=== Preflight check ===${RESET}"
+  VIRT=$(systemd-detect-virt 2>/dev/null || echo unknown); [ "$VIRT" = "openvz" ] && { echo -e "${RED}OpenVZ tidak didukung${RESET}"; exit 1; }; echo "  Virtualisasi: $VIRT"
   ARCH=$(uname -m 2>/dev/null || echo unknown)
   case "$ARCH" in x86_64|amd64) echo -e "  Arch: ${GREEN}$ARCH ✓${RESET}";; aarch64|arm64) echo -e "  Arch: ${YELLOW}$ARCH (terbatas, build badvpn mungkin perlu adaptasi)${RESET}";; *) echo -e "  Arch: ${YELLOW}$ARCH (belum diuji)${RESET}";; esac
   case "$OS-$VER" in ubuntu-22.04|ubuntu-24.04|debian-12|debian-11|ubuntu-20.04|ubuntu-18.04|debian-10) echo -e "  OS versi: ${GREEN}$OS $VER ✓${RESET}";; *) echo -e "  OS versi: ${YELLOW}$OS $VER (disarankan Debian 12 / Ubuntu 22.04)${RESET}";; esac
@@ -54,6 +55,7 @@ if [ -z "$MYTUNNEL_PREFIX" ]; then
   if [ "$RAM_MB" -lt 512 ] 2>/dev/null; then echo -e "  RAM: ${YELLOW}${RAM_MB} MB (minimum 512 MB disarankan)${RESET}"; else echo -e "  RAM: ${GREEN}${RAM_MB} MB ✓${RESET}"; fi
   DISK_AVAIL=$(df -m / 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
   if [ "$DISK_AVAIL" -lt 2048 ] 2>/dev/null; then echo -e "  Disk /: ${YELLOW}${DISK_AVAIL} MB (minimum 2 GB disarankan)${RESET}"; else echo -e "  Disk /: ${GREEN}${DISK_AVAIL} MB ✓${RESET}"; fi
+  [ "$RAM_MB" -lt 512 ] 2>/dev/null && { echo -e "${RED}RAM minimum 512 MB${RESET}"; exit 1; }; [ "$DISK_AVAIL" -lt 2048 ] 2>/dev/null && { echo -e "${RED}Disk minimum 2 GB${RESET}"; exit 1; }
   if ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI --max-time 5 https://github.com >/dev/null 2>&1; then echo -e "  Internet: ${GREEN}OK ✓${RESET}"; else echo -e "  Internet: ${YELLOW}TIDAK TERDETEKSI (butuh untuk acme/Xray)${RESET}"; fi
   BUSY=""
   for _p in 80 443 444 90 81; do if ss -tlnp 2>/dev/null | grep -q ":$_p " || ss -tln 2>/dev/null | grep -q ":$_p "; then BUSY="$BUSY $_p"; fi; done
@@ -4381,11 +4383,11 @@ main() {
     fi
     ans=$(resolve_a "$domain")
     if [ -n "$ans" ] && [ -n "$myip" ] && [ "$ans" != "$myip" ]; then
-      echo -e "${YELLOW}Peringatan: DNS A $domain -> $ans tidak sama dengan IP VPS $myip${RESET}"
-      echo -e "${YELLOW}Mode non-interaktif: tetap lanjut (MYTUNNEL_DOMAIN set)${RESET}"
+      echo -e "${RED}DNS A $domain -> $ans tidak sama dengan IP VPS $myip${RESET}" >&2
+      return 1
     elif [ -z "$ans" ]; then
-      echo -e "${YELLOW}Peringatan: tidak bisa resolve A record untuk $domain${RESET}"
-      echo -e "${YELLOW}Mode non-interaktif: tetap lanjut${RESET}"
+      echo -e "${RED}A record $domain tidak dapat di-resolve${RESET}" >&2
+      return 1
     else
       echo -e "${GREEN}DNS OK: $domain -> $ans${RESET}"
     fi

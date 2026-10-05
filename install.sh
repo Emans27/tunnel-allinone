@@ -4779,6 +4779,7 @@ main "$@"
 
 __EMBED_EOF__
 chmod 755 "$ETC/setup/cert.sh"
+mkdir -p "$ETC/usr/local/bin" 2>/dev/null || true
 cat > "$ETC/usr/local/bin/mytunnel-tlsmux.py" << '__EMBED_EOF__'
 #!/usr/bin/env python3
 import socket, threading, select, sys

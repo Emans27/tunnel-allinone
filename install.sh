@@ -437,7 +437,8 @@ xray_del_client() {
 xray_reload() {
   local cfg="$XRAY_CFG"
   if ! _validate_cfg; then echo -e "${RED}Config tidak valid, tidak reload${RESET}" >&2; return 1; fi
-  if [ -n "$BASE" ]; then
+  # FIX: BASE selalu terisi di production; TEST MODE hanya MYTUNNEL_PREFIX.
+  if [ -n "${MYTUNNEL_PREFIX:-}" ]; then
     echo -e "${YELLOW}[TEST MODE] xray reload simulasi (skip systemctl)${RESET}"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray reload (simulated)" >> "$LOG" 2>/dev/null || true
     return 0

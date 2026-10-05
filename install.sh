@@ -1226,12 +1226,6 @@ gen_links() {
       json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"httpupgrade","path":"%s","type":"none","host":"%s","tls":"none"}' "$user" "$domain" "$nontls_port" "$id" "$hu_path" "$domain")
       b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
       echo "vmess://$b64"
-      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"xhttp","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$xhttp_path" "$domain" "$domain")
-      b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
-      echo "vmess://$b64"
-      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"xhttp","path":"%s","type":"none","host":"%s","tls":"none"}' "$user" "$domain" "$nontls_port" "$id" "$xhttp_path" "$domain")
-      b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
-      echo "vmess://$b64"
       ;;
     vless)
       echo "vless://${id}@${domain}:${tls_port}?path=/vless&security=tls&encryption=none&host=${domain}&type=ws&sni=${domain}#${user}"
@@ -1244,9 +1238,10 @@ gen_links() {
       ;;
     trojan)
       echo "trojan://${id}@${domain}:${tls_port}?path=/trojan&security=tls&host=${domain}&type=ws&sni=${domain}#${user}"
+      echo "trojan://${id}@${domain}:${nontls_port}?path=/trojan&security=none&host=${domain}&type=ws#${user}"
       echo "trojan://${id}@${domain}:${tls_port}?mode=gun&security=tls&type=grpc&serviceName=trojan&sni=${domain}#${user}"
       echo "trojan://${id}@${domain}:${tls_port}?path=/uptrojan&security=tls&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
-      echo "trojan://${id}@${domain}:${tls_port}?path=${xhttp_path}&security=tls&host=${domain}&type=xhttp&mode=auto&sni=${domain}#${user}"
+      echo "trojan://${id}@${domain}:${nontls_port}?path=/uptrojan&security=none&host=${domain}&type=httpupgrade#${user}"
       ;;
   esac
 }
@@ -1318,7 +1313,7 @@ print_proto_account_info() {
     if [ -n "${TLS_PORT:-}" ] && _mt_port_active "nginx" "$TLS_PORT"; then printf "${CYAN}%-${_w}s${RESET} : %s\n" "Port" "$TLS_PORT"; fi
     if [ -n "${ANY_PORT:-}" ] && _mt_port_active "nginx" "$ANY_PORT"; then printf "${CYAN}%-${_w}s${RESET} : %s\n" "Port any" "$ANY_PORT"; fi
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "Key" "$id"
-    printf "${CYAN}%-${_w}s${RESET} : %s\n" "Network" "ws,grpc,upgrade,xhttp"
+    printf "${CYAN}%-${_w}s${RESET} : %s\n" "Network" "ws,grpc,upgrade"
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "Path ws" "/trojan"
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "serviceName" "trojan"
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "Path upgrade" "/uptrojan"
@@ -1326,7 +1321,7 @@ print_proto_account_info() {
   elif [ "$proto" = "vless" ]; then
     printf "${CYAN}%-15s${RESET} : %s\n" "id" "$id"
     printf "${CYAN}%-15s${RESET} : %s\n" "Encryption" "none"
-    printf "${CYAN}%-15s${RESET} : %s\n" "Network" "ws,grpc,upgrade,xhttp"
+    if [ "$proto" = "vless" ]; then printf "${CYAN}%-15s${RESET} : %s\n" "Network" "ws,grpc,upgrade,xhttp"; else printf "${CYAN}%-15s${RESET} : %s\n" "Network" "ws,grpc,upgrade"; fi
     if [ "$proto" = "vmess" ]; then
       printf "${CYAN}%-15s${RESET} : %s\n" "path ws" "/vmess - /whatever"
     else
@@ -1342,7 +1337,7 @@ print_proto_account_info() {
     printf "${CYAN}%-15s${RESET} : %s\n" "id" "$id"
     printf "${CYAN}%-15s${RESET} : %s\n" "alterId" "0"
     printf "${CYAN}%-15s${RESET} : %s\n" "Security" "auto"
-    printf "${CYAN}%-15s${RESET} : %s\n" "network" "ws,grpc,upgrade,xhttp"
+    printf "${CYAN}%-15s${RESET} : %s\n" "network" "ws,grpc,upgrade"
     if [ "$proto" = "vmess" ]; then
       printf "${CYAN}%-15s${RESET} : %s\n" "path ws" "/vmess - /whatever"
     else
@@ -1365,7 +1360,14 @@ print_proto_account_info() {
   [ -z "$_nontls" ] && _nontls="80"
   local _titles=()
   case "$proto" in
-    vmess|vless)
+    vmess)
+      _titles+=("${proto_upper} WS TLS :${_tls_single}")
+      _titles+=("${proto_upper} WS NO TLS :${_nontls}")
+      _titles+=("${proto_upper} GRPC TLS :${_tls_single}")
+      _titles+=("${proto_upper} UPGRADE TLS :${_tls_single}")
+      _titles+=("${proto_upper} UPGRADE NO TLS :${_nontls}")
+      ;;
+    vless)
       _titles+=("${proto_upper} WS TLS :${_tls_single}")
       _titles+=("${proto_upper} WS NO TLS :${_nontls}")
       _titles+=("${proto_upper} GRPC TLS :${_tls_single}")
@@ -1376,9 +1378,10 @@ print_proto_account_info() {
       ;;
     trojan)
       _titles+=("TROJAN WS TLS :${_tls_single}")
+      _titles+=("TROJAN WS NO TLS :${_nontls}")
       _titles+=("TROJAN GRPC :${_tls_single}")
       _titles+=("TROJAN UPGRADE TLS :${_tls_single}")
-      _titles+=("TROJAN XHTTP TLS :${_tls_single}")
+      _titles+=("TROJAN UPGRADE NO TLS :${_nontls}")
       ;;
   esac
   local idx=1
@@ -1594,14 +1597,19 @@ ah_notify_admin(){
   # shellcheck disable=SC1090
   . "$conf" 2>/dev/null || return 0
   [ -z "${BOT_TOKEN:-}" ] || [ -z "${ADMIN_ID:-}" ] && return 0
-  local clean esc send_text
-  # strip ANSI
+  local clean send_text
   clean=$(printf "%s" "$msg" | sed 's/\x1b\[[0-9;]*m//g' 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' 2>/dev/null || printf "%s" "$msg")
   clean=$(printf "%s" "$clean" | tr -d '\r' 2>/dev/null || printf "%s" "$clean")
-  # HTML escape untuk <pre>
-  esc=$(printf "%s" "$clean" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
-  send_text="<pre>${esc}</pre>"
-  curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=HTML" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
+  # per-link mono: tiap vless:// vmess:// trojan:// jadi `link` agar 1-ketuk copy
+  send_text=$(printf "%s" "$clean" | while IFS= read -r _line || [ -n "$_line" ]; do
+    if printf "%s" "$_line" | grep -qE '^(vless|vmess|trojan)://'; then
+      _line=$(printf "%s" "$_line" | sed 's/`/\\`/g')
+      printf '`%s`\n' "$_line"
+    else
+      printf '%s\n' "$_line"
+    fi
+  done)
+  curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=Markdown" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
     curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=${clean}" >/dev/null 2>&1 || true
   }
   ah_log "notify admin: ${clean:0:80}"
@@ -5250,12 +5258,12 @@ write_config() {
 "
   # jika stunnel aktif di 443, jangan listen 443 di nginx (avoid bind conflict)
   if [ -z "$BASE" ] && ss -tlnp 2>/dev/null | grep -q ":443 "; then
-    if ss -tlnp 2>/dev/null | grep -q "stunnel.*:443"; then
+    if systemctl is-active --quiet stunnel4 2>/dev/null || ss -tlnp 2>/dev/null | grep -q "stunnel"; then
       https_listens=$(echo "$https_listens" | grep -v "  listen 443" | grep -v "  listen \[::\]:443" || true)
       [ -z "$https_listens" ] && https_listens="  listen 8443 ssl http2;
   listen [::]:8443 ssl http2;
 "
-      echo -e "${YELLOW}Stunnel terdeteksi di 443, nginx skip listen 443 -> $https_listens${RESET}" | head -n 5
+      echo -e "${YELLOW}Stunnel terdeteksi di 443, nginx skip listen 443 -> $(echo "$https_listens" | tr -d '\n' | cut -c1-80)${RESET}" | head -n 5
     fi
   fi
   declare _www_root="/var/www/html"
@@ -5463,6 +5471,26 @@ $http_listens
   }
 
   include $NGINX_CONF_DIR/conf.d/mytunnel-locations.inc;
+
+  # gRPC also on plain HTTP (h2c) for :80/:8080 fallback — allow gun via 80
+  location ~ ^/vmess/.* {
+    grpc_pass grpc://127.0.0.1:10011;
+  }
+  location ~ ^/vless/.* {
+    grpc_pass grpc://127.0.0.1:10012;
+  }
+  location ~ ^/trojan/.* {
+    grpc_pass grpc://127.0.0.1:10013;
+  }
+  location = /vmess.Tun {
+    grpc_pass grpc://127.0.0.1:10011;
+  }
+  location = /vless.Tun {
+    grpc_pass grpc://127.0.0.1:10012;
+  }
+  location = /trojan.Tun {
+    grpc_pass grpc://127.0.0.1:10013;
+  }
 
   location / {
     error_page 418 = @sshws;

@@ -1450,7 +1450,7 @@ print_proto_account_info() {
     local pad2=$(( (36 - ${#ttitle}) / 2 ))
     printf "%*s%s\n" "$pad2" "" "$ttitle" | cut -c1-60
     echo -e "${GREY}${DASH}${RESET}"
-    echo "$link" | fold -w 60 | while IFS= read -r part; do echo "$part"; done
+    echo "$link"
     idx=$((idx+1))
   done <<< "$links"
   if [ "$proto" = "trojan" ]; then

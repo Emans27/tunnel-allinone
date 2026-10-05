@@ -4639,6 +4639,16 @@ main() {
 }
 main "$@"
 
+# Fix DNS - persist 1.1.1.1 8.8.8.8 to avoid ISP NXDOMAIN (pertahankan)
+if [ -f /etc/systemd/resolved.conf ]; then
+  if grep -q "^#DNS=" /etc/systemd/resolved.conf 2>/dev/null; then sed -i "s/^#DNS=.*/DNS=1.1.1.1 8.8.8.8/" /etc/systemd/resolved.conf 2>/dev/null || true
+  elif grep -q "^DNS=" /etc/systemd/resolved.conf 2>/dev/null; then sed -i "s/^DNS=.*/DNS=1.1.1.1 8.8.8.8/" /etc/systemd/resolved.conf 2>/dev/null || true
+  else echo "DNS=1.1.1.1 8.8.8.8" >> /etc/systemd/resolved.conf 2>/dev/null || true
+  fi
+  systemctl restart systemd-resolved 2>/dev/null || true
+fi
+
+
 __EMBED_EOF__
 chmod 755 "$ETC/setup/firewall.sh"
 cat > "$ETC/setup/cert.sh" << '__EMBED_EOF__'
@@ -4922,6 +4932,9 @@ write_config() {
     "loglevel": "warning",
     "access": "$XRAY_LOGDIR/access.log",
     "error": "$XRAY_LOGDIR/error.log"
+  },
+  "dns": {
+    "servers": ["1.1.1.1","8.8.8.8","8.8.4.4"]
   },
   "stats": {},
   "api": {

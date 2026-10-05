@@ -1238,10 +1238,8 @@ gen_links() {
       ;;
     trojan)
       echo "trojan://${id}@${domain}:${tls_port}?path=/trojan&security=tls&host=${domain}&type=ws&sni=${domain}#${user}"
-      echo "trojan://${id}@${domain}:${nontls_port}?path=/trojan&security=none&host=${domain}&type=ws#${user}"
       echo "trojan://${id}@${domain}:${tls_port}?mode=gun&security=tls&type=grpc&serviceName=trojan&sni=${domain}#${user}"
       echo "trojan://${id}@${domain}:${tls_port}?path=/uptrojan&security=tls&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
-      echo "trojan://${id}@${domain}:${nontls_port}?path=/uptrojan&security=none&host=${domain}&type=httpupgrade#${user}"
       ;;
   esac
 }
@@ -1317,7 +1315,6 @@ print_proto_account_info() {
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "Path ws" "/trojan"
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "serviceName" "trojan"
     printf "${CYAN}%-${_w}s${RESET} : %s\n" "Path upgrade" "/uptrojan"
-  printf "${CYAN}%-${_w}s${RESET} : %s\n" "Path xhttp" "/xtrojan"
   elif [ "$proto" = "vless" ]; then
     printf "${CYAN}%-15s${RESET} : %s\n" "id" "$id"
     printf "${CYAN}%-15s${RESET} : %s\n" "Encryption" "none"
@@ -1345,7 +1342,6 @@ print_proto_account_info() {
     fi
     printf "${CYAN}%-15s${RESET} : %s\n" "serviceName" "$grpc_svc"
     printf "${CYAN}%-15s${RESET} : %s\n" "path upgrade" "$hu_path"
-  printf "${CYAN}%-15s${RESET} : %s\n" "path xhttp" "$xhttp_path"
     printf "${CYAN}%-15s${RESET} : %s\n" "Expired On" "$expiry"
     printf "${CYAN}%-15s${RESET} : %s\n" "Quota" "$quota_h"
     printf "${CYAN}%-15s${RESET} : %s\n" "Limit IP" "${limit_ip:-0} (0=No Limit)"
@@ -1361,11 +1357,11 @@ print_proto_account_info() {
   local _titles=()
   case "$proto" in
     vmess)
-      _titles+=("${proto_upper} WS TLS :${_tls_single}")
-      _titles+=("${proto_upper} WS NO TLS :${_nontls}")
-      _titles+=("${proto_upper} GRPC TLS :${_tls_single}")
-      _titles+=("${proto_upper} UPGRADE TLS :${_tls_single}")
-      _titles+=("${proto_upper} UPGRADE NO TLS :${_nontls}")
+      _titles+=("${proto_upper} WS TLS")
+      _titles+=("${proto_upper} WS NO TLS")
+      _titles+=("${proto_upper} GRPC")
+      _titles+=("${proto_upper} UPGRADE TLS")
+      _titles+=("${proto_upper} UPGRADE NO TLS")
       ;;
     vless)
       _titles+=("${proto_upper} WS TLS :${_tls_single}")
@@ -1377,11 +1373,9 @@ print_proto_account_info() {
       _titles+=("${proto_upper} XHTTP NO TLS :${_nontls}")
       ;;
     trojan)
-      _titles+=("TROJAN WS TLS :${_tls_single}")
-      _titles+=("TROJAN WS NO TLS :${_nontls}")
-      _titles+=("TROJAN GRPC :${_tls_single}")
-      _titles+=("TROJAN UPGRADE TLS :${_tls_single}")
-      _titles+=("TROJAN UPGRADE NO TLS :${_nontls}")
+      _titles+=("TROJAN WS TLS")
+      _titles+=("TROJAN GRPC")
+      _titles+=("TROJAN UPGRADE TLS")
       ;;
   esac
   local idx=1

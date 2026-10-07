@@ -252,8 +252,9 @@ get_traffic_rx_tx() {
     local m_rx m_tx d_rx d_tx
     m_rx=$(echo "$line" | awk -F';' '{print $9}'); m_tx=$(echo "$line" | awk -F';' '{print $10}')
     d_rx=$(echo "$line" | awk -F';' '{print $4}'); d_tx=$(echo "$line" | awk -F';' '{print $6}')
-    echo "MRX:${m_rx:- -} MTX:${m_tx:- -} DRX:${d_rx:- -} DTX:${d_tx:- -}"
-  else echo "MRX:- MTX:- DRX:- DTX:-"; fi
+    # nilai vnstat berisi spasi ("421.67 GiB") → delimiter harus kurung siku, bukan spasi
+    echo "MRX:[$m_rx] MTX:[$m_tx] DRX:[$d_rx] DTX:[$d_tx]"
+  else echo "MRX:[] MTX:[] DRX:[] DTX:[]"; fi
 }
 svc_status() { systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
 get_account_count() { local f="${ETC_BASE}/db/$1.txt" n=0; if [ -f "$f" ]; then n=$(grep -cve '^\s*$' "$f" 2>/dev/null || true); fi; [[ "$n" =~ ^[0-9]+$ ]] || n=0; echo "$n"; }
@@ -1664,11 +1665,11 @@ show_sysinfo() {
   ip=$(get_ip_cached 2>/dev/null || echo "-")
   domain=$(get_domain 2>/dev/null || echo "-")
   uptime=$(get_uptime 2>/dev/null || echo "-")
-  vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:- MTX:- DRX:- DTX:-")
-  m_rx=$(echo "$vn" | sed -n 's/.*MRX:\([^ ]*\).*/\1/p'); [ -z "$m_rx" ] && m_rx="-"
-  m_tx=$(echo "$vn" | sed -n 's/.*MTX:\([^ ]*\).*/\1/p'); [ -z "$m_tx" ] && m_tx="-"
-  d_rx=$(echo "$vn" | sed -n 's/.*DRX:\([^ ]*\).*/\1/p'); [ -z "$d_rx" ] && d_rx="-"
-  d_tx=$(echo "$vn" | sed -n 's/.*DTX:\([^ ]*\).*/\1/p'); [ -z "$d_tx" ] && d_tx="-"
+  vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:[] MTX:[] DRX:[] DTX:[]")
+  _v=${vn#*MRX:[}; m_rx=${_v%%]*}; _v=${vn#*MTX:[}; m_tx=${_v%%]*}
+  _v=${vn#*DRX:[}; d_rx=${_v%%]*}; _v=${vn#*DTX:[}; d_tx=${_v%%]*}
+  [ -z "$m_rx" ] && m_rx="-"; [ -z "$m_tx" ] && m_tx="-"
+  [ -z "$d_rx" ] && d_rx="-"; [ -z "$d_tx" ] && d_tx="-"
   month_val=$(get_traffic_month 2>/dev/null || echo "-")
   day_val=$(get_traffic_day 2>/dev/null || echo "-")
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -11524,11 +11525,12 @@ render_login_dashboard(){
   if command -v get_traffic_month >/dev/null 2>&1; then month_val=$(get_traffic_month 2>/dev/null || echo "-"); else month_val=$(get_traffic_month_fallback); fi
   if command -v get_traffic_day >/dev/null 2>&1; then day_val=$(get_traffic_day 2>/dev/null || echo "-"); else day_val=$(get_traffic_day_fallback); fi
   if command -v get_traffic_rx_tx >/dev/null 2>&1; then
-    local vn; vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:- MTX:- DRX:- DTX:-")
-    m_rx=$(echo "$vn" | sed -n 's/.*MRX:\([^ ]*\).*/\1/p'); [ -z "$m_rx" ] && m_rx="-"
-    m_tx=$(echo "$vn" | sed -n 's/.*MTX:\([^ ]*\).*/\1/p'); [ -z "$m_tx" ] && m_tx="-"
-    d_rx=$(echo "$vn" | sed -n 's/.*DRX:\([^ ]*\).*/\1/p'); [ -z "$d_rx" ] && d_rx="-"
-    d_tx=$(echo "$vn" | sed -n 's/.*DTX:\([^ ]*\).*/\1/p'); [ -z "$d_tx" ] && d_tx="-"
+    local vn; vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:[] MTX:[] DRX:[] DTX:[]")
+    # vnstat nilai berisi spasi ("421.67 GiB") -> ambil ant kurung siku, bukan split spasi
+    _v=${vn#*MRX:[}; m_rx=${_v%%]*}; _v=${vn#*MTX:[}; m_tx=${_v%%]*}
+    _v=${vn#*DRX:[}; d_rx=${_v%%]*}; _v=${vn#*DTX:[}; d_tx=${_v%%]*}
+    [ -z "$m_rx" ] && m_rx="-"; [ -z "$m_tx" ] && m_tx="-"
+    [ -z "$d_rx" ] && d_rx="-"; [ -z "$d_tx" ] && d_tx="-"
   else
     m_rx="-"; m_tx="-"; d_rx="-"; d_tx="-"
   fi
@@ -11600,16 +11602,20 @@ render_login_dashboard(){
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "DOMAIN" "$domain"
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "UPTIME" "$uptime"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  # trafik - kolom tetap: label(10) + nilai(18) + tag; RX/TX rata dalam 56
-  local _line
-  local _mtag _dtag
-  _mtag=""; [ -n "$month_name" ] && _mtag="[$month_name]"
-  _dtag=""; _dtag_n=$(date +%A 2>/dev/null || echo ""); [ -n "$_dtag_n" ] && _dtag="[$_dtag_n]"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %-18s%s" "MONTH" "$month_val" "$_mtag")"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %-20s %-6s %-16s" "  RX" "$m_rx" "TX" "$m_tx")"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %-18s%s" "DAY" "$day_val" "$_dtag")"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %-20s %-6s %-16s" "  RX" "$d_rx" "TX" "$d_tx")"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %s" "TRAFFIC" "$live_speed")"
+  # trafik - format daftar (satu baris per field, pemisah garis putus)
+  local _sep _line
+  _sep="- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+  printf "${DIM}%s${RESET}\n" "$_sep"
+  _mtag=""; [ -n "$month_name" ] && _mtag="[${month_name}]"
+  printf "${GREEN}%-10s${RESET} : %-18s %-14s\n" "MONTH" "$month_val" "$_mtag"
+  printf "${GREEN}%-10s${RESET} : %s\n" "RX" "$m_rx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TX" "$m_tx"
+  printf "${DIM}%s${RESET}\n" "$_sep"
+  _dtag=""; _dtag_n=$(date +%A 2>/dev/null || echo ""); [ -n "$_dtag_n" ] && _dtag="[${_dtag_n}]"
+  printf "${GREEN}%-10s${RESET} : %-18s %-14s\n" "DAY" "$day_val" "$_dtag"
+  printf "${GREEN}%-10s${RESET} : %s\n" "RX" "$d_rx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TX" "$d_tx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TRAFFIC" "$live_speed"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 
   # service status

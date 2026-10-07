@@ -899,7 +899,8 @@ _proto_tags_all() {
 _proto_ws_path() { case "$1" in vmess) echo "/vmess";; vless) echo "/vless";; trojan) echo "/trojan";; *) echo "";; esac; }
 _proto_hu_path() { case "$1" in vmess) echo "/upvmess";; vless) echo "/upvless";; trojan) echo "/uptrojan";; *) echo "";; esac; }
 _proto_grpc_service() { case "$1" in vmess) echo "vmess";; vless) echo "vless";; trojan) echo "trojan";; *) echo "";; esac; }
-_proto_xhttp_path() { case "$1" in vmess) echo "/xvmess";; vless) echo "/xvless";; trojan) echo "/xtrojan";; *) echo "";; esac; }
+# XHTTP mode=auto mewajibkan subpath setelah nama path; /xvless polos selalu 404.
+_proto_xhttp_path() { case "$1" in vmess) echo "/xvmess/abc";; vless) echo "/xvless/abc";; trojan) echo "/xtrojan/abc";; *) echo "";; esac; }
 _proto_db() { echo "$ETC/db/$1.txt"; }
 _proto_lockfile() { echo "$ETC/db/.$1.lock"; }
 
@@ -4508,6 +4509,9 @@ net.ipv4.tcp_ecn = 1
 net.core.optmem_max = 81920
 net.ipv4.udp_mem = 65536 131072 262144
 net.ipv4.ip_local_port_range = 1024 65535
+# conntrack: tabel penuh (7679/7680) membuat kernel drop packet
+net.netfilter.nf_conntrack_max = 65536
+net.netfilter.nf_conntrack_tcp_timeout_established = 7200
 GV_EOF
   chmod 644 "$conf" "$gconf" 2>/dev/null || true
   if [ -z "$BASE" ]; then
@@ -4761,6 +4765,7 @@ issue_cert() {
   [ -s "$cert_crt" ] && [ -s "$cert_key" ] || die "File cert kosong setelah issue" "Cek $LOG dan $ACME_HOME"
 
   # cron auto-renew: acme.sh sudah pasang cron, tambah reload hook
+  # cert di-issue dengan --standalone (Le_Webroot=no), jadi 80 sengaja TIDAK dipakai nginx
   local cron_reload="0 2 * * * \"$acme\" --cron --home \"$ACME_HOME\" >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null; systemctl restart xray 2>/dev/null || true"
   (crontab -l 2>/dev/null | grep -v "mytunnel.*reload"; echo "$cron_reload # mytunnel reload") | crontab - 2>/dev/null || true
 
@@ -5431,7 +5436,8 @@ user www-data;
 worker_processes auto;
 pid /run/nginx.pid;
 include /etc/nginx/modules-enabled/*.conf;
-events { worker_connections 1024; }
+worker_rlimit_nofile 65535;
+events { worker_connections 4096; }
 http {
   sendfile on;
   include /etc/nginx/mime.types;

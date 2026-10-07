@@ -4792,6 +4792,17 @@ issue_cert() {
   chmod 644 "$cert_crt" 2>/dev/null || true
   [ -s "$cert_crt" ] && [ -s "$cert_key" ] || die "File cert kosong setelah issue" "Cek $LOG dan $ACME_HOME"
 
+  # stunnel (443) punya cert sendiri -> harus ikut ganti, kalau tidak 443 tetap pakai cert lama
+  if [ -f /etc/stunnel/stunnel.conf ] && grep -q "stunnel.pem" /etc/stunnel/stunnel.conf 2>/dev/null; then
+    if cat "$cert_crt" "$cert_key" > /etc/stunnel/stunnel.pem 2>/dev/null; then
+      chmod 600 /etc/stunnel/stunnel.pem 2>/dev/null || true
+      _st_ok=1
+      echo -e "${GREEN}stunnel.pem diperbarui (cert baru)${RESET}" 2>/dev/null || echo "stunnel.pem diperbarui (cert baru)"
+    else
+      echo -e "${YELLOW}Gagal update /etc/stunnel/stunnel.pem${RESET}" >&2 || echo "Gagal update stunnel.pem" >&2
+    fi
+  fi
+
   # cron auto-renew: acme.sh sudah pasang cron, tambah reload hook
   # cert di-issue dengan --standalone (Le_Webroot=no), jadi 80 sengaja TIDAK dipakai nginx
   local cron_reload="0 2 * * * \"$acme\" --cron --home \"$ACME_HOME\" >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null; systemctl restart xray 2>/dev/null || true"
@@ -10951,13 +10962,20 @@ main() {
     fi
   fi
 
-  # xray masih pegang cert lama -> restart supaya pakai cert baru
+  # semua service yang pegang cert di memori harus restart/reload, bukan cuma nginx
   if [ -z "$BASE" ]; then
-    if systemctl restart xray 2>/dev/null; then
-      echo -e "${GREEN}xray restart OK (cert baru dipakai)${RESET}"
-    else
-      echo -e "${RED}Restart xray gagal - cek: systemctl status xray${RESET}"
-    fi
+    local svc
+    for svc in stunnel4 xray; do
+      systemctl is-active --quiet "$svc" 2>/dev/null || continue
+      if systemctl restart "$svc" 2>/dev/null; then
+        echo -e "${GREEN}$svc restart OK (cert baru dipakai)${RESET}"
+      else
+        echo -e "${RED}Restart $svc gagal - cek: systemctl status $svc${RESET}"
+      fi
+    done
+    # stunnel belum aktif di test/skim, tetap pastikan jangan tertinggal
+    grep -q "stunnel.pem" /etc/stunnel/stunnel.conf 2>/dev/null && \
+      echo -e "${DIM}stunnel 443 pakai /etc/stunnel/stunnel.pem - sudah di-update cert.sh${RESET}"
   fi
 
   echo -e "${GREEN}Domain diganti: $new${RESET}"

@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --brand=*) MYTUNNEL_BRAND="${1#*=}"; shift;;
     --yes|-y) AUTO_YES=1; MYTUNNEL_YES=1; shift;;
     --no-deps) NO_DEPS=1; shift;;
-    --help|-h) echo "Usage: bash install.sh [--domain example.com] [--brand \"My Brand\"] [--yes] [--no-deps]"; echo " Env: MYTUNNEL_DOMAIN, MYTUNNEL_BRAND, MYTUNNEL_YES=1, MYTUNNEL_PREFIX=/tmp/test (test mode)"; echo " Aman: wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh"; echo " Non-interaktif: MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh"; exit 0;;
+    --help|-h) echo "Usage: bash install.sh [--domain example.com] [--brand \"My Brand\"] [--yes] [--no-deps]"; echo " Env: MYTUNNEL_DOMAIN, MYTUNNEL_BRAND, MYTUNNEL_EXPIRY=2099-12-31, MYTUNNEL_YES=1, MYTUNNEL_PREFIX=/tmp/test (test mode)"; echo " Copy-paste (non-interaktif): bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh)\" --domain example.com --brand \"My Brand\" --yes"; echo " Interaktif: curl -fsSL -o install.sh https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh && chmod +x install.sh && bash install.sh"; exit 0;;
     *) echo -e "${YELLOW}Arg tidak dikenal: $1${RESET}" >&2; shift;;
   esac
 done
@@ -256,7 +256,7 @@ get_traffic_rx_tx() {
   else echo "MRX:- MTX:- DRX:- DTX:-"; fi
 }
 svc_status() { systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
-get_account_count() { local f="${ETC_BASE}/db/$1.txt"; [ -f "$f" ] && grep -cve '^\s*$' "$f" 2>/dev/null || echo 0; }
+get_account_count() { local f="${ETC_BASE}/db/$1.txt" n=0; if [ -f "$f" ]; then n=$(grep -cve '^\s*$' "$f" 2>/dev/null || true); fi; [[ "$n" =~ ^[0-9]+$ ]] || n=0; echo "$n"; }
 get_brand() { [ -f "${ETC_BASE}/config/brand.txt" ] && head -1 "${ETC_BASE}/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO"; }
 get_expiry() { [ -f "${ETC_BASE}/config/expiry.txt" ] && head -1 "${ETC_BASE}/config/expiry.txt" 2>/dev/null || echo "-"; }
 
@@ -10550,7 +10550,8 @@ show_all() {
     printf "${BLUE}│${RESET} %-14s : ${col}%-8s${RESET}                              ${BLUE}│${RESET}\n" "$s" "$st"
   done
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${DIM}%-56s${RESET} ${BLUE}│${RESET}\n" "Akun: ssh=$(grep -c . "$ETC/db/ssh.txt" 2>/dev/null || echo 0) vmess=$(grep -c . "$ETC/db/vmess.txt" 2>/dev/null || echo 0) vless=$(grep -c . "$ETC/db/vless.txt" 2>/dev/null || echo 0) trojan=$(grep -c . "$ETC/db/trojan.txt" 2>/dev/null || echo 0)"
+  _accts=""; for _p in ssh vmess vless trojan; do _n=$(grep -c . "$ETC/db/$_p.txt" 2>/dev/null || true); [[ "$_n" =~ ^[0-9]+$ ]] || _n=0; [ -n "$_accts" ] && _accts="$_accts "; _accts="$_accts$_p=$_n"; done
+  printf "${BLUE}│${RESET} ${DIM}%-56s${RESET} ${BLUE}│${RESET}\n" "Akun: $_accts"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -11256,7 +11257,7 @@ get_local_ver() { cat "$VERSION_FILE" 2>/dev/null | head -1 | tr -d ' \n'; [ -z 
 get_repo_url() {
   local u
   u=$(cat "$REPO_FILE" 2>/dev/null | head -1 | tr -d ' \n')
-  [ -z "$u" ] && u="https://raw.githubusercontent.com/Emans27/mytunnel/main"
+  [ -z "$u" ] && u="https://raw.githubusercontent.com/Emans27/mytunnel-installer/main"
   echo "$u" | tr -d ' \n'
 }
 
@@ -11494,7 +11495,7 @@ command -v get_domain >/dev/null 2>&1 || get_domain(){ [ -f "$ETC_BASE/config/do
 command -v get_ip_cached >/dev/null 2>&1 || get_ip_cached(){ hostname -I 2>/dev/null | awk '{print $1}'; }
 command -v get_city_cached >/dev/null 2>&1 || get_city_cached(){ echo "-"; }
 command -v get_isp_cached >/dev/null 2>&1 || get_isp_cached(){ echo "-"; }
-command -v get_account_count >/dev/null 2>&1 || get_account_count(){ local f="$ETC_BASE/db/$1.txt"; [ -f "$f" ] && grep -cve '^\s*$' "$f" 2>/dev/null || echo 0; }
+command -v get_account_count >/dev/null 2>&1 || get_account_count(){ local f="$ETC_BASE/db/$1.txt" n=0; if [ -f "$f" ]; then n=$(grep -cve '^\s*$' "$f" 2>/dev/null || true); fi; [[ "$n" =~ ^[0-9]+$ ]] || n=0; echo "$n"; }
 command -v get_brand >/dev/null 2>&1 || get_brand(){ [ -f "$ETC_BASE/config/brand.txt" ] && head -1 "$ETC_BASE/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO"; }
 command -v get_expiry >/dev/null 2>&1 || get_expiry(){ [ -f "$ETC_BASE/config/expiry.txt" ] && head -1 "$ETC_BASE/config/expiry.txt" 2>/dev/null || echo "-"; }
 command -v svc_status >/dev/null 2>&1 || svc_status(){ systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
@@ -11625,7 +11626,8 @@ render_login_dashboard(){
 
   # list accounts box - TUNNELING style
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "LIST ACCOUNTS"
+  _t="LIST ACCOUNTS"; _l=$(( (56 - ${#_t}) / 2 )); _r=$(( 56 - ${#_t} - _l ))
+  printf "${BLUE}│${RESET}%*s${BOLD}%s${RESET}%*s${BLUE}│${RESET}\n" "$_l" "" "$_t" "$_r" ""
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   _line=$(printf "%-18s : %-4s ACCOUNT" "SSH/OPENVPN" "$c_ssh"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
   _line=$(printf "%-18s : %-4s ACCOUNT" "VMESS" "$c_vmess"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
@@ -11702,7 +11704,7 @@ v1.1.0
 __EMBED_EOF__
 chmod 644 "$ETC/config/version.txt"
 cat > "$ETC/config/repo.txt" << '__EMBED_EOF__'
-https://raw.githubusercontent.com/Emans27/mytunnel/main
+https://raw.githubusercontent.com/Emans27/mytunnel-installer/main
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/repo.txt"
@@ -12141,9 +12143,11 @@ if [ -z "$BASE" ]; then echo "  Reboot disarankan jika BBR/resolver diubah."; fi
 __EMBED_EOF__
 chmod 755 "$ETC/uninstall.sh"
 cat > "$ETC/config/expiry.txt" << '__EMBED_EOF__'
-2026-12-31
+NEVER
 
 __EMBED_EOF__
+# izinkan override saat install: MYTUNNEL_EXPIRY=2099-12-31 bash install.sh
+if [ -n "${MYTUNNEL_EXPIRY:-}" ]; then printf '%s\n' "$MYTUNNEL_EXPIRY" > "$ETC/config/expiry.txt"; fi
 chmod 644 "$ETC/config/expiry.txt"
 echo -e "${CYAN}[4/13] Pasang perintah menu...${RESET}"
 chmod +x "$ETC/menu/"*.sh "$ETC/setup/"*.sh "$ETC/cron/"*.sh "$ETC/features/"*.sh "$ETC/bot/"*.sh "$ETC/advanced/"*.sh 2>/dev/null || true
@@ -12324,8 +12328,11 @@ echo -e "  ${BOLD}Cara buka menu:${RESET}"
 echo -e "    ${CYAN}menu${RESET}  (atau ${CYAN}/usr/local/bin/menu${RESET}, ${CYAN}mytunnel-doctor${RESET})"
 echo -e "  ${BOLD}Update:${RESET}  ${CYAN}menu -> FEATURES -> Auto Update${RESET}  atau  ${CYAN}bash $ETC/features/autoupdate.sh${RESET}"
 echo -e "  ${BOLD}Uninstall:${RESET} ${CYAN}bash ${BASE}/uninstall.sh${RESET}  (ketik ${BOLD}hapus${RESET})"
-echo -e "  ${BOLD}Satu perintah (baru):${RESET}"
-echo -e "    ${DIM}wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh${RESET}"
+echo -e "  ${BOLD}Copy-paste ke VPS baru (satu baris):${RESET}"
+echo -e "    ${CYAN}bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh)\" --domain <domain> --brand \"<Brand>\" --yes${RESET}"
+echo -e "    ${DIM}Interaktif (tanya domain/brand sendiri):${RESET}"
+echo -e "    ${CYAN}curl -fsSL -o install.sh https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh && chmod +x install.sh && bash install.sh${RESET}"
+echo -e "    ${DIM}Override expiry: MYTUNNEL_EXPIRY=2099-12-31 bash install.sh${RESET}"
 echo -e "    ${DIM}MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh  # non-interaktif${RESET}"
 echo ""
 _log "install selesai: domain=$DOMAIN brand=$BRAND ver=$VER"

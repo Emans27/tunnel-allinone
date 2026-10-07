@@ -256,6 +256,22 @@ get_traffic_rx_tx() {
     echo "MRX:[$m_rx] MTX:[$m_tx] DRX:[$d_rx] DTX:[$d_tx]"
   else echo "MRX:[] MTX:[] DRX:[] DTX:[]"; fi
 }
+get_live_speed() {
+  [ -n "$MYTUNNEL_BASE" ] && { echo "-"; return; }
+  command -v vnstat >/dev/null 2>&1 || { echo "-"; return; }
+  local v; v=$(timeout 3 vnstat -tr 2 2>/dev/null | awk '/rx|tx/ {print $2" "$3}' | head -1)
+  [ -n "$v" ] && { echo "$v"; return; }
+  # fallback: /proc/net/dev 0.3s
+  local iface rx1 tx1 rx2 tx2
+  iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+  [ -z "$iface" ] && iface=$(ls /sys/class/net 2>/dev/null | grep -v '^lo$' | head -1)
+  [ -n "$iface" ] && [ -f "/sys/class/net/$iface/statistics/rx_bytes" ] || { echo "-"; return; }
+  rx1=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null); tx1=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null)
+  sleep 0.3 2>/dev/null
+  rx2=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null); tx2=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null)
+  [ -n "$rx1" ] && [ -n "$rx2" ] || { echo "-"; return; }
+  awk -v d="$(( (rx2 - rx1 + tx2 - tx1) * 8 ))" 'BEGIN{printf "%.2f Mbit/s", d/0.3/1000000}'
+}
 svc_status() { systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
 get_account_count() { local f="${ETC_BASE}/db/$1.txt" n=0; if [ -f "$f" ]; then n=$(grep -cve '^\s*$' "$f" 2>/dev/null || true); fi; [[ "$n" =~ ^[0-9]+$ ]] || n=0; echo "$n"; }
 get_brand() { [ -f "${ETC_BASE}/config/brand.txt" ] && head -1 "${ETC_BASE}/config/brand.txt" 2>/dev/null || echo "SUNEK VPN"; }
@@ -1681,10 +1697,20 @@ show_sysinfo() {
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "DOMAIN" "$domain"
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "UPTIME" "$uptime"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${YELLOW}%-10s${RESET}: %-18s ${DIM}[Month]${RESET}                   ${BLUE}│${RESET}\n" "MONTH" "$month_val"
-  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$m_rx" "$m_tx"
-  printf "${BLUE}│${RESET} ${YELLOW}%-10s${RESET}: %-18s ${DIM}[Today]${RESET}                   ${BLUE}│${RESET}\n" "DAY" "$day_val"
-  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$d_rx" "$d_tx"
+  # trafik - format daftar, sama dengan dashboard login
+  local _sep _mtag _dtag _dn
+  _sep="- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+  printf "${DIM}%s${RESET}\n" "$_sep"
+  _mtag=""; _mn=$(date +%B 2>/dev/null || echo ""); [ -n "$_mn" ] && _mtag="[${_mn}]"
+  printf "${GREEN}%-10s${RESET} : %-18s %-14s\n" "MONTH" "$month_val" "$_mtag"
+  printf "${GREEN}%-10s${RESET} : %s\n" "RX" "$m_rx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TX" "$m_tx"
+  printf "${DIM}%s${RESET}\n" "$_sep"
+  _dtag=""; _dn=$(date +%A 2>/dev/null || echo ""); [ -n "$_dn" ] && _dtag="[${_dn}]"
+  printf "${GREEN}%-10s${RESET} : %-18s %-14s\n" "DAY" "$day_val" "$_dtag"
+  printf "${GREEN}%-10s${RESET} : %s\n" "RX" "$d_rx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TX" "$d_tx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TRAFFIC" "$(get_live_speed 2>/dev/null || echo '-')"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -11534,31 +11560,7 @@ render_login_dashboard(){
   else
     m_rx="-"; m_tx="-"; d_rx="-"; d_tx="-"
   fi
-  # live speed - ringan 0.3s sample, skip jika MYTUNNEL_PREFIX (test mode)
-  live_speed="-"
-  if [ -z "$MYTUNNEL_BASE" ]; then
-    if command -v vnstat >/dev/null 2>&1; then
-      # coba vnstat live 1 detik (timeout 2)
-      live_speed=$(timeout 2 vnstat -tr 1 2>/dev/null | awk '/rx|tx/ {print $2" "$3}' | head -1)
-      [ -z "$live_speed" ] && live_speed="-"
-      # jika masih -, coba baca /proc/net/dev 0.3s
-      if [ "$live_speed" = "-" ]; then
-        local iface rx1 tx1 rx2 tx2
-        iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
-        [ -z "$iface" ] && iface=$(ls /sys/class/net 2>/dev/null | grep -v lo | head -1)
-        if [ -n "$iface" ] && [ -f "/sys/class/net/$iface/statistics/rx_bytes" ]; then
-          rx1=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null); tx1=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null)
-          sleep 0.3 2>/dev/null
-          rx2=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null); tx2=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null)
-          if [ -n "$rx1" ] && [ -n "$rx2" ]; then
-            local diff=$(( (rx2 - rx1 + tx2 - tx1) * 8 ))
-            # bits per 0.3s -> Mbit/s = diff / 0.3 / 1e6
-            live_speed=$(awk "BEGIN{printf \"%.2f Mbit/s\", $diff/0.3/1000000}")
-          fi
-        fi
-      fi
-    fi
-  fi
+  live_speed=$(get_live_speed 2>/dev/null || echo "-")
   # bulan nama
   local month_name; month_name=$(date +%B 2>/dev/null || echo "")
 

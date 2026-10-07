@@ -28,6 +28,42 @@ Varian tunneling All-In-One netral universal **Debian 11/12 + Ubuntu 18/20/22/24
 | Port bebas | 80, 443, 444, 81, 8443 | Preflight `ss -tlnp` warning jika bentrok; 80/443 **exclusive tunneling** (tanpa mux/sslh) |
 | Internet | ping 1.1.1.1 + DNS | preflight cek |
 
+## Arsitektur Final 443 (branch `final-443-stream`)
+
+`install.sh` lama tidak diubah. Terapkan konfigurasi final bertahap setelah install:
+
+```bash
+wget -qO configure-final-443.sh https://raw.githubusercontent.com/Emans27/tunnel-allinone/final-443-stream/configure-final-443.sh
+less configure-final-443.sh
+bash configure-final-443.sh --dry-run
+bash configure-final-443.sh
+```
+
+Jalur:
+
+```text
+443 TCP -> nginx stream ssl_preread
+       ALPN h2/http/1.1 -> nginx 127.0.0.1:9443 (TLS/http2)
+       ALPN lain          -> stunnel 127.0.0.1:4443 -> tlsmux -> 8080/SSH legacy
+8443 TCP -> nginx TLS/http2 langsung
+80 TCP   -> httpmux lama (WS/HTTPUpgrade; gRPC tidak dipakai)
+```
+
+| Transport | Path/service | Port yang didukung | Upstream |
+|---|---|---|---|
+| WS | `/vless`, `/vmess`, `/trojan` | 80, 443, 8443 | Xray WS inbound |
+| gRPC | `serviceName=vless/vmess/trojan` | 443, 8443 | Xray gRPC via `grpc_pass` |
+| HTTPUpgrade | `/upvless`, `/upvmess`, `/uptrojan` | 80, 443, 8443 | Xray HTTPUpgrade |
+| XHTTP | `/xvless` (dan proto lain jika tersedia) | 80, 443, 8443 | Xray XHTTP, `mode=auto` |
+
+Skrip idempoten: backup di `/root/mytunnel-443-backup/<timestamp>/`, `nginx -t` sebelum reload, rollback otomatis bila validasi gagal. Rollback manual:
+
+```bash
+bash configure-final-443.sh --rollback
+```
+
+`--dry-run` hanya menampilkan rencana. Konfigurasi baru perlu diuji per transport; hasil uji LIVE dicatat di CHANGELOG sebelum branch digabung. Instalasi VPS baru dari `install.sh` lama perlu menjalankan skrip ini sampai integrasi final ke installer selesai (B).
+
 ## Cara Install
 
 ### Satu perintah (disarankan — cek dulu)

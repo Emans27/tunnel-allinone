@@ -10951,9 +10951,19 @@ main() {
     fi
   fi
 
+  # xray masih pegang cert lama -> restart supaya pakai cert baru
+  if [ -z "$BASE" ]; then
+    if systemctl restart xray 2>/dev/null; then
+      echo -e "${GREEN}xray restart OK (cert baru dipakai)${RESET}"
+    else
+      echo -e "${RED}Restart xray gagal - cek: systemctl status xray${RESET}"
+    fi
+  fi
+
   echo -e "${GREEN}Domain diganti: $new${RESET}"
   echo -e "${YELLOW}Link lama perlu generate ulang (domain di link)${RESET}"
-  fh_log "domain -> $new"
+  echo -e " menu 2/3/4 -> pilih ${CYAN}list${RESET} lalu export ulang link ${CYAN}$new${RESET}"
+  fh_log "domain -> $new (xray restarted)"
   pause
 }
 

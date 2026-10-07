@@ -4731,6 +4731,11 @@ ACME_STUB
   echo -e "${GREEN}acme.sh terinstall: $ACME_HOME/acme.sh${RESET}"
 }
 
+# pastikan nginx hidup lagi walau cert.sh keluar di tengah (bukan hanya saat issue gagal)
+_nginx_was_active() { systemctl is-active --quiet nginx 2>/dev/null; }
+_nginx_restore() { [ "${_nginx_was_active:-0}" = 1 ] && { systemctl start nginx 2>/dev/null || true; }; }
+trap '_nginx_restore' EXIT
+
 issue_cert() {
   local domain cert_crt cert_key
   domain=$(get_domain)
@@ -4761,6 +4766,9 @@ issue_cert() {
   fi
 
   # real mode: stop nginx sementara agar port 80 bebas
+  # catat dulu nginx hidup/tidak, supaya trap bisa menghidupkan lagi hanya kalau memang hidup
+  _nginx_was_active=0; systemctl is-active --quiet nginx 2>/dev/null && _nginx_was_active=1
+  export _nginx_was_active
   echo -e "${CYAN}Hentikan nginx sementara untuk validasi port 80...${RESET}"
   systemctl stop nginx 2>/dev/null || service nginx stop 2>/dev/null || nginx -s stop 2>/dev/null || true
   fuser -k 80/tcp 2>/dev/null || true
@@ -4773,24 +4781,43 @@ issue_cert() {
     # fallback rsa
     echo -e "${YELLOW}EC gagal, coba RSA...${RESET}"
     "$acme" --issue --standalone -d "$domain" 2>&1 | tee -a "$LOG" || {
+      # nginx harus hidup lagi walau gagal - cert lama masih utuh (install还没 jalan)
       systemctl start nginx 2>/dev/null || true
       die "Gagal issue sertifikat untuk $domain" "Cek: 1) A record sudah point ke IP VPS, 2) port 80 terbuka (ufw allow 80), 3) tidak ada layanan lain di 80, 4) rate limit LE"
     }
   fi
 
-  echo -e "${CYAN}Install cert ke $CERT_DIR...${RESET}"
+  # install ke STAGING dulu - cert lama masih dipakai nginx/stunnel, jangan ditimpa
+  # sebelum tau issue benar-benar sukses (acme.sh truncate file tujuan saat write)
+  local stg_crt="$CERT_DIR/.fullchain.crt.new" stg_key="$CERT_DIR/.private.key.new"
+  echo -e "${CYAN}Install cert ke staging...${RESET}"
   "$acme" --install-cert -d "$domain" \
-    --fullchain-file "$cert_crt" \
-    --key-file "$cert_key" \
+    --fullchain-file "$stg_crt" \
+    --key-file "$stg_key" \
     --ecc 2>/dev/null || \
   "$acme" --install-cert -d "$domain" \
-    --fullchain-file "$cert_crt" \
-    --key-file "$cert_key" 2>&1 | tee -a "$LOG" || \
-    die "Gagal install cert ke $CERT_DIR" "Cek permission $CERT_DIR dan log acme.sh"
+    --fullchain-file "$stg_crt" \
+    --key-file "$stg_key" 2>&1 | tee -a "$LOG" || \
+    { rm -f "$stg_crt" "$stg_key"; die "Gagal install cert" "Cek permission $CERT_DIR dan log acme.sh"; }
 
+  [ -s "$stg_crt" ] && [ -s "$stg_key" ] || { rm -f "$stg_crt" "$stg_key"; die "File cert kosong setelah issue" "Cek $LOG dan $ACME_HOME"; }
+
+  # validasi pair: cert public key harus == key public key
+  local _cp _kp
+  _cp=$(openssl x509 -in "$stg_crt" -noout -pubkey 2>/dev/null | openssl md5)
+  _kp=$(openssl pkey -in "$stg_key" -pubout 2>/dev/null | openssl md5)
+  if [ -z "$_cp" ] || [ "$_cp" != "$_kp" ]; then
+    rm -f "$stg_crt" "$stg_key"
+    die "Cert/key tidak pasangan" "Cert lama tidak disentuh. Cek log acme.sh"
+  fi
+
+  # baru sekarang pasang ke live path, dengan backup
+  cp -a "$cert_crt" "${cert_crt}.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+  cp -a "$cert_key" "${cert_key}.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+  mv -f "$stg_crt" "$cert_crt" || die "Gagal pasang cert" ""
+  mv -f "$stg_key" "$cert_key" || die "Gagal pasang key" ""
   chmod 600 "$cert_key" 2>/dev/null || true
   chmod 644 "$cert_crt" 2>/dev/null || true
-  [ -s "$cert_crt" ] && [ -s "$cert_key" ] || die "File cert kosong setelah issue" "Cek $LOG dan $ACME_HOME"
 
   # stunnel (443) punya cert sendiri -> harus ikut ganti, kalau tidak 443 tetap pakai cert lama
   if [ -f /etc/stunnel/stunnel.conf ] && grep -q "stunnel.pem" /etc/stunnel/stunnel.conf 2>/dev/null; then
@@ -10911,7 +10938,21 @@ main() {
   echo -e "${DIM}Issue sertifikat baru...${RESET}"
   local cert_ok=1
   if [ -x "$ETC/setup/cert.sh" ]; then
-    if ! bash "$ETC/setup/cert.sh" 2>&1 | tee -a "$LOG" 2>&1 | tail -n 30; then cert_ok=0; fi
+    # JANGAN `| tee | tail` lalu andai exit code: pipeline selalu return status terakhir
+    # (tail) = 0, jadi kegagalan cert.sh selalu ketutup. Cek cert-nya langsung.
+    bash "$ETC/setup/cert.sh" 2>&1 | tee -a "$LOG" 2>&1 | tail -n 30
+    local _c="$ETC/cert/fullchain.crt" _k="$ETC/cert/private.key"
+    if [ ! -s "$_c" ] || [ ! -s "$_k" ]; then
+      cert_ok=0
+    elif ! openssl x509 -in "$_c" -noout >/dev/null 2>&1; then
+      cert_ok=0
+    else
+      local _cp _kp
+      _cp=$(openssl x509 -in "$_c" -noout -pubkey 2>/dev/null | openssl md5)
+      _kp=$(openssl pkey -in "$_k" -pubout 2>/dev/null | openssl md5)
+      [ -z "$_cp" ] || [ "$_cp" != "$_kp" ] && cert_ok=0
+    fi
+    [ "$cert_ok" -eq 0 ] && echo -e "${RED}Cert tidak valid setelah issue -> rollback${RESET}"
   else
     # TEST MODE: dummy cert
     mkdir -p "${BASE}/etc/mytunnel/cert" 2>/dev/null || true
@@ -10921,8 +10962,19 @@ main() {
   fi
 
   if [ "$cert_ok" -eq 0 ]; then
-    echo -e "${RED}Gagal issue cert, rollback domain${RESET}"
+    echo -e "${RED}Gagal issue cert, rollback domain + pasang cert lama${RESET}"
     if [ -n "$bak" ] && [ -f "$bak" ]; then cp -a "$bak" "$DOMAIN_FILE" 2>/dev/null || true; fi
+    # pasang ulang cert terakhir yang valid supaya nginx tidak mati
+    local _lastc _lastk
+    _lastc=$(ls -t "${ETC}"/cert/fullchain.crt.bak-* 2>/dev/null | while read -r f; do [ -s "$f" ] && openssl x509 -in "$f" -noout >/dev/null 2>&1 && { echo "$f"; break; }; done)
+    _lastk=$(ls -t "${ETC}"/cert/private.key.bak-* 2>/dev/null | head -1)
+    if [ -n "$_lastc" ] && [ -f "$_lastk" ]; then
+      cp -f "$_lastc" "${ETC}/cert/fullchain.crt"; cp -f "$_lastk" "${ETC}/cert/private.key"
+      chmod 644 "${ETC}/cert/fullchain.crt"; chmod 600 "${ETC}/cert/private.key"
+      systemctl restart nginx 2>/dev/null && echo -e "${GREEN}Cert lama dipulihkan, nginx hidup lagi${RESET}"
+    else
+      echo -e "${YELLOW}Tidak ada backup cert valid - jalankan manual: setup/cert.sh${RESET}"
+    fi
     pause; return
   fi
 
@@ -10930,7 +10982,8 @@ main() {
   echo -e "${DIM}Update Nginx...${RESET}"
   local nginx_ok=1
   if [ -x "$ETC/setup/nginx.sh" ]; then
-    if ! bash "$ETC/setup/nginx.sh" 2>&1 | tee -a "$LOG" 2>&1 | tail -n 30; then nginx_ok=0; fi
+    bash "$ETC/setup/nginx.sh" 2>&1 | tee -a "$LOG" 2>&1 | tail -n 30
+  nginx -t >/dev/null 2>&1 || nginx_ok=0
   else
     # TEST: just patch server_name if exists
     if [ -f "${BASE}/etc/nginx/conf.d/mytunnel.conf" ]; then

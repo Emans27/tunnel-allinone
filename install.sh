@@ -1,5 +1,5 @@
 #!/bin/bash
-# mytunnel install.sh - TUNNEL PRO v1.1.0 (TAHAP 1+2+3+4+5+6+8)
+# mytunnel install.sh - SUNEK VPN v1.1.0 (TAHAP 1+2+3+4+5+6+8)
 # Debian 11/12, Ubuntu 18/20/22/24 - disarankan Debian 12 / Ubuntu 22.04
 # Idempotent, testable via MYTUNNEL_PREFIX=... MYTUNNEL_DOMAIN=example.com bash install.sh --no-deps
 # Aman: wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh
@@ -62,14 +62,14 @@ if [ -z "$MYTUNNEL_PREFIX" ]; then
   if [ -n "$BUSY" ]; then echo -e "  Port terpakai:${YELLOW}$BUSY${RESET} (akan ditangani setup)"; else echo -e "  Port 80/443/444/90/81: ${GREEN}bebas ✓${RESET}"; fi
   if [ "$AUTO_YES" != "1" ]; then
     echo ""
-    echo -e "${BOLD}Ringkasan:${RESET} OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(- tanya nanti)} | Brand ${MYTUNNEL_BRAND:-TUNNEL PRO}"
+    echo -e "${BOLD}Ringkasan:${RESET} OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(- tanya nanti)} | Brand ${MYTUNNEL_BRAND:-SUNEK VPN}"
     echo -e "${YELLOW}Akan mengubah: UFW, BBR sysctl, nginx, Xray, cron, user system${RESET}"
     echo -ne "Lanjut install? [y/N]: "
     read -r _ans 2>/dev/null || _ans=""
     case "$_ans" in y|Y|yes|YES) ;; *) echo "Batal."; exit 0;; esac
   else
     echo -e "  Auto-YES: lanjut tanpa konfirmasi (MYTUNNEL_YES=1 / --yes)"
-    echo -e "  Ringkasan: OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(-)} | Brand ${MYTUNNEL_BRAND:-TUNNEL PRO}"
+    echo -e "  Ringkasan: OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(-)} | Brand ${MYTUNNEL_BRAND:-SUNEK VPN}"
   fi
 fi
 if [[ "$NO_DEPS" = "0" && -z "$MYTUNNEL_PREFIX" ]]; then
@@ -87,12 +87,12 @@ mkdir -p "${BASE}/var/log/xray" 2>/dev/null || true
 touch "${BASE}/var/log/xray/access.log" "${BASE}/var/log/xray/error.log" 2>/dev/null || true
 chmod 644 "${BASE}/var/log/xray/"*.log 2>/dev/null || true
 echo -e "${CYAN}[3/13] Tulis config, lib, menu, setup, cron...${RESET}"
-[ -f "$ETC/config/brand.txt" ] || echo "TUNNEL PRO" > "$ETC/config/brand.txt"
+[ -f "$ETC/config/brand.txt" ] || echo "SUNEK VPN" > "$ETC/config/brand.txt"
 # BAGIAN D-3: brand dari env/arg (non-interaktif) timpa jika ada
 if [ -n "$MYTUNNEL_BRAND" ]; then echo "$MYTUNNEL_BRAND" > "$ETC/config/brand.txt" 2>/dev/null || true; chmod 644 "$ETC/config/brand.txt" 2>/dev/null || true; fi
 [ -f "$ETC/config/domain.txt" ] || echo "-" > "$ETC/config/domain.txt"
 [ -f "$ETC/config/expiry.txt" ] || echo "-" > "$ETC/config/expiry.txt"
-[ -f "$ETC/config/banner.txt" ] || echo " | TUNNEL PRO - No hacking, use legally |" > "$ETC/config/banner.txt"
+[ -f "$ETC/config/banner.txt" ] || echo " | SUNEK VPN - No hacking, use legally |" > "$ETC/config/banner.txt"
 if [ ! -f "$ETC/config/ports.conf" ]; then
   cat > "$ETC/config/ports.conf" << 'PC_EOF'
 OPENSSH_PORT=444
@@ -188,11 +188,11 @@ draw_box() {
   printf "┘${RESET}\n"
 }
 banner() {
-  local brand="TUNNEL PRO"
+  local brand="SUNEK VPN"
   local c1="${MYTUNNEL_PREFIX:-}/etc/mytunnel/config/brand.txt"
   local c2="/etc/mytunnel/config/brand.txt"
   [ -f "$c1" ] && brand=$(head -1 "$c1" 2>/dev/null)
-  if [ "$brand" = "TUNNEL PRO" ] && [ -f "$c2" ]; then brand=$(head -1 "$c2" 2>/dev/null); fi
+  if [ "$brand" = "SUNEK VPN" ] && [ -f "$c2" ]; then brand=$(head -1 "$c2" 2>/dev/null); fi
   draw_box "$brand" 60
 }
 backup_file() {
@@ -257,7 +257,7 @@ get_traffic_rx_tx() {
 }
 svc_status() { systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
 get_account_count() { local f="${ETC_BASE}/db/$1.txt" n=0; if [ -f "$f" ]; then n=$(grep -cve '^\s*$' "$f" 2>/dev/null || true); fi; [[ "$n" =~ ^[0-9]+$ ]] || n=0; echo "$n"; }
-get_brand() { [ -f "${ETC_BASE}/config/brand.txt" ] && head -1 "${ETC_BASE}/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO"; }
+get_brand() { [ -f "${ETC_BASE}/config/brand.txt" ] && head -1 "${ETC_BASE}/config/brand.txt" 2>/dev/null || echo "SUNEK VPN"; }
 get_expiry() { [ -f "${ETC_BASE}/config/expiry.txt" ] && head -1 "${ETC_BASE}/config/expiry.txt" 2>/dev/null || echo "-"; }
 
 __EMBED_EOF__
@@ -1618,7 +1618,7 @@ __EMBED_EOF__
 chmod 644 "$ETC/lib/advanced_helpers.sh"
 cat > "$ETC/menu/main.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel menu/main.sh - TUNNEL PRO TAHAP 1
+# mytunnel menu/main.sh - SUNEK VPN TAHAP 1
 # shellcheck disable=SC1091,SC1090
 MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
 if [ -n "$MYTUNNEL_PREFIX" ]; then
@@ -1640,7 +1640,7 @@ DIM="${DIM:-\033[2m}"
 
 show_header() {
   local brand
-  brand=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  brand=$(get_brand 2>/dev/null || echo "SUNEK VPN")
   clear 2>/dev/null || printf '\033c'
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
@@ -1703,7 +1703,7 @@ show_status() {
 show_version() {
   local version client expiry
   version=$(cat "$BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
-  version="TUNNEL-PRO $version"
+  version="SUNEK-VPN $version"
   client=$(get_ip_cached 2>/dev/null || echo "-")
   expiry=$(get_expiry 2>/dev/null || echo "-")
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -1726,7 +1726,7 @@ show_menu() {
 set_brand_name() {
   echo -e "${CYAN}=== SET BRAND NAME ===${RESET}"
   local cur nb f
-  cur=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  cur=$(get_brand 2>/dev/null || echo "SUNEK VPN")
   echo -e "Brand saat ini: ${BOLD}$cur${RESET}"
   echo -ne "Brand baru (kosongkan batal): "
   read -r nb
@@ -1854,7 +1854,7 @@ do_create() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
   else
@@ -2053,7 +2053,7 @@ do_check_login() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "SSH/DropBear User Login"
@@ -2378,7 +2378,7 @@ do_create() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
     draw_box "VMESS" 60
@@ -2450,7 +2450,7 @@ do_create_custom() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; draw_box "VMESS CUSTOM" 60; fi
   echo -e "${GREY}Don't use special characters and uppercase!${RESET}"
   echo -e "${GREY}Just input a number for- Quota Limit, Limit IP, Format GB${RESET}"
@@ -2624,7 +2624,7 @@ do_check_login() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VMESS USER LOGIN"
@@ -2949,7 +2949,7 @@ do_create() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
     draw_box "VLESS" 60
@@ -3021,7 +3021,7 @@ do_create_custom() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; draw_box "VLESS CUSTOM" 60; fi
   echo -e "${GREY}Don't use special characters and uppercase!${RESET}"
   echo -e "${GREY}Just input a number for- Quota Limit, Limit IP, Format GB${RESET}"
@@ -3195,7 +3195,7 @@ do_check_login() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VLESS USER LOGIN"
@@ -3520,7 +3520,7 @@ do_create() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
     draw_box "TROJAN" 60
@@ -3592,7 +3592,7 @@ do_create_custom() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; draw_box "TROJAN CUSTOM" 60; fi
   echo -e "${GREY}Don't use special characters and uppercase!${RESET}"
   echo -e "${GREY}Just input a number for- Quota Limit, Limit IP, Format GB${RESET}"
@@ -3765,7 +3765,7 @@ do_check_login() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "TROJAN USER LOGIN"
@@ -5690,7 +5690,7 @@ ensure_banner() {
   mkdir -p "$(dirname "$BANNER_SRC")" "$(dirname "$BANNER_DST")" 2>/dev/null || true
   if [ ! -f "$BANNER_SRC" ]; then
     cat > "$BANNER_SRC" << 'BNR'
-  TUNNEL PRO - No hacking, use legally
+  SUNEK VPN - No hacking, use legally
 BNR
     chmod 644 "$BANNER_SRC" 2>/dev/null || true
   fi
@@ -9053,7 +9053,7 @@ handle_update(){
   local reply=""
   case "$cmd" in
     /start|/help)
-      reply="TUNNEL PRO Bot (read-only)
+      reply="SUNEK VPN Bot (read-only)
 Bot tidak bisa buat akun — buat/hapus lewat menu VPS.
 /start - bantuan ini
 /status - info sistem
@@ -9129,7 +9129,7 @@ bh_status_text(){
   nginx=$(fh_svc_status nginx 2>/dev/null || echo "OFF")
   ver=$(cat "$ETC/config/version.txt" 2>/dev/null | head -1)
   [ -z "$ver" ] && ver="v1.0"
-  printf "TUNNEL PRO %s\nOS: %s\nDomain: %s\nXRAY: %s | NGINX: %s\nSSH: %s | Dropbear: %s\nUptime: %s" \
+  printf "SUNEK VPN %s\nOS: %s\nDomain: %s\nXRAY: %s | NGINX: %s\nSSH: %s | Dropbear: %s\nUptime: %s" \
     "$ver" "$os" "$ip" "$xray" "$nginx" \
     "$(fh_svc_status mytunnel-sshws 2>/dev/null || echo OFF)" \
     "$(fh_svc_status dropbear 2>/dev/null || echo OFF)" \
@@ -10944,7 +10944,7 @@ pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 edit_banner() {
   local cur preview
   if [ -f "$BANNER_FILE" ]; then cur=$(cat "$BANNER_FILE" 2>/dev/null | head -c 200); else cur=""; fi
-  [ -z "$cur" ] && cur=" | TUNNEL PRO - No hacking, use legally |"
+  [ -z "$cur" ] && cur=" | SUNEK VPN - No hacking, use legally |"
   preview=$(echo "$cur" | head -n 3 | tr -d '\r' | cut -c1-60)
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Change Banner SSH"
@@ -11393,7 +11393,7 @@ show() {
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "IP" "$(get_ip_cached 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
   printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "Domain" "$(cat "$ETC/config/domain.txt" 2>/dev/null | head -1 | tr -d ' \n' || echo -)"
-  printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "Brand" "$(cat "$ETC/config/brand.txt" 2>/dev/null | head -1 | cut -c1-44 || echo TUNNEL PRO)"
+  printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "Brand" "$(cat "$ETC/config/brand.txt" 2>/dev/null | head -1 | cut -c1-44 || echo SUNEK VPN)"
   printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "Uptime" "$(uptime -p 2>/dev/null | cut -c1-44 || echo -)"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   echo -e "${BLUE}│${RESET} ${DIM}Ports (ss -tlnp)${RESET}                                   ${BLUE}│${RESET}"
@@ -11496,7 +11496,7 @@ command -v get_ip_cached >/dev/null 2>&1 || get_ip_cached(){ hostname -I 2>/dev/
 command -v get_city_cached >/dev/null 2>&1 || get_city_cached(){ echo "-"; }
 command -v get_isp_cached >/dev/null 2>&1 || get_isp_cached(){ echo "-"; }
 command -v get_account_count >/dev/null 2>&1 || get_account_count(){ local f="$ETC_BASE/db/$1.txt" n=0; if [ -f "$f" ]; then n=$(grep -cve '^\s*$' "$f" 2>/dev/null || true); fi; [[ "$n" =~ ^[0-9]+$ ]] || n=0; echo "$n"; }
-command -v get_brand >/dev/null 2>&1 || get_brand(){ [ -f "$ETC_BASE/config/brand.txt" ] && head -1 "$ETC_BASE/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO"; }
+command -v get_brand >/dev/null 2>&1 || get_brand(){ [ -f "$ETC_BASE/config/brand.txt" ] && head -1 "$ETC_BASE/config/brand.txt" 2>/dev/null || echo "SUNEK VPN"; }
 command -v get_expiry >/dev/null 2>&1 || get_expiry(){ [ -f "$ETC_BASE/config/expiry.txt" ] && head -1 "$ETC_BASE/config/expiry.txt" 2>/dev/null || echo "-"; }
 command -v svc_status >/dev/null 2>&1 || svc_status(){ systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
 command -v draw_box >/dev/null 2>&1 || draw_box(){ local t="$1" w="${2:-60}"; echo "== $t =="; }
@@ -11508,7 +11508,7 @@ get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --onelin
 render_login_dashboard(){
   clear 2>/dev/null || printf '\033c'
   local brand os ram swap city isp ip domain uptime
-  brand=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  brand=$(get_brand 2>/dev/null || echo "SUNEK VPN")
   os=$(get_os 2>/dev/null || echo "-")
   ram=$(get_ram 2>/dev/null || echo "-")
   swap=$(get_swap 2>/dev/null || echo "-")
@@ -11581,10 +11581,10 @@ render_login_dashboard(){
   # version info
   local version client expiry orderby
   version=$(cat "$ETC_BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
-  # TUNNELING format: SPv07.01.26 -> kita pakai TUNNEL-PRO prefix, tampil apa adanya
+  # TUNNELING format: SPv07.01.26 -> kita pakai SUNEK-VPN prefix, tampil apa adanya
   client=$(get_ip_cached 2>/dev/null || echo "-")
   expiry=$(get_expiry 2>/dev/null || echo "-")
-  orderby=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  orderby=$(get_brand 2>/dev/null || echo "SUNEK VPN")
 
   # === RENDER (60 kolom, 1:1 TUNNELING) ===
   # brand header centered
@@ -11600,25 +11600,16 @@ render_login_dashboard(){
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "DOMAIN" "$domain"
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "UPTIME" "$uptime"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  # MONTH - 58 inner exact
+  # trafik - kolom tetap: label(10) + nilai(18) + tag; RX/TX rata dalam 56
   local _line
-  if [ -n "$month_name" ]; then
-    _line=$(printf "%-10s: %-18s [%s]" "MONTH" "$month_val" "$month_name")
-  else
-    _line=$(printf "%-10s: %s" "MONTH" "$month_val")
-  fi
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
-  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$m_rx" "$m_tx"
-  local day_name; day_name=$(date +%A 2>/dev/null || echo "")
-  if [ -n "$day_name" ]; then
-    _line=$(printf "%-10s: %-18s [%s]" "DAY" "$day_val" "$day_name")
-  else
-    _line=$(printf "%-10s: %s" "DAY" "$day_val")
-  fi
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
-  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$d_rx" "$d_tx"
-  _line=$(printf "%-10s: %s" "TRAFFIC" "$live_speed")
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  local _mtag _dtag
+  _mtag=""; [ -n "$month_name" ] && _mtag="[$month_name]"
+  _dtag=""; _dtag_n=$(date +%A 2>/dev/null || echo ""); [ -n "$_dtag_n" ] && _dtag="[$_dtag_n]"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %-18s%s" "MONTH" "$month_val" "$_mtag")"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %-20s %-6s %-16s" "  RX" "$m_rx" "TX" "$m_tx")"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %-18s%s" "DAY" "$day_val" "$_dtag")"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %-20s %-6s %-16s" "  RX" "$d_rx" "TX" "$d_tx")"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$(printf "%-10s: %s" "TRAFFIC" "$live_speed")"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 
   # service status
@@ -11626,7 +11617,7 @@ render_login_dashboard(){
 
   # list accounts box - TUNNELING style
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  _t="LIST ACCOUNTS"; _l=$(( (56 - ${#_t}) / 2 )); _r=$(( 56 - ${#_t} - _l ))
+  _t="LIST ACCOUNTS"; _l=$(( (58 - ${#_t}) / 2 )); _r=$(( 58 - ${#_t} - _l ))
   printf "${BLUE}│${RESET}%*s${BOLD}%s${RESET}%*s${BLUE}│${RESET}\n" "$_l" "" "$_t" "$_r" ""
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   _line=$(printf "%-18s : %-4s ACCOUNT" "SSH/OPENVPN" "$c_ssh"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
@@ -11682,12 +11673,12 @@ fi
 __EMBED_EOF__
 chmod 644 "${BASE}/etc/profile.d/mytunnel.sh"
 cat > "$ETC/config/banner.txt" << '__EMBED_EOF__'
- | TUNNEL PRO - No hacking, use legally |
+ | SUNEK VPN - No hacking, use legally |
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/banner.txt"
 cat > "$ETC/config/brand.txt" << '__EMBED_EOF__'
-TUNNEL PRO
+SUNEK VPN
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/brand.txt"
@@ -12288,7 +12279,7 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  ✓ Install MyTunnel $(cat "$ETC/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0") selesai${RESET}"
 echo -e "${GREEN}══════════════════════════════════════════════════${RESET}"
 DOMAIN=$(cat "$ETC/config/domain.txt" 2>/dev/null || echo "-")
-BRAND=$(cat "$ETC/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO")
+BRAND=$(cat "$ETC/config/brand.txt" 2>/dev/null || echo "SUNEK VPN")
 VER=$(cat "$ETC/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
 echo -e "  ${BOLD}Versi   :${RESET} $VER"
 echo -e "  ${BOLD}Domain  :${RESET} ${CYAN}$DOMAIN${RESET}"

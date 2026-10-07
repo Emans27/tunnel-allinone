@@ -4071,7 +4071,7 @@ while true; do
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   echo -e "${BLUE}│${RESET}  1.) Check Bandwidth                               ${BLUE}│${RESET}"
   echo -e "${BLUE}│${RESET}  2.) Set Date Auto Reboot                          ${BLUE}│${RESET}"
-  echo -e "${BLUE}│${RESET}  3.) Reboot VPS                                    ${BLUE}│${RESET}"
+  echo -e "${BLUE}│${RESET}  3.) Lock Time (Ban 1 Akun)                      ${BLUE}│${RESET}"
   echo -e "${BLUE}│${RESET}  4.) Speed VPS                                     ${BLUE}│${RESET}"
   echo -e "${BLUE}│${RESET}  5.) Change Dropbear Version                        ${BLUE}│${RESET}"
   echo -e "${BLUE}│${RESET}  6.) Check All Service                             ${BLUE}│${RESET}"
@@ -4093,20 +4093,20 @@ while true; do
   case "$c" in
     1) bash "$BASE/features/bandwidth.sh" 2>&1 || echo -e "${YELLOW}Fitur bandwidth belum tersedia${RESET}"; pause;;
     2) bash "$BASE/features/reboot.sh" 2>&1 || echo -e "${YELLOW}Fitur reboot belum tersedia${RESET}"; pause;;
-    3) bash "$BASE/features/reboot.sh" 2>&1 || echo -e "${YELLOW}Fitur reboot belum tersedia${RESET}"; pause;; # reboot VPS via same
+    3) bash "$BASE/features/lock_time.sh" 2>&1 || echo -e "${YELLOW}Fitur lock_time belum tersedia${RESET}"; pause;;
     4) bash "$BASE/features/speedtest.sh" 2>&1 || echo -e "${YELLOW}Fitur speedtest belum tersedia${RESET}"; pause;;
     5) bash "$BASE/features/dropbear_version.sh" 2>&1 || echo -e "${YELLOW}Fitur dropbear_version belum tersedia${RESET}"; pause;;
     6) bash "$BASE/features/services.sh" 2>&1 || echo -e "${YELLOW}Fitur services belum tersedia${RESET}"; pause;;
-    7) bash "$BASE/features/backup.sh" 2>&1 || echo -e "${YELLOW}Fitur backup belum tersedia${RESET}"; pause;;
-    8) bash "$BASE/features/backup.sh" 2>&1 || echo -e "${YELLOW}Fitur backup belum tersedia${RESET}"; pause;;
+    7) bash "$BASE/features/backup.sh" backup 2>&1 || echo -e "${YELLOW}Fitur backup belum tersedia${RESET}"; pause;;
+    8) bash "$BASE/features/backup.sh" restore 2>&1 || echo -e "${YELLOW}Fitur restore belum tersedia${RESET}"; pause;;
     9) bash "$BASE/features/domain.sh" 2>&1 || echo -e "${YELLOW}Fitur domain belum tersedia${RESET}"; pause;;
     10) bash "$BASE/features/banner.sh" 2>&1 || echo -e "${YELLOW}Fitur banner belum tersedia${RESET}"; pause;;
-    11) bash "$BASE/features/services.sh" 2>&1 || echo -e "${YELLOW}Fitur services belum tersedia${RESET}"; pause;;
+    11) bash "$BASE/features/services.sh" menu 2>&1 || echo -e "${YELLOW}Fitur services belum tersedia${RESET}"; pause;;
     12) bash "$BASE/features/security.sh" 2>&1 || echo -e "${YELLOW}Fitur security belum tersedia${RESET}"; pause;;
     13) bash "$BASE/features/autoupdate.sh" 2>&1 || echo -e "${YELLOW}Fitur autoupdate belum tersedia${RESET}"; pause;;
     14) bash "$BASE/features/sysinfo_page.sh" 2>&1 || echo -e "${YELLOW}Fitur sysinfo belum tersedia${RESET}"; pause;;
-    15) bash "$BASE/features/dropbear_version.sh" 2>&1 || echo -e "${YELLOW}Fitur dropbear_version belum tersedia${RESET}"; pause;;
-    16) bash "$BASE/menu/advanced.sh" 2>&1 || echo -e "${YELLOW}Advanced belum tersedia${RESET}";;
+    15) bash "$BASE/features/dropbear_version.sh" list 2>&1 || echo -e "${YELLOW}Fitur dropbear_version belum tersedia${RESET}"; pause;;
+    16) bash "$BASE/menu/advanced.sh" 2>&1 || echo -e "${YELLOW}Advanced belum tersedia${RESET}"; pause;;
     17|b|B) break;;
     x|X) exit 0;;
     *) echo -e "${RED}Pilihan tidak valid${RESET}"; sleep 1;;
@@ -10493,7 +10493,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "reboot.sh" ] || [[ "$0" == *"reboot.sh" ]]; then main; fi
+if [ "${0##*/}" = "reboot.sh" ] || [[ "$0" == *"reboot.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/reboot.sh"
@@ -10622,6 +10622,10 @@ manage_one() {
 }
 
 main() {
+  case "${1:-menu}" in
+    status) show_all; return ;;
+    restart-dead) restart_dead; return ;;
+  esac
   while true; do
     clear 2>/dev/null || printf "\033c"
     show_all
@@ -10636,7 +10640,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "services.sh" ] || [[ "$0" == *"services.sh" ]]; then main; fi
+if [ "${0##*/}" = "services.sh" ] || [[ "$0" == *"services.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/services.sh"
@@ -10800,6 +10804,11 @@ do_restore() {
 }
 
 main() {
+  case "${1:-menu}" in
+    backup) do_backup; return ;;
+    restore) do_list_backup; echo ""; do_restore; return ;;
+    list) do_list_backup; return ;;
+  esac
   while true; do
     clear 2>/dev/null || printf "\033c"
     echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -10816,7 +10825,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "backup.sh" ] || [[ "$0" == *"backup.sh" ]]; then main; fi
+if [ "${0##*/}" = "backup.sh" ] || [[ "$0" == *"backup.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/backup.sh"
@@ -10948,7 +10957,7 @@ main() {
   pause
 }
 
-if [ "${0##*/}" = "domain.sh" ] || [[ "$0" == *"domain.sh" ]]; then main; fi
+if [ "${0##*/}" = "domain.sh" ] || [[ "$0" == *"domain.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/domain.sh"
@@ -11136,7 +11145,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "banner.sh" ] || [[ "$0" == *"banner.sh" ]]; then main; fi
+if [ "${0##*/}" = "banner.sh" ] || [[ "$0" == *"banner.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/banner.sh"
@@ -11167,7 +11176,11 @@ show_status() {
   local ufw_st fail_st
   if command -v ufw >/dev/null 2>&1; then ufw_st=$(ufw status 2>&1 | head -1 | cut -c1-30); else ufw_st="not installed"; fi
   printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "UFW" "$ufw_st"
-  if command -v fail2ban-client >/dev/null 2>&1; then fail_st=$(fail2ban-client status 2>&1 | head -1 | cut -c1-30); else fail_st="not installed"; fi
+  # "Status" saja tak berguna - ambil daftar jail, bukan baris pertama
+  if command -v fail2ban-client >/dev/null 2>&1; then
+    fail_st=$(fail2ban-client status 2>&1 | sed -n "s/.*Jail list:[[:space:]]*//p" | cut -c1-28)
+    [ -z "$fail_st" ] && fail_st="no jail"
+  else fail_st="not installed"; fi
   printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "fail2ban" "$fail_st"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
@@ -11261,7 +11274,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "security.sh" ] || [[ "$0" == *"security.sh" ]]; then main; fi
+if [ "${0##*/}" = "security.sh" ] || [[ "$0" == *"security.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/security.sh"
@@ -11376,7 +11389,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "autoupdate.sh" ] || [[ "$0" == *"autoupdate.sh" ]]; then main; fi
+if [ "${0##*/}" = "autoupdate.sh" ] || [[ "$0" == *"autoupdate.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/autoupdate.sh"
@@ -11454,6 +11467,11 @@ pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 main() {
   local cur
   cur=$(dropbear -V 2>&1 | head -1 | cut -c1-40 2>/dev/null || echo "-")
+  if [ "${1:-}" = "list" ]; then
+    echo -e " Versi sekarang: ${CYAN}$cur${RESET}"
+    [ -f "$VER_FILE" ] && { echo -e "${DIM}Daftar versi:${RESET}"; cat "$VER_FILE" 2>/dev/null | sed 's/^/  /'; } || echo -e "${DIM}(file versi kosong: $VER_FILE)${RESET}"
+    return
+  fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Change Dropbear Version"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
@@ -11492,7 +11510,7 @@ main() {
   pause
 }
 
-if [ "${0##*/}" = "dropbear_version.sh" ] || [[ "$0" == *"dropbear_version.sh" ]]; then main; fi
+if [ "${0##*/}" = "dropbear_version.sh" ] || [[ "$0" == *"dropbear_version.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/dropbear_version.sh"

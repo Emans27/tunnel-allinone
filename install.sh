@@ -245,13 +245,14 @@ get_isp_cached() {
   local isp; isp=$(curl -s --max-time 3 ipinfo.io/org 2>/dev/null | head -c 40 | tr -d '\n'); [ -z "$isp" ] && isp="-"; _cache_set ISP "$isp"; echo "$isp"
 }
 get_traffic_month() { command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $11}' || echo "-"; }
-get_traffic_day() { command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $5}' || echo "-"; }
+get_traffic_day() { command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $6}' || echo "-"; }
 get_traffic_rx_tx() {
   if command -v vnstat >/dev/null 2>&1; then
     local line; line=$(vnstat --oneline 2>/dev/null | head -1)
     local m_rx m_tx d_rx d_tx
+    # field vnstat: $4=rx_hari $5=tx_hari $6=total_hari | $9=rx_bln $10=tx_bln $11=total_bln
     m_rx=$(echo "$line" | awk -F';' '{print $9}'); m_tx=$(echo "$line" | awk -F';' '{print $10}')
-    d_rx=$(echo "$line" | awk -F';' '{print $4}'); d_tx=$(echo "$line" | awk -F';' '{print $6}')
+    d_rx=$(echo "$line" | awk -F';' '{print $4}'); d_tx=$(echo "$line" | awk -F';' '{print $5}')
     # nilai vnstat berisi spasi ("421.67 GiB") → delimiter harus kurung siku, bukan spasi
     echo "MRX:[$m_rx] MTX:[$m_tx] DRX:[$d_rx] DTX:[$d_tx]"
   else echo "MRX:[] MTX:[] DRX:[] DTX:[]"; fi
@@ -11530,7 +11531,7 @@ command -v draw_box >/dev/null 2>&1 || draw_box(){ local t="$1" w="${2:-60}"; ec
 
 # traffic helpers (fallback)
 get_traffic_month_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $11}' || echo "-"; }
-get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $5}' || echo "-"; }
+get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $6}' || echo "-"; }
 
 render_login_dashboard(){
   clear 2>/dev/null || printf '\033c'

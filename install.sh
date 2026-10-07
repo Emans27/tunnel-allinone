@@ -4731,9 +4731,15 @@ ACME_STUB
   echo -e "${GREEN}acme.sh terinstall: $ACME_HOME/acme.sh${RESET}"
 }
 
-# pastikan nginx hidup lagi walau cert.sh keluar di tengah (bukan hanya saat issue gagal)
-_nginx_was_active() { systemctl is-active --quiet nginx 2>/dev/null; }
-_nginx_restore() { [ "${_nginx_was_active:-0}" = 1 ] && { systemctl start nginx 2>/dev/null || true; }; }
+# pastikan semua service yang sempat dimatikan hidup lagi walau cert.sh keluar di tengah
+_nginx_restore() {
+  local _u
+  for _u in $_prev_active; do
+    if ! systemctl start "$_u" 2>/dev/null; then
+      echo -e "${RED}Gagal start $_u setelah cert - cek: systemctl status $_u${RESET}" >&2 || true
+    fi
+  done
+}
 trap '_nginx_restore' EXIT
 
 issue_cert() {
@@ -4765,22 +4771,39 @@ issue_cert() {
     return 0
   fi
 
-  # real mode: stop nginx sementara agar port 80 bebas
-  # catat dulu nginx hidup/tidak, supaya trap bisa menghidupkan lagi hanya kalau memang hidup
-  _nginx_was_active=0; systemctl is-active --quiet nginx 2>/dev/null && _nginx_was_active=1
-  export _nginx_was_active
-  echo -e "${CYAN}Hentikan nginx sementara untuk validasi port 80...${RESET}"
-  systemctl stop nginx 2>/dev/null || service nginx stop 2>/dev/null || nginx -s stop 2>/dev/null || true
+  # real mode: lepas SEMUA listener port 80, bukan cuma nginx.
+  # httpmux (python3) juga megang :80 - kalau cuma stop nginx, httpmux tetap listener
+  # dan acme.sh gagal: "tcp port 80 is already used by python3".
+  # PENTING: _prev_active harus global (tanpa local) - trap berjalan di luar scope fungsi
+  _prev_active=""; local _u
+  for _u in nginx stunnel4 mytunnel-httpmux mytunnel-sshws; do
+    if systemctl is-active --quiet "$_u" 2>/dev/null; then
+      _prev_active="$_prev_active $_u"
+      systemctl stop "$_u" 2>/dev/null || true
+    fi
+  done
+  # bersihkan sisa listener apa pun (fallback)
   fuser -k 80/tcp 2>/dev/null || true
   sleep 1
+  # pastikan benar-benar bebas sebelum lanjut
+  local _still
+  _still=$(ss -tlnp 2>/dev/null | grep ":80 " | head -1)
+  if [ -n "$_still" ]; then
+    echo -e "${YELLOW}Port 80 masih dipakai: ${_still}${RESET}"
+    echo -e "${YELLOW}Tutup dulu proses di port 80 lalu ulangi, atau pakai DNS-01${RESET}"
+    for _u in $_prev_active; do systemctl start "$_u" 2>/dev/null || true; done
+    die "Port 80 tidak bisa dibebaskan" "Lihat: ss -tlnp | grep ':80 '"
+  fi
 
   local acme="$ACME_HOME/acme.sh"
   [ -x "$acme" ] || acme="$HOME/.acme.sh/acme.sh"
   echo -e "${CYAN}Issue sertifikat Let's Encrypt untuk $domain (standalone)...${RESET}"
-  if ! "$acme" --issue --standalone -d "$domain" --keylength ec-256 2>&1 | tee -a "$LOG"; then
+  # CA eksplisit: default acme.sh = ZeroSSL yang butuh EAB & punya rate limit 1 hari.
+  # Let's Encrypt tidak butuh EAB dan lebih toleran untuk issue ulang.
+  if ! "$acme" --issue --standalone -d "$domain" --server letsencrypt --keylength ec-256 2>&1 | tee -a "$LOG"; then
     # fallback rsa
     echo -e "${YELLOW}EC gagal, coba RSA...${RESET}"
-    "$acme" --issue --standalone -d "$domain" 2>&1 | tee -a "$LOG" || {
+    "$acme" --issue --standalone -d "$domain" --server letsencrypt 2>&1 | tee -a "$LOG" || {
       # nginx harus hidup lagi walau gagal - cert lama masih utuh (install还没 jalan)
       systemctl start nginx 2>/dev/null || true
       die "Gagal issue sertifikat untuk $domain" "Cek: 1) A record sudah point ke IP VPS, 2) port 80 terbuka (ufw allow 80), 3) tidak ada layanan lain di 80, 4) rate limit LE"
@@ -4791,11 +4814,10 @@ issue_cert() {
   # sebelum tau issue benar-benar sukses (acme.sh truncate file tujuan saat write)
   local stg_crt="$CERT_DIR/.fullchain.crt.new" stg_key="$CERT_DIR/.private.key.new"
   echo -e "${CYAN}Install cert ke staging...${RESET}"
-  "$acme" --install-cert -d "$domain" \
+  "$acme" --install-cert -d "$domain" --ecc \
     --fullchain-file "$stg_crt" \
-    --key-file "$stg_key" \
-    --ecc 2>/dev/null || \
-  "$acme" --install-cert -d "$domain" \
+    --key-file "$stg_key" 2>&1 | tee -a "$LOG" || \
+    "$acme" --install-cert -d "$domain" --server letsencrypt \
     --fullchain-file "$stg_crt" \
     --key-file "$stg_key" 2>&1 | tee -a "$LOG" || \
     { rm -f "$stg_crt" "$stg_key"; die "Gagal install cert" "Cek permission $CERT_DIR dan log acme.sh"; }
@@ -4835,7 +4857,22 @@ issue_cert() {
   local cron_reload="0 2 * * * \"$acme\" --cron --home \"$ACME_HOME\" >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null; systemctl restart xray 2>/dev/null || true"
   (crontab -l 2>/dev/null | grep -v "mytunnel.*reload"; echo "$cron_reload # mytunnel reload") | crontab - 2>/dev/null || true
 
-  systemctl start nginx 2>/dev/null || true
+  # hidupkan lagi service yang sempat dimatikan (stunnel restart = muat cert baru)
+  # httpmux butuh port 80 benar-benar free -> start dengan retry, jangan sekali terus
+  sleep 1
+  for _u in $_prev_active; do
+    if [ "$_u" = "stunnel4" ]; then
+      systemctl restart "$_u" 2>/dev/null || true
+    else
+      systemctl start "$_u" 2>/dev/null || true
+      # retry 3x kalau masih belum active (port belum release)
+      local _try=0
+      while [ "$_try" -lt 3 ] && ! systemctl is-active --quiet "$_u" 2>/dev/null; do
+        sleep 1; _try=$((_try+1)); systemctl start "$_u" 2>/dev/null || true
+      done
+    fi
+  done
+  _prev_active=""
   echo -e "${GREEN}Sertifikat OK: $cert_crt${RESET}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] cert issued: $domain -> $cert_crt" >> "$LOG" 2>/dev/null || true
 }
@@ -4847,7 +4884,6 @@ main() {
   echo -e "${GREEN}[cert] Selesai${RESET}" | tee -a "$LOG" 2>/dev/null || true
 }
 main "$@"
-
 __EMBED_EOF__
 chmod 755 "$ETC/setup/cert.sh"
 mkdir -p "$ETC/usr/local/bin" 2>/dev/null || true
@@ -10951,6 +10987,17 @@ main() {
       _cp=$(openssl x509 -in "$_c" -noout -pubkey 2>/dev/null | openssl md5)
       _kp=$(openssl pkey -in "$_k" -pubout 2>/dev/null | openssl md5)
       [ -z "$_cp" ] || [ "$_cp" != "$_kp" ] && cert_ok=0
+    fi
+    # WAJIB: cert harus milik domain BARU, bukan cert lama yang kebetulan masih valid
+    # tanpa cek ini domain.txt ganti tapi 443 tetap menyajikan cert domain lama
+    if [ "$cert_ok" -eq 1 ]; then
+      local _cn _san
+      _cn=$(openssl x509 -in "$ETC/cert/fullchain.crt" -noout -subject 2>/dev/null | sed "s/.*CN *= *//" | tr -d "\n" | tr "[:upper:]" "[:lower:]")
+      _san=$(openssl x509 -in "$ETC/cert/fullchain.crt" -noout -ext subjectAltName 2>/dev/null | grep -io "DNS:$new\b" | head -1)
+      if [ "$_cn" != "$new" ] && [ -z "$_san" ]; then
+        cert_ok=0
+        echo -e "${RED}Cert hasil issue bukan untuk $new (CN=$_cn) -> rollback${RESET}"
+      fi
     fi
     [ "$cert_ok" -eq 0 ] && echo -e "${RED}Cert tidak valid setelah issue -> rollback${RESET}"
   else

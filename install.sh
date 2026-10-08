@@ -244,16 +244,57 @@ get_isp_cached() {
   if _cache_valid; then local c; c=$(_cache_get ISP); [ -n "$c" ] && echo "$c" && return 0; fi
   local isp; isp=$(curl -s --max-time 3 ipinfo.io/org 2>/dev/null | head -c 40 | tr -d '\n'); [ -z "$isp" ] && isp="-"; _cache_set ISP "$isp"; echo "$isp"
 }
-get_traffic_month() { command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $11}' || echo "-"; }
-get_traffic_day() { command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $6}' || echo "-"; }
+_traffic_iface() { local i; i=$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}'); [ -z "$i" ] && i=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}'); [ -z "$i" ] && i=eth0; echo "$i"; }
+# ponytail: WIB day bucket; upgrade to TZ-aware (date +%Z) if vnstat gets --timezone
+_traffic_day_idx() {
+  local h; h=$(TZ=Asia/Jakarta date +%H 2>/dev/null || date +%H)
+  # vnstat day[] is UTC-bucketed; WIB midnight = 17:00 UTC prev day
+  if [ "$(date -u +%H)" -lt 17 ]; then echo -2; else echo -1; fi
+}
+get_traffic_month() { command -v vnstat >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { echo "-"; return; }
+  local iface; iface=$(_traffic_iface)
+  local json
+  json=$(vnstat -i "$iface" --json 2>/dev/null | sed 's/^.*<p style=//; s/<\/p>//' | sed -n '/^{/,$p')
+  [ -z "$json" ] && { echo "-"; return; }
+  local total_bytes
+  total_bytes=$(echo "$json" | jq -r '.interfaces[0].traffic.total.rx + .interfaces[0].traffic.total.tx // 0' 2>/dev/null || echo 0)
+  awk -v v="$total_bytes" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}'
+}
+get_traffic_day() { command -v vnstat >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { echo "-"; return; }
+  local iface; iface=$(_traffic_iface)
+  local json
+  json=$(vnstat -i "$iface" --json 2>/dev/null | sed 's/^.*<p style=//; s/<\/p>//' | sed -n '/^{/,$p')
+  [ -z "$json" ] && { echo "-"; return; }
+  local day_idx
+  day_idx=$(_traffic_day_idx)
+  local total_bytes
+  total_bytes=$(echo "$json" | jq -r ".interfaces[0].traffic.day[$day_idx].rx + .interfaces[0].traffic.day[$day_idx].tx // 0" 2>/dev/null || echo 0)
+  awk -v v="$total_bytes" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}'
+}
 get_traffic_rx_tx() {
-  if command -v vnstat >/dev/null 2>&1; then
-    local line; line=$(vnstat --oneline 2>/dev/null | head -1)
+  if command -v vnstat >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    local iface; iface=$(_traffic_iface)
+    # Use JSON output, strip HTML prefix if any
+    local json
+    json=$(vnstat -i "$iface" --json 2>/dev/null | sed 's/^.*<p style=//; s/<\/p>//')
+    [ -z "$json" ] && { echo "MRX:[] MTX:[] DRX:[] DTX:[]"; return; }
+    # Ensure it starts with {
+    json=$(echo "$json" | sed -n '/^{/,$p')
+    [ -z "$json" ] && { echo "MRX:[] MTX:[] DRX:[] DTX:[]"; return; }
     local m_rx m_tx d_rx d_tx
-    # field vnstat: $4=rx_hari $5=tx_hari $6=total_hari | $9=rx_bln $10=tx_bln $11=total_bln
-    m_rx=$(echo "$line" | awk -F';' '{print $9}'); m_tx=$(echo "$line" | awk -F';' '{print $10}')
-    d_rx=$(echo "$line" | awk -F';' '{print $4}'); d_tx=$(echo "$line" | awk -F';' '{print $5}')
-    # nilai vnstat berisi spasi ("421.67 GiB") → delimiter harus kurung siku, bukan spasi
+    # total month rx/tx in bytes
+    m_rx=$(echo "$json" | jq -r '.interfaces[0].traffic.total.rx // 0' 2>/dev/null || echo 0)
+    m_tx=$(echo "$json" | jq -r '.interfaces[0].traffic.total.tx // 0' 2>/dev/null || echo 0)
+    # today rx/tx (same WIB day bucket as get_traffic_day)
+    local today_rx today_tx day_idx
+    day_idx=$(_traffic_day_idx)
+    today_rx=$(echo "$json" | jq -r ".interfaces[0].traffic.day[$day_idx].rx // 0" 2>/dev/null || echo 0)
+    today_tx=$(echo "$json" | jq -r ".interfaces[0].traffic.day[$day_idx].tx // 0" 2>/dev/null || echo 0)
+    # Convert to GiB with 2 decimals
+    m_rx=$(awk -v v="$m_rx" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}')
+    m_tx=$(awk -v v="$m_tx" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}')
+    d_rx=$(awk -v v="$today_rx" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}')
+    d_tx=$(awk -v v="$today_tx" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}')
     echo "MRX:[$m_rx] MTX:[$m_tx] DRX:[$d_rx] DTX:[$d_tx]"
   else echo "MRX:[] MTX:[] DRX:[] DTX:[]"; fi
 }
@@ -1625,8 +1666,8 @@ ah_notify_admin(){
       printf '%s\n' "$_line"
     fi
   done)
-  curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=Markdown" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
-    curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=${clean}" >/dev/null 2>&1 || true
+  curl -4 -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=Markdown" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
+    curl -4 -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=${clean}" >/dev/null 2>&1 || true
   }
   ah_log "notify admin: ${clean:0:80}"
 }
@@ -4154,7 +4195,7 @@ bot_test_send(){
   [ -z "${BOT_TOKEN:-}" ] || [ -z "${ADMIN_ID:-}" ] && { echo -e "${RED}Token/Admin kosong${RESET}"; return 1; }
   echo -e "${CYAN}Kirim tes ke $ADMIN_ID ...${RESET}"
   local resp
-  resp=$(curl -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=✅ mytunnel bot aktif — $(date '+%Y-%m-%d %H:%M') " 2>&1 || true)
+  resp=$(curl -4 -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=✅ mytunnel bot aktif — $(date '+%Y-%m-%d %H:%M') " 2>&1 || true)
   if echo "$resp" | grep -q '"ok":true'; then echo -e "${GREEN}Terkirim ✓${RESET}"; ah_log "bot test ok to $ADMIN_ID"; else echo -e "${RED}Gagal:${RESET} $resp" | head -c 200; echo; fi
 }
 
@@ -9108,10 +9149,11 @@ mkdir -p "$(dirname "$OFFSET_FILE")" 2>/dev/null || true
 OFFSET=0
 [ -f "$OFFSET_FILE" ] && OFFSET=$(cat "$OFFSET_FILE" 2>/dev/null | tr -dc '0-9' | head -c 20)
 [ -z "$OFFSET" ] && OFFSET=0
+ah_log "bot polling offset=$OFFSET"
 
 send_msg(){
   local chat_id="$1" text="$2"
-  curl -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${chat_id}" --data-urlencode "text=${text}" >/dev/null 2>&1 || true
+  curl -4 -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${chat_id}" --data-urlencode "text=${text}" >/dev/null 2>&1 || true
 }
 
 handle_update(){
@@ -9119,6 +9161,9 @@ handle_update(){
   local chat_id from_id text
   chat_id=$(echo "$upd" | jq -r '.message.chat.id // empty' 2>/dev/null)
   from_id=$(echo "$upd" | jq -r '.message.from.id // empty' 2>/dev/null)
+  # update offset supaya tidak proses update yang sama lagi
+  OFFSET=$((update_id + 1))
+  echo "$OFFSET" > "$OFFSET_FILE" 2>/dev/null || true
   # --- handle document (backup restore) ---
   local doc_id doc_name doc_size
   doc_id=$(echo "$upd" | jq -r '.message.document.file_id // empty' 2>/dev/null)
@@ -9188,7 +9233,7 @@ Ketik /start untuk bantuan"
 
 # main loop long-polling
 while true; do
-  resp=$(curl -fsS --max-time 35 "https://api.telegram.org/bot${BOT_TOKEN}/getUpdates" -d "offset=${OFFSET}" -d "timeout=30" 2>&1 || true)
+  resp=$(curl -4 -fsS --max-time 35 "https://api.telegram.org/bot${BOT_TOKEN}/getUpdates" -d "offset=${OFFSET}" -d "timeout=30" 2>&1 || true)
   if echo "$resp" | jq -e '.ok == true' >/dev/null 2>&1; then
     cnt=$(echo "$resp" | jq '.result | length' 2>/dev/null || echo 0)
     if [ "$cnt" -gt 0 ] 2>/dev/null; then
@@ -11677,7 +11722,16 @@ command -v draw_box >/dev/null 2>&1 || draw_box(){ local t="$1" w="${2:-60}"; ec
 
 # traffic helpers (fallback)
 get_traffic_month_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $11}' || echo "-"; }
-get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $6}' || echo "-"; }
+get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 || { echo "-"; return; }
+  local iface; iface=$(_traffic_iface)
+  local idx
+  idx=$(_traffic_day_idx)
+  if command -v jq >/dev/null 2>&1; then
+    vnstat -i "$iface" --json 2>/dev/null | jq -r ".interfaces[0].traffic.day[$idx].rx + .interfaces[0].traffic.day[$idx].tx" 2>/dev/null | awk '{printf "%.2f GiB", $1/1024/1024/1024}'
+  else
+    vnstat -i "$iface" --oneline 2>/dev/null | awk -F';' '{print $6}'
+  fi
+}
 
 render_login_dashboard(){
   clear 2>/dev/null || printf '\033c'

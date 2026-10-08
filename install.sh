@@ -726,7 +726,7 @@ _mt_port_active() {
         mytunnel-ohp-ovpn) [ -f "${MYTUNNEL_PREFIX}/etc/systemd/system/mytunnel-ohp-ovpn.service" ] && return 0 || { [ -f "${MYTUNNEL_PREFIX}/var/log/ohp-sim.log" ] && return 0; return 1; } ;;
         mytunnel-slowdns) [ -f "${MYTUNNEL_PREFIX}/etc/mytunnel/config/slowdns.conf" ] && return 0 || [ -f "${MYTUNNEL_PREFIX}/etc/mytunnel/slowdns/server.key" ] && return 0 || [ -f "${MYTUNNEL_PREFIX}/var/log/slowdns-sim.log" ] && return 0 || return 1 ;;
         openvpn|mytunnel-openvpn-tcp|mytunnel-openvpn-udp|mytunnel-openvpn-ssl|mytunnel-openvpn-dns) [ -d "${MYTUNNEL_PREFIX}/etc/openvpn" ] && return 0 || [ -f "${MYTUNNEL_PREFIX}/var/log/openvpn-sim.log" ] && return 0 || ls "${MYTUNNEL_PREFIX}/etc/systemd/system/mytunnel-openvpn-"*.service >/dev/null 2>&1 && return 0 || return 1 ;;
-        mytunnel-udp-custom) [ -f "${MYTUNNEL_PREFIX}/var/log/udp-custom-sim.log" ] && return 0 || [ -f "${MYTUNNEL_PREFIX}/etc/systemd/system/mytunnel-udp-custom.service" ] && return 0 || return 1 ;;
+        mytunnel-udp-custom|udp-custom) [ -f "${MYTUNNEL_PREFIX}/etc/mytunnel/config/udp-custom.conf" ] && return 0 || [ -f "${MYTUNNEL_PREFIX}/etc/udp/config.json" ] && return 0 || [ -f "${MYTUNNEL_PREFIX}/var/log/udp-custom-sim.log" ] && return 0 || [ -f "${MYTUNNEL_PREFIX}/etc/systemd/system/mytunnel-udp-custom.service" ] && return 0 || [ -f "${MYTUNNEL_PREFIX}/etc/systemd/system/udp-custom.service" ] && return 0 || return 1 ;;
         *) return 1 ;;
       esac
     else
@@ -6599,220 +6599,199 @@ __EMBED_EOF__
 chmod 755 "$ETC/setup/udpgw.sh"
 cat > "$ETC/setup/udp-custom.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel setup/udp-custom.sh - UDP-Custom rentang 1-65535 (exclude admin ports) - OPSIONAL
-# Sumber: pihak ketiga / sering closed-source -> tampilkan URL & hash + peringatan
+# mytunnel setup/udp-custom.sh - UDP-Custom (ePro v1.4) - OPSIONAL
+#
+# CATATAN PENTING
+#  - Binary ini pihak ketiga / closed-source. SHA256 dipin di UDP_CUSTOM_SHA
+#    supaya versi yang dijalankan selalu identik & terverifikasi; ganti hanya
+#    kalau memang mau upgrade, dan catat hash barunya.
+#  - `listen` HANYA menerima SATU port. Rentang 1-65535 ditangani binary
+#    lewat iptables DNAT (PREROUTING) untuk semua port kecuali --exclude.
+#  - Karena DNAT terjadi SEBELUM filter/INPUT, firewall melihat port tujuan
+#    hasil terjemahan (LISTEN_PORT), bukan port aslinya. Jadi rule firewall
+#    yang benar hanya LISTEN_PORT/udp - bukan seluruh rentang.
 # shellcheck disable=SC1091,SC2154,SC1090,SC2034
 set -e
 BASE="${MYTUNNEL_PREFIX:-}"
 ETC="${BASE}/etc/mytunnel"
 LOG="${BASE}/var/log/mytunnel.log"
 PF="${ETC}/config/ports.conf"
-CONF="${ETC}/config/udp-custom.conf"
+CONF="${BASE}/etc/udp/config.json"
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/advanced_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
-CYAN="${CYAN:-\033[0;36m}"; BLUE="${BLUE:-\033[0;34m}"; RESET="${RESET:-\033[0m}"
-BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"; GREY="${GREY:-\033[0;37m}"
+CYAN="${CYAN:-\033[0;36m}"; DIM="${DIM:-\033[2m}"; GREY="${GREY:-\033[0;37m}"; RESET="${RESET:-\033[0m}"
 
-# Sumber resmi: kebanyakan UDP-Custom adalah binary pihak ketiga / closed-source
-# Tidak ada upstream "official" tunggal. Contoh publik:
-#   - https://github.com/zhets/udp-custom (jika ada release)
-#   - https://github.com/bolehvpn/udp-custom (contoh)
-# Pakai URL placeholder yang HTTPS dan verifikasi manual SHA256.
-# Jika upstream tidak publish checksum, tampilkan peringatan dan minta verifikasi manual.
-UDP_CUSTOM_URL="https://github.com/zhets/udp-custom/releases/latest/download/udp-custom"
-UDP_CUSTOM_SHA=""
+UDP_CUSTOM_URL="${UDP_CUSTOM_URL:-https://github.com/zhets/udp-custom/raw/main/udp-custom-linux-amd64}"
+UDP_CUSTOM_SHA="2a1b5584c7947feb5a02e847e09795751024f63ce7137a353c2b9c2a4282d636"
 UDP_CUSTOM_BIN="${BASE}/usr/local/bin/udp-custom"
 [ -z "$BASE" ] && UDP_CUSTOM_BIN="/usr/local/bin/udp-custom"
-SERVICE="mytunnel-udp-custom"
-EXCLUDE_PORTS="22,444,80,443,53,81,25000,5300,3128,7100,9080,9088,1194,442"
+[ -z "$BASE" ] && CONF="/etc/udp/config.json"
+SERVICE="udp-custom"
+LISTEN_PORT="${UDP_CUSTOM_LISTEN:-36712}"
+# port yang TIDAK boleh dialihkan (dipakai layanan lain di server ini)
+EXCLUDE_PORTS="22,444,90,80,443,53,5300,81,8080,8443,2082,2083,8880,3128,7100,9080,9088,1194,442,25000,7300"
 
 _get_ports(){
   # shellcheck disable=SC1090
   [ -f "$PF" ] && . "$PF" 2>/dev/null || true
   local p="1-65535"
   [ -n "${UDP_CUSTOM_PORT:-}" ] && p="$UDP_CUSTOM_PORT"
-  # normalisasi: "1-65535" atau "1:65535"
-  p=$(echo "$p" | tr -d ' ' | head -c 20)
+  p=$(printf '%s' "$p" | tr -d ' ' | tr ':' '-' | head -c 20)
   [ -z "$p" ] && p="1-65535"
-  echo "$p"
+  printf '%s' "$p"
+}
+
+_sha_of(){
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" 2>/dev/null | awk '{print $1}'
+  else shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; fi
+}
+
+_ufw_open(){
+  command -v ufw >/dev/null 2>&1 || return 0
+  ufw status 2>/dev/null | grep -q "Status: active" || return 0
+  ufw status 2>/dev/null | grep -q "^${LISTEN_PORT}/udp" && { echo -e "${DIM}UFW: ${LISTEN_PORT}/udp sudah terbuka${RESET}"; return 0; }
+  ufw allow "${LISTEN_PORT}/udp" >/dev/null 2>&1 && echo -e "${GREEN}UFW: ${LISTEN_PORT}/udp dibuka${RESET}" || echo -e "${YELLOW}UFW: gagal buka ${LISTEN_PORT}/udp (buka manual)${RESET}"
+}
+
+_ufw_close(){
+  command -v ufw >/dev/null 2>&1 || return 0
+  ufw status 2>/dev/null | grep -q "^${LISTEN_PORT}/udp" && ufw delete allow "${LISTEN_PORT}/udp" >/dev/null 2>&1 || true
 }
 
 _status(){
   echo -e "${CYAN}=== UDP-CUSTOM STATUS ===${RESET}"
   echo -e "${DIM}Sumber: $UDP_CUSTOM_URL${RESET}"
-  if [ -n "$UDP_CUSTOM_SHA" ]; then echo -e "${DIM}SHA256 expect: $UDP_CUSTOM_SHA${RESET}"; else echo -e "${YELLOW}SHA256 expect: (kosong - upstream tidak publish, verifikasi manual!)${RESET}"; fi
-  echo -e "${YELLOW}PERINGATAN: Binary UDP-Custom sering closed-source/pihak ketiga tanpa source publik.${RESET}"
-  echo -e "${YELLOW}Audit binary & cek hash manual sebelum produksi. Exclude port admin penting.${RESET}"
-  echo -e "${DIM}Exclude: $EXCLUDE_PORTS${RESET}"
-  local expect
-  expect=$(_get_ports)
-  echo -e "Rentang ports.conf: $expect (exclude $EXCLUDE_PORTS)"
-  if [ -f "$CONF" ]; then echo -e "Config: ${GREEN}$CONF OK${RESET}"; cat "$CONF" 2>/dev/null | sed 's/^/  /'; else echo -e "Config: ${YELLOW}belum ada ($CONF)${RESET}"; fi
-  echo -e "Binary : $( [ -x "$UDP_CUSTOM_BIN" ] && echo "${GREEN}$UDP_CUSTOM_BIN OK${RESET}" || echo "${YELLOW}belum terinstall${RESET}")"
-  if [ -n "$UDP_CUSTOM_SHA" ] && [ -f "$UDP_CUSTOM_BIN" ]; then
-    local got=""; if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$UDP_CUSTOM_BIN" 2>/dev/null | awk '{print $1}'); else got=$(shasum -a 256 "$UDP_CUSTOM_BIN" 2>/dev/null | awk '{print $1}'); fi
-    echo -e "  sha256: ${got:0:12}... (expect ${UDP_CUSTOM_SHA:0:12}...)"
-  fi
-  local st="OFF"
+  echo -e "${DIM}SHA256 pin: $UDP_CUSTOM_SHA${RESET}"
+  echo -e "${YELLOW}PERINGATAN: binary pihak ketiga / closed-source. Jalankan hanya kalau kamu percaya sumbernya.${RESET}"
+  echo -e "${DIM}Rentang ports.conf: $(_get_ports) | listen internal :$LISTEN_PORT | exclude: $EXCLUDE_PORTS${RESET}"
+  if [ -f "$CONF" ]; then echo -e "Config: ${GREEN}$CONF OK${RESET}"; sed 's/^/  /' "$CONF" 2>/dev/null; else echo -e "Config: ${YELLOW}belum ada ($CONF)${RESET}"; fi
+  if [ -x "$UDP_CUSTOM_BIN" ]; then
+    local got; got=$(_sha_of "$UDP_CUSTOM_BIN")
+    if [ -n "$BASE" ]; then echo -e "Binary : ${GREEN}$UDP_CUSTOM_BIN OK (sim)${RESET}"
+    elif [ "$got" = "$UDP_CUSTOM_SHA" ]; then echo -e "Binary : ${GREEN}$UDP_CUSTOM_BIN OK (sha cocok)${RESET}"
+    else echo -e "Binary : ${RED}$UDP_CUSTOM_BIN sha BEDA${RESET}"; echo -e "  got: ${got:0:16}... expect ${UDP_CUSTOM_SHA:0:16}..."; fi
+  else echo -e "Binary : ${YELLOW}belum terinstall${RESET}"; fi
   if [ -n "$BASE" ]; then
-    if [ -f "$BASE/etc/systemd/system/${SERVICE}.service" ] || [ -f "$BASE/var/log/udp-custom-sim.log" ]; then st="ON(sim)"; fi
+    [ -f "$BASE/etc/systemd/system/${SERVICE}.service" ] && echo -e "Service: ${GREEN}ON (sim)${RESET}" || echo -e "Service: ${YELLOW}OFF (sim)${RESET}"
   else
-    if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then st="ON"; elif pgrep -f "udp-custom" >/dev/null 2>&1; then st="ON"; fi
+    echo -e "Service: $([ "$(systemctl is-active $SERVICE 2>/dev/null)" = active ] && echo "${GREEN}active${RESET}" || echo "${YELLOW}inactive${RESET}")"
+    command -v ss >/dev/null 2>&1 && echo -e "Listen : $(ss -lunp 2>/dev/null | grep -c "$LISTEN_PORT") socket di :$LISTEN_PORT"
+    iptables -t nat -S 2>/dev/null | grep -c "to-destination :$LISTEN_PORT" | sed 's/^/DNAT rules: /'
+    command -v ufw >/dev/null 2>&1 && echo -e "UFW    : $(ufw status 2>/dev/null | grep -c "^${LISTEN_PORT}/udp") rule ${LISTEN_PORT}/udp"
   fi
-  echo -e "Service $SERVICE : $st"
-  if command -v ss >/dev/null 2>&1; then echo -e "Listen : $(ss -tulpn 2>/dev/null | grep -E 'udp-custom|7100|5300' | head -n 5 || echo "-")"; fi
-  echo ""
-  echo -e "${YELLOW}Catatan: Jangan alihkan port admin sendiri ($EXCLUDE_PORTS).${RESET}"
 }
 
 _install(){
-  echo -e "${CYAN}=== Install UDP-Custom $EXCLUDE_PORTS ===${RESET}"
-  echo -e "${DIM}Sumber resmi (HTTPS): $UDP_CUSTOM_URL${RESET}"
-  if [ -n "$UDP_CUSTOM_SHA" ]; then echo -e "${DIM}SHA256 expect: $UDP_CUSTOM_SHA (akan diverifikasi)${RESET}"; else echo -e "${YELLOW}SHA256 expect: (kosong) - upstream tidak publish checksum resmi${RESET}"; fi
-  echo -e "${YELLOW}PERINGATAN: Binary pihak ketiga / tertutup (closed-source).${RESET}"
-  echo -e "${YELLOW}Risiko: tanpa source audit, bisa berisi backdoor. Pastikan hash dari sumber terpercaya.${RESET}"
-  echo -e "${DIM}Exclude admin: $EXCLUDE_PORTS (22 SSH, 444 OpenSSH, 80/443 nginx, 53 SlowDNS, 81 zip, 25000 OVPN UDP)${RESET}"
-  echo -e "${DIM}Rentang: $(_get_ports) -> exclude di atas, agar tidak mengalihkan lalu lintas admin.${RESET}"
-  # cek bentrok exclude
-  echo -e "${DIM}Jika server pakai salah satu exclude, UDP-Custom tidak akan bind di sana (aman).${RESET}"
-  echo ""
-  if [ -t 0 ]; then
+  echo -e "${CYAN}=== Install UDP-Custom (listen :$LISTEN_PORT, rentang $(_get_ports)) ===${RESET}"
+  echo -e "${YELLOW}PERINGATAN KEAMANAN: binary UDP-Custom closed-source, tanpa lisensi resmi.${RESET}"
+  echo -e "${YELLOW}Integritas dijaga lewat SHA256 yang dipin di script ini.${RESET}"
+  echo -e "${DIM}Exclude (tidak dialihkan): $EXCLUDE_PORTS${RESET}"
+  if [ -t 0 ] && [ -z "$MYTUNNEL_YES" ]; then
     echo -ne "${YELLOW}Lanjut install UDP-Custom? [y/N]: ${RESET}"; read -r ans; case "$ans" in y|Y|yes|YES) ;; *) echo "Batal"; return 1;; esac
   fi
-  local range
-  range=$(_get_ports)
-  mkdir -p "$(dirname "$UDP_CUSTOM_BIN")" "$(dirname "$CONF")" "${BASE}/var/log" 2>/dev/null || true
+  mkdir -p "$(dirname "$UDP_CUSTOM_BIN")" "$(dirname "$CONF")" "${BASE}/var/log" "${BASE}/etc/systemd/system" 2>/dev/null || true
 
-  # backup exclude config
-  if [ -f "$CONF" ]; then ah_backup_cfg "$CONF" >/dev/null 2>&1 || true; fi
-
-  # download
   if [ -n "$BASE" ]; then
-    echo -e "${YELLOW}[TEST MODE] Simulasi download $UDP_CUSTOM_URL -> $UDP_CUSTOM_BIN${RESET}"
-    printf '#!/bin/bash\necho "udp-custom sim range %s exclude %s"\nwhile true; do sleep 3600; done\n' "$range" "$EXCLUDE_PORTS" > "$UDP_CUSTOM_BIN" 2>/dev/null || true
-    chmod 755 "$UDP_CUSTOM_BIN" 2>/dev/null || true
-    # tulis sim log untuk _mt_port_active
-    echo "range=$range exclude=$EXCLUDE_PORTS src=$UDP_CUSTOM_URL sha=$UDP_CUSTOM_SHA" > "${BASE}/var/log/udp-custom-sim.log" 2>/dev/null || true
-    chmod 644 "$BASE/var/log/udp-custom-sim.log" 2>/dev/null || true; chmod 644 "${BASE}/var/log/udp-custom-sim.log" 2>/dev/null || true
-    # checksum tampil (sim)
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$UDP_CUSTOM_BIN" 2>/dev/null | awk '{print "  sha256 sim: "$1}' | head -n 1; fi
+    echo -e "${YELLOW}[TEST MODE] Simulasi download -> $UDP_CUSTOM_BIN${RESET}"
+    printf '#!/bin/bash\necho "udp-custom sim listen %s exclude %s"\nwhile true; do sleep 3600; done\n' "$LISTEN_PORT" "$EXCLUDE_PORTS" > "$UDP_CUSTOM_BIN"
+    chmod 755 "$UDP_CUSTOM_BIN"
   else
-    if [ -n "$UDP_CUSTOM_SHA" ]; then
-      if ! ah_download_https "$UDP_CUSTOM_URL" "$UDP_CUSTOM_BIN" "$UDP_CUSTOM_SHA" 2>&1; then echo -e "${RED}Download/verifikasi gagal${RESET}"; return 1; fi
-    else
-      echo -e "${YELLOW}Tanpa checksum, download tanpa verifikasi (risiko) - lanjut?${RESET}"
-      if [ -t 0 ]; then echo -ne "${YELLOW}Lanjut tanpa verifikasi? [y/N]: ${RESET}"; read -r a2; case "$a2" in y|Y) ;; *) echo "Batal"; return 1;; esac; fi
-      if ! ah_download_https "$UDP_CUSTOM_URL" "$UDP_CUSTOM_BIN" "" 2>&1; then echo -e "${RED}Download gagal${RESET}"; return 1; fi
-      local got=""; if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$UDP_CUSTOM_BIN" 2>/dev/null | awk '{print $1}'); else got=$(shasum -a 256 "$UDP_CUSTOM_BIN" 2>/dev/null | awk '{print $1}'); fi
-      echo -e "${YELLOW}SHA256 got: $got (simpan untuk verifikasi next install)${RESET}"
-      ah_log "udp-custom sha256 $got src $UDP_CUSTOM_URL"
+    echo -ne "${DIM}Download $UDP_CUSTOM_URL ...${RESET}"
+    if command -v curl >/dev/null 2>&1; then curl -4 -fsSL --max-time 120 -o "$UDP_CUSTOM_BIN.part" "$UDP_CUSTOM_URL" || { echo -e " ${RED}gagal${RESET}"; rm -f "$UDP_CUSTOM_BIN.part"; return 1; }
+    else wget -q -O "$UDP_CUSTOM_BIN.part" "$UDP_CUSTOM_URL" || { echo -e " ${RED}gagal${RESET}"; rm -f "$UDP_CUSTOM_BIN.part"; return 1; }; fi
+    echo -e " ${GREEN}ok${RESET}"
+    local got; got=$(_sha_of "$UDP_CUSTOM_BIN.part")
+    if [ "$got" != "$UDP_CUSTOM_SHA" ]; then
+      echo -e "${RED}SHA256 TIDAK COCOK - dibatalkan.${RESET}"
+      echo -e "  got   : $got"
+      echo -e "  expect: $UDP_CUSTOM_SHA"
+      rm -f "$UDP_CUSTOM_BIN.part"
+      return 1
     fi
-    chmod 755 "$UDP_CUSTOM_BIN" 2>/dev/null || true
+    echo -e "${GREEN}SHA256 cocok${RESET}"
+    mv -f "$UDP_CUSTOM_BIN.part" "$UDP_CUSTOM_BIN"
+    chmod 755 "$UDP_CUSTOM_BIN"
   fi
 
-  # config
-  cat > "$CONF" <<CFEOF
-# mytunnel udp-custom - managed by mytunnel
-RANGE="$range"
-EXCLUDE="$EXCLUDE_PORTS"
-SRC="$UDP_CUSTOM_URL"
-SHA="$UDP_CUSTOM_SHA"
-CFEOF
-  chmod 644 "$CONF" 2>/dev/null || true
-  echo -e "${GREEN}Config: $CONF (600 not needed, no secret)${RESET}"
-
-  # enable service
-  _enable
+  cat > "$CONF" <<JSONEOF
+{
+  "listen": ":${LISTEN_PORT}",
+  "stream_buffer": 33554432,
+  "receive_buffer": 83886080,
+  "auth": {
+    "mode": "passwords"
+  }
 }
+JSONEOF
+  chmod 644 "$CONF"
 
-_enable(){
-  [ -f "$CONF" ] || { echo -e "${RED}Config belum ada, install dulu${RESET}"; return 1; }
-  # shellcheck disable=SC1090
-  . "$CONF" 2>/dev/null || true
-  local range="${RANGE:-}" exclude="${EXCLUDE:-$EXCLUDE_PORTS}"
-  [ -z "$range" ] && range=$(_get_ports)
-  if [ -n "$BASE" ]; then
-    mkdir -p "$BASE/etc/systemd/system" 2>/dev/null || true
-    cat > "$BASE/etc/systemd/system/${SERVICE}.service" <<SVCEOF
+  cat > "${BASE}/etc/systemd/system/${SERVICE}.service" <<SVCEOF
 [Unit]
-Description=mytunnel UDP-Custom $range (exclude $exclude)
+Description=mytunnel UDP-Custom (ePro v1.4) listen :${LISTEN_PORT}
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$UDP_CUSTOM_BIN server --listen $range --exclude $exclude
+ExecStart=${UDP_CUSTOM_BIN} server --config ${CONF} --exclude ${EXCLUDE_PORTS}
+WorkingDirectory=$(dirname "$CONF")
 Restart=always
-RestartSec=5
+RestartSec=2s
 LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 SVCEOF
-    touch "$BASE/var/log/udp-custom-sim.log" 2>/dev/null || true
-    echo -e "${GREEN}[TEST MODE] Service $SERVICE dibuat (sim) : $range exclude $exclude${RESET}"
-    ah_log "udp-custom enable sim $range exclude $exclude"
-    return 0
-  fi
-  cat > "/etc/systemd/system/${SERVICE}.service" <<SVCEOF2
-[Unit]
-Description=mytunnel UDP-Custom $range (exclude $exclude)
-After=network.target
 
-[Service]
-Type=simple
-ExecStart=$UDP_CUSTOM_BIN server --listen $range --exclude $exclude
-Restart=always
-RestartSec=5
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF2
-  chmod 644 "/etc/systemd/system/${SERVICE}.service" 2>/dev/null || true
-  systemctl daemon-reload 2>/dev/null || true
-  systemctl enable --now "$SERVICE" 2>/dev/null || systemctl restart "$SERVICE" 2>/dev/null || true
-  echo -e "${GREEN}Service $SERVICE diaktifkan: $range exclude $exclude${RESET}"
-  ah_log "udp-custom enable $range exclude $exclude"
-}
-
-_disable(){
   if [ -n "$BASE" ]; then
-    rm -f "$BASE/var/log/udp-custom-sim.log" 2>/dev/null || true
-    echo -e "${YELLOW}[TEST MODE] Service $SERVICE dimatikan (sim)${RESET}"
-    ah_log "udp-custom disable sim"
+    echo -e "${GREEN}[TEST MODE] unit ${SERVICE}.service dibuat${RESET}"
+    ah_log "udp-custom install sim listen $LISTEN_PORT" 2>/dev/null || true
     return 0
   fi
-  systemctl disable --now "$SERVICE" 2>/dev/null || systemctl stop "$SERVICE" 2>/dev/null || true
-  echo -e "${YELLOW}Service $SERVICE dimatikan${RESET}"
-  ah_log "udp-custom disable"
+
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+  systemctl restart "$SERVICE" 2>/dev/null || true
+  sleep 3
+  if [ "$(systemctl is-active "$SERVICE" 2>/dev/null)" != "active" ]; then
+    echo -e "${RED}Service gagal start. Log terakhir:${RESET}"
+    journalctl -u "$SERVICE" --no-pager -n 8 2>/dev/null | tail -8
+    return 1
+  fi
+  echo -e "${GREEN}Service $SERVICE active (listen UDP :$LISTEN_PORT)${RESET}"
+  _ufw_open
+  local n
+  n=$(iptables -t nat -S 2>/dev/null | grep -c "to-destination :$LISTEN_PORT" || true)
+  echo -e "DNAT rules dibuat: ${GREEN}${n}${RESET} (rentang minus exclude)"
+  ah_log "udp-custom install ok listen $LISTEN_PORT dnats $n" 2>/dev/null || true
 }
 
 _uninstall(){
-  echo -ne "${YELLOW}Hapus UDP-Custom? [y/N]: ${RESET}"; local a; read -r a; case "$a" in y|Y|yes|YES) ;; *) echo "Batal"; return;; esac
-  _disable 2>&1 || true
+  echo -e "${CYAN}=== Uninstall UDP-Custom ===${RESET}"
+  _ufw_close
   if [ -n "$BASE" ]; then
-    rm -f "$UDP_CUSTOM_BIN" 2>/dev/null || true
-    rm -f "$CONF" "$BASE/etc/systemd/system/${SERVICE}.service" 2>/dev/null || true
-    echo -e "${GREEN}[TEST MODE] Uninstall sim selesai${RESET}"
-    ah_log "udp-custom uninstall sim"
-    return
+    rm -f "$BASE/etc/systemd/system/${SERVICE}.service" "$UDP_CUSTOM_BIN" "$CONF"
+    echo -e "${GREEN}[TEST MODE] dibersihkan${RESET}"
+    return 0
   fi
-  rm -f "$UDP_CUSTOM_BIN" 2>/dev/null || true
-  rm -f "$CONF" "/etc/systemd/system/${SERVICE}.service" 2>/dev/null || true
+  systemctl stop "$SERVICE" 2>/dev/null || true
+  systemctl disable "$SERVICE" 2>/dev/null || true
+  # DNAT rules dibuat runtime oleh binary -> hapus manual kalau masih tersisa
+  iptables -t nat -S 2>/dev/null | grep "to-destination :$LISTEN_PORT" | sed 's/^-A /-D /' | while read -r rule; do
+    # shellcheck disable=SC2086
+    iptables -t nat $rule 2>/dev/null || true
+  done
+  rm -f "/etc/systemd/system/${SERVICE}.service" "$UDP_CUSTOM_BIN" "$CONF"
+  rmdir "$(dirname "$CONF")" 2>/dev/null || true
   systemctl daemon-reload 2>/dev/null || true
-  echo -e "${GREEN}UDP-Custom dihapus${RESET}"
-  ah_log "udp-custom uninstall"
+  echo -e "${GREEN}Dihapus.${RESET}"
 }
 
-case "${1:-}" in
-  install) _install ;;
-  enable) _enable ;;
-  disable) _disable ;;
+case "${1:-status}" in
+  install)   _install ;;
   uninstall) _uninstall ;;
-  status) _status ;;
-  *) echo "Usage: $0 [install|enable|disable|uninstall|status]" >&2; exit 2;;
+  status)    _status ;;
+  *) echo "Pakai: $0 {install|uninstall|status}"; exit 1 ;;
 esac
-
 __EMBED_EOF__
 chmod 755 "$ETC/setup/udp-custom.sh"
 cat > "$ETC/setup/ohp.sh" << '__EMBED_EOF__'

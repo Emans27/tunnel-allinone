@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## v1.7.0 — 2026-10-08 — Fix UDP-Custom (1-65535) tidak pernah terpasang
+### Fixed
+- `setup/udp-custom.sh` menunjuk URL rilis yang **404**
+  (`.../releases/latest/download/udp-custom`) sehingga binary tidak pernah terunduh.
+  Diganti ke lokasi file yang benar + **SHA256 dipin** dan diverifikasi sebelum
+  binary dipasang (gagal = batal, tidak dieksekusi).
+- `--listen $range` adalah flag yang **tidak ada** di binary ePro v1.4. Field
+  `listen` hanya menerima **satu port**; rentang 1-65535 ditangani binary lewat
+  iptables DNAT (PREROUTING) untuk semua port kecuali `--exclude`.
+  Unit systemd diperbaiki jadi `server --config <json> --exclude <ports>`.
+- Config JSON `/etc/udp/config.json` tidak pernah dibuat (script lama hanya menulis
+  file shell vars). Sekarang dibuat dengan `listen`, buffer, dan auth.
+- Rule firewall tidak pernah ditambahkan sehingga UDP tetap diblokir. Karena DNAT
+  terjadi sebelum filter/INPUT, firewall melihat port hasil terjemahan — jadi rule
+  yang benar hanya `LISTEN_PORT/udp` (bukan seluruh rentang). `ufw allow` ditambah
+  otomatis (install) dan dihapus saat uninstall.
+- `_status` / `_install` / `_uninstall` dirapikan: cek SHA, laporan jumlah DNAT,
+  pembersihan DNAT saat uninstall, perbaikan interpolasi warna (`${RED:-...}`) yang
+  kehilangan kurung kurawal.
+- `_mt_port_active`: kenali `udp-custom` di samping `mytunnel-udp-custom`.
+
+### Verified (live, VPS 206.189.32.83)
+- `udp-custom` active, listen UDP :36712; 22 DNAT rule (1-65535 minus exclude).
+- SHA256 binary cocok dengan yang dipin.
+- Paket uji dari luar ke port acak dalam rentang: DNAT + INPUT ACCEPT naik,
+  tidak ada UFW BLOCK, sampai ke socket aplikasi.
+- `bash -n` + shellcheck -S error: 0 pada install.sh dan script embedded.
+
 ## v1.6.2 — 2026-10-08 — Notif recovery disamakan + hapus ssh_compact_line
 ### Changed
 - `do_recovery()` (menu SSH no. 11/12): notif Telegram kini pakai

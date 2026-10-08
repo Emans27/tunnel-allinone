@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## v1.4.0 — 2026-10-08 — Perbaikan stunnel/tlsmux + guard listen 443 + label vless
+### Fixed
+- **CRITICAL** `configure-final-443.sh`: `apply_http_tls_listen()` sekarang MENGHAPUS
+  `listen 443` / `listen [::]:443` dari `mytunnel.conf` saat menambah `listen 127.0.0.1:9443`.
+  Sebelumnya 443 dipegang nginx (http) DAN blok `stream ssl_preread` -> nginx gagal start
+  (`bind() to 0.0.0.0:443 failed (98)`) saat reload/restart. Terverifikasi live: skenario
+  regresi (listen 443 ada) kini lolos, nginx tetap active.
+- `setup/tlsmux.sh`: kini self-contained — tulis `mytunnel-tlsmux.py`, bikin systemd unit
+  `mytunnel-tlsmux.service`, install stunnel4 (apt), tulis `/etc/stunnel/stunnel.conf`
+  (`accept 127.0.0.1:4443 -> 127.0.0.1:1443`), bikin `stunnel.pem` (cert LE, fallback
+  self-signed), bikin unit `mytunnel-stunnel.service`, matikan SysV `stunnel4`.
+  Sebelumnya file ini hanya menulis python + chmod; tidak ada unit/conf.
+
+### Changed
+- `install.sh`: `setup/tlsmux.sh` kini DIPANGGIL di driver sebagai `[9b/13]` (setelah nginx).
+  Sebelumnya ter-embed tapi tidak pernah dieksekusi -> stunnel tak terpasang, prasyarat
+  `configure-final-443.sh` tidak terpenuhi.
+- Label output create VLESS disederhanakan jadi 5 (sesuai transport yang tersisa):
+  `VLESS WS TLS`, `VLESS WS NO TLS`, `VLESS GRPC`, `VLESS Upgrade TLS`, `VLESS Upgrade NO TLS`.
+  Baris label XHTTP yang tersisa (dead, tanpa link pasangannya) dihapus.
+
+### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
+- stunnel dihapus (apt remove) -> `tlsmux.sh` memasangnya kembali; unit tlsmux+stunnel active,
+  listen 127.0.0.1:1443 dan 127.0.0.1:4443.
+- tlsmux routing: banner SSH -> sshd (`SSH-2.0-OpenSSH_8.9p1`), HTTP -> nginx 8080 (204).
+- Regresi listen 443: `configure-final-443.sh` menghapus 443, `nginx -t` lulus, nginx active.
+- Idempoten: run kedua -> "sistem sudah memakai konfigurasi final — tidak ada yang diubah".
+- Transport: WS 443, gRPC 443 pass (exit IP 206.189.32.83); ALPN h2 -> 9443; no-ALPN -> stunnel 4443.
+
 ## v1.3.0 — 2026-10-08 — Hapus XHTTP (tidak kompatibel)
 ### Removed
 - XHTTP transport dihapus total dari stack (9 inbounds: ws/grpc/httpupgrade, sebelumnya 12).

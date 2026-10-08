@@ -3,7 +3,7 @@
 #
 # Kenapa skrip ini ada:
 #   install.sh lama memasang stunnel4 langsung di 0.0.0.0:443 + nginx 8443.
-#   Arsitektur itu membuat gRPC dan XHTTP TLS gagal (stunnel -> mux -> nginx
+#   Arsitektur itu membuat gRPC TLS gagal (stunnel -> mux -> nginx
 #   hanya membawa HTTP/1.1), sementara HTTP/2 tidak bisa lewat jalur tersebut.
 #   Skrip ini memindahkan terminasi TLS 443 ke nginx (via stream ssl_preread),
 #   memindahkan stunnel ke 127.0.0.1:4443 untuk klien legacy (SSH-TLS tanpa ALPN).
@@ -196,24 +196,31 @@ PY
 }
 
 apply_http_tls_listen() {
-  if grep -qE "listen[[:space:]]+127\.0\.0\.1:${NGINX_HTTP_TLS_PORT}[[:space:]]+ssl" "$SITE_CONF"; then
-    ok "server http ${NGINX_HTTP_TLS_PORT} ssl http2 sudah ada (skip)"
+  local need_add=0 need_del=0
+  grep -qE "listen[[:space:]]+127\.0\.0\.1:${NGINX_HTTP_TLS_PORT}[[:space:]]+ssl" "$SITE_CONF" || need_add=1
+  grep -qE 'listen[[:space:]]+(\[::\]:)?443[[:space:]]+ssl' "$SITE_CONF" && need_del=1
+  if [ "$need_add" -eq 0 ] && [ "$need_del" -eq 0 ]; then
+    ok "server http ${NGINX_HTTP_TLS_PORT} ssl sudah ada + listen 443 sudah dilepas (skip)"
     return 1
   fi
-  plan_change "$SITE_CONF: tambah listen 127.0.0.1:${NGINX_HTTP_TLS_PORT} ssl http2"
+  [ "$need_add" -eq 1 ] && plan_change "$SITE_CONF: tambah listen 127.0.0.1:${NGINX_HTTP_TLS_PORT} ssl http2"
+  [ "$need_del" -eq 1 ] && plan_change "$SITE_CONF: hapus listen 443 (dipindah ke blok stream ssl_preread)"
   [ "$DRY_RUN" -eq 1 ] && return 0
-  grep -qE 'listen[[:space:]]+8443[[:space:]]+ssl' "$SITE_CONF" \
-    || die "listen 8443 ssl tidak ditemukan di $SITE_CONF — struktur tidak dikenali, hentikan"
   backup_file "$SITE_CONF"
   python3 - "$SITE_CONF" "$NGINX_HTTP_TLS_PORT" <<'PY'
 import re, sys
 path, port = sys.argv[1], sys.argv[2]
 s = open(path).read()
-m = re.search(r'^([ \t]*)listen[ \t]+8443[ \t]+ssl[^\n]*\n', s, re.M)
-if not m:
-    sys.exit('listen 8443 ssl tidak ditemukan')
-indent = m.group(1)
-s = s[:m.end()] + f'{indent}listen 127.0.0.1:{port} ssl http2;\n' + s[m.end():]
+# 1. sisipkan listen 127.0.0.1:<port> setelah listen 8443 (hanya jika belum ada)
+if not re.search(r'listen[ \t]+127\.0\.0\.1:%s[ \t]+ssl' % re.escape(port), s):
+    m = re.search(r'^([ \t]*)listen[ \t]+8443[ \t]+ssl[^\n]*\n', s, re.M)
+    if not m:
+        sys.exit('listen 8443 ssl tidak ditemukan')
+    indent = m.group(1)
+    s = s[:m.end()] + f'{indent}listen 127.0.0.1:{port} ssl http2;\n' + s[m.end():]
+# 2. WAJIB: hapus listen 443 / [::]:443 — blok stream ssl_preread yang mengambil 443.
+#    Tanpa ini nginx gagal start (bind() 98) karena 443 dobel.
+s = re.sub(r'^[ \t]*listen[ \t]+(\[::\]:)?443[ \t]+ssl[^\n]*\n', '', s, flags=re.M)
 open(path, 'w').write(s)
 PY
   CHANGED=1

@@ -1402,11 +1402,6 @@ print_proto_account_info() {
   # Generate titles matching gen_links dual-TLS (443,8443)
   local links
   links=$(gen_links "$proto" "$user" 2>/dev/null || true)
-  local _tls_single _nontls
-  _tls_single=$(echo "$TLS_PORT" | tr -d ' ' | cut -d',' -f1)
-  _nontls=$(echo "$NONTLS_PORT" | tr -d ' ' | cut -d',' -f1)
-  [ -z "$_tls_single" ] && _tls_single="443"
-  [ -z "$_nontls" ] && _nontls="80"
   local _titles=()
   case "$proto" in
     vmess)
@@ -1417,13 +1412,11 @@ print_proto_account_info() {
       _titles+=("${proto_upper} UPGRADE NO TLS")
       ;;
     vless)
-      _titles+=("${proto_upper} WS TLS :${_tls_single}")
-      _titles+=("${proto_upper} WS NO TLS :${_nontls}")
-      _titles+=("${proto_upper} GRPC TLS :${_tls_single}")
-      _titles+=("${proto_upper} UPGRADE TLS :${_tls_single}")
-      _titles+=("${proto_upper} UPGRADE NO TLS :${_nontls}")
-      _titles+=("${proto_upper} XHTTP TLS :${_tls_single}")
-      _titles+=("${proto_upper} XHTTP NO TLS :${_nontls}")
+      _titles+=("${proto_upper} WS TLS")
+      _titles+=("${proto_upper} WS NO TLS")
+      _titles+=("${proto_upper} GRPC")
+      _titles+=("${proto_upper} Upgrade TLS")
+      _titles+=("${proto_upper} Upgrade NO TLS")
       ;;
     trojan)
       _titles+=("TROJAN WS TLS")
@@ -5260,7 +5253,7 @@ __EMBED_EOF__
 chmod 755 "$ETC/setup/xray.sh"
 cat > "$ETC/setup/nginx.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel setup/nginx.sh - install & config Nginx (80 WS+HU+XHTTP + 443 TLS WS/HU/gRPC+XHTTP)
+# mytunnel setup/nginx.sh - install & config Nginx (80 WS+HU + 443 TLS WS/HU/gRPC)
 # shellcheck disable=SC1091,SC1090,SC2034,SC2155
 set -e
 BASE="${MYTUNNEL_PREFIX:-}"
@@ -8339,9 +8332,11 @@ __EMBED_EOF__
 chmod 755 "$ETC/setup/httpmux.sh"
 cat > "$ETC/setup/tlsmux.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel setup/tlsmux.sh - stunnel 443 -> mux 1443 -> ssh/http
+# mytunnel setup/tlsmux.sh - tlsmux 127.0.0.1:1443 (ssh/http) + stunnel 127.0.0.1:4443 -> 1443
 set -e
 BASE="${MYTUNNEL_PREFIX:-}"
+CERT_CRT="${BASE}/etc/mytunnel/cert/fullchain.crt"
+CERT_KEY="${BASE}/etc/mytunnel/cert/private.key"
 cat > "${BASE}/usr/local/bin/mytunnel-tlsmux.py" << 'PYEOF'
 #!/usr/bin/env python3
 import socket, threading, select, sys, time, os
@@ -8485,6 +8480,89 @@ if __name__ == "__main__": main()
 PYEOF
 chmod 755 "${BASE}/usr/local/bin/mytunnel-tlsmux.py"
 
+# --- test mode: hanya tulis file, jangan sentuh systemd/apt ---
+if [ -n "$BASE" ]; then
+  echo "tlsmux: test mode (BASE=$BASE), skip systemd/stunnel"
+  exit 0
+fi
+
+# ============ 1. systemd unit tlsmux (127.0.0.1:1443) ============
+cat > /etc/systemd/system/mytunnel-tlsmux.service << 'UNITEOF'
+[Unit]
+Description=mytunnel tlsmux 1443 -> ssh/http
+After=network.target nginx.service
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/mytunnel-tlsmux.py
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+systemctl daemon-reload
+systemctl enable mytunnel-tlsmux >/dev/null 2>&1 || true
+systemctl restart mytunnel-tlsmux >/dev/null 2>&1 || systemctl start mytunnel-tlsmux >/dev/null 2>&1 || true
+
+# ============ 2. stunnel4 (jalur legacy SSH-TLS tanpa ALPN) ============
+if ! command -v stunnel >/dev/null 2>&1 && ! command -v stunnel4 >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y stunnel4 >/dev/null 2>&1 \
+    || DEBIAN_FRONTEND=noninteractive apt-get install -y stunnel >/dev/null 2>&1 || true
+fi
+
+if command -v stunnel >/dev/null 2>&1 || command -v stunnel4 >/dev/null 2>&1; then
+  # /usr/bin/stunnel = binary asli (dukung "foreground = yes"); stunnel4 = wrapper init
+  STUNNEL_EXEC="$(command -v stunnel || command -v stunnel4)"
+  mkdir -p /etc/stunnel /var/log/stunnel4 2>/dev/null || true
+
+  # stunnel.pem dari cert LE; fallback self-signed bila cert belum ada
+  if [ -f "$CERT_CRT" ] && [ -f "$CERT_KEY" ]; then
+    cat "$CERT_CRT" "$CERT_KEY" > /etc/stunnel/stunnel.pem 2>/dev/null || true
+  else
+    openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+      -keyout /tmp/mt-stunnel-key.pem -out /tmp/mt-stunnel-crt.pem \
+      -subj "/CN=mytunnel" >/dev/null 2>&1 || true
+    cat /tmp/mt-stunnel-crt.pem /tmp/mt-stunnel-key.pem > /etc/stunnel/stunnel.pem 2>/dev/null || true
+    rm -f /tmp/mt-stunnel-key.pem /tmp/mt-stunnel-crt.pem 2>/dev/null || true
+  fi
+  chmod 600 /etc/stunnel/stunnel.pem 2>/dev/null || true
+
+  # Konfigurasi final: stunnel LOKAL 4443 -> tlsmux 1443.
+  # JANGAN 0.0.0.0:443 — 443 milik nginx stream ssl_preread (bind() 98 bila dobel).
+  cat > /etc/stunnel/stunnel.conf << 'STUNEOF'
+foreground = yes
+pid = /run/mytunnel-stunnel/stunnel.pid
+output = /var/log/stunnel4/stunnel.log
+[legacy-ssh-tls]
+accept = 127.0.0.1:4443
+connect = 127.0.0.1:1443
+cert = /etc/stunnel/stunnel.pem
+STUNEOF
+
+  cat > /etc/systemd/system/mytunnel-stunnel.service << SUNITEOF
+[Unit]
+Description=mytunnel stunnel legacy SSH-TLS 127.0.0.1:4443
+After=network.target mytunnel-tlsmux.service
+[Service]
+Type=simple
+ExecStart=${STUNNEL_EXEC} /etc/stunnel/stunnel.conf
+Restart=always
+RestartSec=3
+RuntimeDirectory=mytunnel-stunnel
+PIDFile=/run/mytunnel-stunnel/stunnel.pid
+[Install]
+WantedBy=multi-user.target
+SUNITEOF
+  # SysV stunnel4 (init.d) menabrak unit kita -> matikan
+  systemctl disable stunnel4 >/dev/null 2>&1 || true
+  systemctl stop stunnel4 >/dev/null 2>&1 || true
+  systemctl daemon-reload
+  systemctl enable mytunnel-stunnel >/dev/null 2>&1 || true
+  systemctl restart mytunnel-stunnel >/dev/null 2>&1 || systemctl start mytunnel-stunnel >/dev/null 2>&1 || true
+  echo "tlsmux 127.0.0.1:1443 + stunnel 127.0.0.1:4443 terpasang"
+else
+  echo "PERINGATAN: stunnel tidak bisa dipasang — jalur legacy SSH-TLS 4443 nonaktif"
+fi
 __EMBED_EOF__
 chmod 755 "$ETC/setup/tlsmux.sh"
 cat > "$ETC/cron/autoexpire.sh" << '__EMBED_EOF__'
@@ -12341,6 +12419,12 @@ echo -e "${CYAN}[9/13] Setup Nginx...${RESET}"
 _log "[9/13] nginx"
 if ! bash "$ETC/setup/nginx.sh" 2>&1 | tee -a "$LOG"; then
   _fail "Setup Nginx gagal" "Cek $ETC/setup/nginx.sh dan $LOG"
+fi
+
+echo -e "${CYAN}[9b/13] Setup tlsmux + stunnel (final 443 fallback)...${RESET}"
+_log "[9b/13] tlsmux+stunnel"
+if ! bash "$ETC/setup/tlsmux.sh" 2>&1 | tee -a "$LOG"; then
+  echo -e "${YELLOW}Setup tlsmux/stunnel gagal, lanjut (cek manual $ETC/setup/tlsmux.sh)${RESET}" | tee -a "$LOG" 2>/dev/null || true
 fi
 
 echo -e "${CYAN}[10/13] Setup Dropbear...${RESET}"

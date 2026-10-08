@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## v1.6.0 — 2026-10-08 — Blok akun SSH (mono per baris) + create/trial
+### Added
+- `ssh_account_block()` di `lib/ssh_helpers.sh`: cetak blok akun SSH persis
+  (HOST/Username/Password, Expired, TLS/NoneTLS/Any/OpenSSH/Dropbear, lalu
+  SlowDNS/UDP-Custom/OHP+SSH/Squid/UDPGW/OpenVPN TCP+SSL+UDP+DNS/OHP+OVPN,
+  baris ringkas `host:443@user:pass  host:80@user:pass`, dan link config).
+  Nilai port dibaca dari `ports.conf` (dinamis).
+- `ah_notify_admin_mono()` di `lib/advanced_helpers.sh`: kirim blok ke Telegram
+  dengan tiap baris dibungkus `<code>` (parse_mode=HTML) -> mono per baris,
+  bukan satu code block `<pre>`. Escape `&`/`<`/`>`; fallback teks biasa.
+
+### Changed
+- `print_ssh_account_info()` = jarak + `ssh_account_block` + jarak (terminal).
+- Notif Telegram saat **create** dan **trial** akun SSH kini mengirim blok lengkap
+  sebagai mono per baris (sebelumnya hanya baris ringkas).
+- Pemisah blok pakai 36 tanda minus biasa (`------------------------------------`),
+  bukan karakter box.
+
+### Unchanged
+- Service, port, config VPS: tidak diubah (hanya file di `/etc/mytunnel`).
+- `main` tidak disentuh; kerja ini di branch `final-443-stream`.
+
+### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
+- Blok persis sesuai spec: dash 36, label rata kolom 16, dua spasi di baris ringkas.
+- Telegram API balas `"ok":true`; payload `<code>...</code>` per baris.
+- `ssh_create` dgn username yang sudah ada -> pesan error + exit 2, DB tidak bertambah.
+- `bash -n` + shellcheck -S error: 0.
+
 ## v1.5.0 — 2026-10-08 — Baris ringkas akun SSH + notif Telegram mono
 ### Added
 - `ssh_compact_line(user, pass)` di `lib/ssh_helpers.sh`: hasilkan satu baris ringkas

@@ -835,7 +835,8 @@ ssh_account_block() {
   printf '%-15s : %s\n' "OpenVPN DNS" "${OPENVPN_DNS_PORT:-}"
   printf '%-15s : %s\n' "OHP + OVPN" "${OHP_OVPN_PORT:-}"
   printf '\n'
-  printf '%s:%s@%s:%s  %s:%s@%s:%s\n' "$domain" "$t" "$user" "$pass" "$domain" "$n" "$user" "$pass"
+  printf '%s:%s@%s:%s\n' "$domain" "$t" "$user" "$pass"
+  printf '%s:%s@%s:%s\n' "$domain" "$n" "$user" "$pass"
   printf '%s\n' "$DASH"
   printf 'http://%s:%s/myvpn-config.zip\n' "$domain" "${CONFIG_PORT:-81}"
   printf '%s\n' "$DASH"

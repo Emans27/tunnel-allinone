@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## v1.6.1 — 2026-10-08 — Baris ringkas SSH dipisah jadi 2 baris
+### Changed
+- `ssh_account_block()`: baris ringkas akun SSH kini **dua baris terpisah**
+  (`host:443@user:pass` lalu `host:80@user:pass`), bukan satu baris digabung spasi.
+- Di Telegram, tiap baris tetap dibungkus `<code>` sendiri -> dua chip mono terpisah.
+
 ## v1.6.0 — 2026-10-08 — Blok akun SSH (mono per baris) + create/trial
 ### Added
 - `ssh_account_block()` di `lib/ssh_helpers.sh`: cetak blok akun SSH persis

@@ -1,5 +1,5 @@
 #!/bin/bash
-# mytunnel install.sh - TUNNEL PRO v1.1.0 (TAHAP 1+2+3+4+5+6+8)
+# mytunnel install.sh - SUNEK VPN v1.1.0 (TAHAP 1+2+3+4+5+6+8)
 # Debian 11/12, Ubuntu 18/20/22/24 - disarankan Debian 12 / Ubuntu 22.04
 # Idempotent, testable via MYTUNNEL_PREFIX=... MYTUNNEL_DOMAIN=example.com bash install.sh --no-deps
 # Aman: wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --brand=*) MYTUNNEL_BRAND="${1#*=}"; shift;;
     --yes|-y) AUTO_YES=1; MYTUNNEL_YES=1; shift;;
     --no-deps) NO_DEPS=1; shift;;
-    --help|-h) echo "Usage: bash install.sh [--domain example.com] [--brand \"My Brand\"] [--yes] [--no-deps]"; echo " Env: MYTUNNEL_DOMAIN, MYTUNNEL_BRAND, MYTUNNEL_YES=1, MYTUNNEL_PREFIX=/tmp/test (test mode)"; echo " Aman: wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh"; echo " Non-interaktif: MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh"; exit 0;;
+    --help|-h) echo "Usage: bash install.sh [--domain example.com] [--brand \"My Brand\"] [--yes] [--no-deps]"; echo " Env: MYTUNNEL_DOMAIN, MYTUNNEL_BRAND, MYTUNNEL_EXPIRY=2099-12-31, MYTUNNEL_YES=1, MYTUNNEL_PREFIX=/tmp/test (test mode)"; echo " Copy-paste (non-interaktif): bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh)\" --domain example.com --brand \"My Brand\" --yes"; echo " Interaktif: curl -fsSL -o install.sh https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh && chmod +x install.sh && bash install.sh"; exit 0;;
     *) echo -e "${YELLOW}Arg tidak dikenal: $1${RESET}" >&2; shift;;
   esac
 done
@@ -62,14 +62,14 @@ if [ -z "$MYTUNNEL_PREFIX" ]; then
   if [ -n "$BUSY" ]; then echo -e "  Port terpakai:${YELLOW}$BUSY${RESET} (akan ditangani setup)"; else echo -e "  Port 80/443/444/90/81: ${GREEN}bebas ✓${RESET}"; fi
   if [ "$AUTO_YES" != "1" ]; then
     echo ""
-    echo -e "${BOLD}Ringkasan:${RESET} OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(- tanya nanti)} | Brand ${MYTUNNEL_BRAND:-TUNNEL PRO}"
+    echo -e "${BOLD}Ringkasan:${RESET} OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(- tanya nanti)} | Brand ${MYTUNNEL_BRAND:-SUNEK VPN}"
     echo -e "${YELLOW}Akan mengubah: UFW, BBR sysctl, nginx, Xray, cron, user system${RESET}"
     echo -ne "Lanjut install? [y/N]: "
     read -r _ans 2>/dev/null || _ans=""
     case "$_ans" in y|Y|yes|YES) ;; *) echo "Batal."; exit 0;; esac
   else
     echo -e "  Auto-YES: lanjut tanpa konfirmasi (MYTUNNEL_YES=1 / --yes)"
-    echo -e "  Ringkasan: OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(-)} | Brand ${MYTUNNEL_BRAND:-TUNNEL PRO}"
+    echo -e "  Ringkasan: OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(-)} | Brand ${MYTUNNEL_BRAND:-SUNEK VPN}"
   fi
 fi
 if [[ "$NO_DEPS" = "0" && -z "$MYTUNNEL_PREFIX" ]]; then
@@ -87,12 +87,12 @@ mkdir -p "${BASE}/var/log/xray" 2>/dev/null || true
 touch "${BASE}/var/log/xray/access.log" "${BASE}/var/log/xray/error.log" 2>/dev/null || true
 chmod 644 "${BASE}/var/log/xray/"*.log 2>/dev/null || true
 echo -e "${CYAN}[3/13] Tulis config, lib, menu, setup, cron...${RESET}"
-[ -f "$ETC/config/brand.txt" ] || echo "TUNNEL PRO" > "$ETC/config/brand.txt"
+[ -f "$ETC/config/brand.txt" ] || echo "SUNEK VPN" > "$ETC/config/brand.txt"
 # BAGIAN D-3: brand dari env/arg (non-interaktif) timpa jika ada
 if [ -n "$MYTUNNEL_BRAND" ]; then echo "$MYTUNNEL_BRAND" > "$ETC/config/brand.txt" 2>/dev/null || true; chmod 644 "$ETC/config/brand.txt" 2>/dev/null || true; fi
 [ -f "$ETC/config/domain.txt" ] || echo "-" > "$ETC/config/domain.txt"
 [ -f "$ETC/config/expiry.txt" ] || echo "-" > "$ETC/config/expiry.txt"
-[ -f "$ETC/config/banner.txt" ] || echo " | TUNNEL PRO - No hacking, use legally |" > "$ETC/config/banner.txt"
+[ -f "$ETC/config/banner.txt" ] || echo " | SUNEK VPN - No hacking, use legally |" > "$ETC/config/banner.txt"
 if [ ! -f "$ETC/config/ports.conf" ]; then
   cat > "$ETC/config/ports.conf" << 'PC_EOF'
 OPENSSH_PORT=444
@@ -188,11 +188,11 @@ draw_box() {
   printf "┘${RESET}\n"
 }
 banner() {
-  local brand="TUNNEL PRO"
+  local brand="SUNEK VPN"
   local c1="${MYTUNNEL_PREFIX:-}/etc/mytunnel/config/brand.txt"
   local c2="/etc/mytunnel/config/brand.txt"
   [ -f "$c1" ] && brand=$(head -1 "$c1" 2>/dev/null)
-  if [ "$brand" = "TUNNEL PRO" ] && [ -f "$c2" ]; then brand=$(head -1 "$c2" 2>/dev/null); fi
+  if [ "$brand" = "SUNEK VPN" ] && [ -f "$c2" ]; then brand=$(head -1 "$c2" 2>/dev/null); fi
   draw_box "$brand" 60
 }
 backup_file() {
@@ -244,20 +244,79 @@ get_isp_cached() {
   if _cache_valid; then local c; c=$(_cache_get ISP); [ -n "$c" ] && echo "$c" && return 0; fi
   local isp; isp=$(curl -s --max-time 3 ipinfo.io/org 2>/dev/null | head -c 40 | tr -d '\n'); [ -z "$isp" ] && isp="-"; _cache_set ISP "$isp"; echo "$isp"
 }
-get_traffic_month() { command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $11}' || echo "-"; }
-get_traffic_day() { command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $5}' || echo "-"; }
+_traffic_iface() { local i; i=$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}'); [ -z "$i" ] && i=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}'); [ -z "$i" ] && i=eth0; echo "$i"; }
+# ponytail: WIB day bucket; upgrade to TZ-aware (date +%Z) if vnstat gets --timezone
+_traffic_day_idx() {
+  local h; h=$(TZ=Asia/Jakarta date +%H 2>/dev/null || date +%H)
+  # vnstat day[] is UTC-bucketed; WIB midnight = 17:00 UTC prev day
+  if [ "$(date -u +%H)" -lt 17 ]; then echo -2; else echo -1; fi
+}
+get_traffic_month() { command -v vnstat >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { echo "-"; return; }
+  local iface; iface=$(_traffic_iface)
+  local json
+  json=$(vnstat -i "$iface" --json 2>/dev/null | sed 's/^.*<p style=//; s/<\/p>//' | sed -n '/^{/,$p')
+  [ -z "$json" ] && { echo "-"; return; }
+  local total_bytes
+  total_bytes=$(echo "$json" | jq -r '.interfaces[0].traffic.total.rx + .interfaces[0].traffic.total.tx // 0' 2>/dev/null || echo 0)
+  awk -v v="$total_bytes" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}'
+}
+get_traffic_day() { command -v vnstat >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { echo "-"; return; }
+  local iface; iface=$(_traffic_iface)
+  local json
+  json=$(vnstat -i "$iface" --json 2>/dev/null | sed 's/^.*<p style=//; s/<\/p>//' | sed -n '/^{/,$p')
+  [ -z "$json" ] && { echo "-"; return; }
+  local day_idx
+  day_idx=$(_traffic_day_idx)
+  local total_bytes
+  total_bytes=$(echo "$json" | jq -r ".interfaces[0].traffic.day[$day_idx].rx + .interfaces[0].traffic.day[$day_idx].tx // 0" 2>/dev/null || echo 0)
+  awk -v v="$total_bytes" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}'
+}
 get_traffic_rx_tx() {
-  if command -v vnstat >/dev/null 2>&1; then
-    local line; line=$(vnstat --oneline 2>/dev/null | head -1)
+  if command -v vnstat >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    local iface; iface=$(_traffic_iface)
+    # Use JSON output, strip HTML prefix if any
+    local json
+    json=$(vnstat -i "$iface" --json 2>/dev/null | sed 's/^.*<p style=//; s/<\/p>//')
+    [ -z "$json" ] && { echo "MRX:[] MTX:[] DRX:[] DTX:[]"; return; }
+    # Ensure it starts with {
+    json=$(echo "$json" | sed -n '/^{/,$p')
+    [ -z "$json" ] && { echo "MRX:[] MTX:[] DRX:[] DTX:[]"; return; }
     local m_rx m_tx d_rx d_tx
-    m_rx=$(echo "$line" | awk -F';' '{print $9}'); m_tx=$(echo "$line" | awk -F';' '{print $10}')
-    d_rx=$(echo "$line" | awk -F';' '{print $4}'); d_tx=$(echo "$line" | awk -F';' '{print $6}')
-    echo "MRX:${m_rx:- -} MTX:${m_tx:- -} DRX:${d_rx:- -} DTX:${d_tx:- -}"
-  else echo "MRX:- MTX:- DRX:- DTX:-"; fi
+    # total month rx/tx in bytes
+    m_rx=$(echo "$json" | jq -r '.interfaces[0].traffic.total.rx // 0' 2>/dev/null || echo 0)
+    m_tx=$(echo "$json" | jq -r '.interfaces[0].traffic.total.tx // 0' 2>/dev/null || echo 0)
+    # today rx/tx (same WIB day bucket as get_traffic_day)
+    local today_rx today_tx day_idx
+    day_idx=$(_traffic_day_idx)
+    today_rx=$(echo "$json" | jq -r ".interfaces[0].traffic.day[$day_idx].rx // 0" 2>/dev/null || echo 0)
+    today_tx=$(echo "$json" | jq -r ".interfaces[0].traffic.day[$day_idx].tx // 0" 2>/dev/null || echo 0)
+    # Convert to GiB with 2 decimals
+    m_rx=$(awk -v v="$m_rx" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}')
+    m_tx=$(awk -v v="$m_tx" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}')
+    d_rx=$(awk -v v="$today_rx" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}')
+    d_tx=$(awk -v v="$today_tx" 'BEGIN {printf "%.2f GiB", v/1024/1024/1024}')
+    echo "MRX:[$m_rx] MTX:[$m_tx] DRX:[$d_rx] DTX:[$d_tx]"
+  else echo "MRX:[] MTX:[] DRX:[] DTX:[]"; fi
+}
+get_live_speed() {
+  [ -n "$MYTUNNEL_BASE" ] && { echo "-"; return; }
+  command -v vnstat >/dev/null 2>&1 || { echo "-"; return; }
+  local v; v=$(timeout 3 vnstat -tr 2 2>/dev/null | awk '/rx|tx/ {print $2" "$3}' | head -1)
+  [ -n "$v" ] && { echo "$v"; return; }
+  # fallback: /proc/net/dev 0.3s
+  local iface rx1 tx1 rx2 tx2
+  iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+  [ -z "$iface" ] && iface=$(ls /sys/class/net 2>/dev/null | grep -v '^lo$' | head -1)
+  [ -n "$iface" ] && [ -f "/sys/class/net/$iface/statistics/rx_bytes" ] || { echo "-"; return; }
+  rx1=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null); tx1=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null)
+  sleep 0.3 2>/dev/null
+  rx2=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null); tx2=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null)
+  [ -n "$rx1" ] && [ -n "$rx2" ] || { echo "-"; return; }
+  awk -v d="$(( (rx2 - rx1 + tx2 - tx1) * 8 ))" 'BEGIN{printf "%.2f Mbit/s", d/0.3/1000000}'
 }
 svc_status() { systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
-get_account_count() { local f="${ETC_BASE}/db/$1.txt"; [ -f "$f" ] && grep -cve '^\s*$' "$f" 2>/dev/null || echo 0; }
-get_brand() { [ -f "${ETC_BASE}/config/brand.txt" ] && head -1 "${ETC_BASE}/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO"; }
+get_account_count() { local f="${ETC_BASE}/db/$1.txt" n=0; if [ -f "$f" ]; then n=$(grep -cve '^\s*$' "$f" 2>/dev/null || true); fi; [[ "$n" =~ ^[0-9]+$ ]] || n=0; echo "$n"; }
+get_brand() { [ -f "${ETC_BASE}/config/brand.txt" ] && head -1 "${ETC_BASE}/config/brand.txt" 2>/dev/null || echo "SUNEK VPN"; }
 get_expiry() { [ -f "${ETC_BASE}/config/expiry.txt" ] && head -1 "${ETC_BASE}/config/expiry.txt" 2>/dev/null || echo "-"; }
 
 __EMBED_EOF__
@@ -899,7 +958,8 @@ _proto_tags_all() {
 _proto_ws_path() { case "$1" in vmess) echo "/vmess";; vless) echo "/vless";; trojan) echo "/trojan";; *) echo "";; esac; }
 _proto_hu_path() { case "$1" in vmess) echo "/upvmess";; vless) echo "/upvless";; trojan) echo "/uptrojan";; *) echo "";; esac; }
 _proto_grpc_service() { case "$1" in vmess) echo "vmess";; vless) echo "vless";; trojan) echo "trojan";; *) echo "";; esac; }
-_proto_xhttp_path() { case "$1" in vmess) echo "/xvmess";; vless) echo "/xvless";; trojan) echo "/xtrojan";; *) echo "";; esac; }
+# XHTTP mode=auto mewajibkan subpath setelah nama path; /xvless polos selalu 404.
+_proto_xhttp_path() { case "$1" in vmess) echo "/xvmess/abc";; vless) echo "/xvless/abc";; trojan) echo "/xtrojan/abc";; *) echo "";; esac; }
 _proto_db() { echo "$ETC/db/$1.txt"; }
 _proto_lockfile() { echo "$ETC/db/.$1.lock"; }
 
@@ -1606,8 +1666,8 @@ ah_notify_admin(){
       printf '%s\n' "$_line"
     fi
   done)
-  curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=Markdown" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
-    curl -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=${clean}" >/dev/null 2>&1 || true
+  curl -4 -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" -d "parse_mode=Markdown" --data-urlencode "text=${send_text}" >/dev/null 2>&1 || {
+    curl -4 -fsS --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=${clean}" >/dev/null 2>&1 || true
   }
   ah_log "notify admin: ${clean:0:80}"
 }
@@ -1617,7 +1677,7 @@ __EMBED_EOF__
 chmod 644 "$ETC/lib/advanced_helpers.sh"
 cat > "$ETC/menu/main.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel menu/main.sh - TUNNEL PRO TAHAP 1
+# mytunnel menu/main.sh - SUNEK VPN TAHAP 1
 # shellcheck disable=SC1091,SC1090
 MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
 if [ -n "$MYTUNNEL_PREFIX" ]; then
@@ -1639,7 +1699,7 @@ DIM="${DIM:-\033[2m}"
 
 show_header() {
   local brand
-  brand=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  brand=$(get_brand 2>/dev/null || echo "SUNEK VPN")
   clear 2>/dev/null || printf '\033c'
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
@@ -1663,11 +1723,11 @@ show_sysinfo() {
   ip=$(get_ip_cached 2>/dev/null || echo "-")
   domain=$(get_domain 2>/dev/null || echo "-")
   uptime=$(get_uptime 2>/dev/null || echo "-")
-  vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:- MTX:- DRX:- DTX:-")
-  m_rx=$(echo "$vn" | sed -n 's/.*MRX:\([^ ]*\).*/\1/p'); [ -z "$m_rx" ] && m_rx="-"
-  m_tx=$(echo "$vn" | sed -n 's/.*MTX:\([^ ]*\).*/\1/p'); [ -z "$m_tx" ] && m_tx="-"
-  d_rx=$(echo "$vn" | sed -n 's/.*DRX:\([^ ]*\).*/\1/p'); [ -z "$d_rx" ] && d_rx="-"
-  d_tx=$(echo "$vn" | sed -n 's/.*DTX:\([^ ]*\).*/\1/p'); [ -z "$d_tx" ] && d_tx="-"
+  vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:[] MTX:[] DRX:[] DTX:[]")
+  _v=${vn#*MRX:[}; m_rx=${_v%%]*}; _v=${vn#*MTX:[}; m_tx=${_v%%]*}
+  _v=${vn#*DRX:[}; d_rx=${_v%%]*}; _v=${vn#*DTX:[}; d_tx=${_v%%]*}
+  [ -z "$m_rx" ] && m_rx="-"; [ -z "$m_tx" ] && m_tx="-"
+  [ -z "$d_rx" ] && d_rx="-"; [ -z "$d_tx" ] && d_tx="-"
   month_val=$(get_traffic_month 2>/dev/null || echo "-")
   day_val=$(get_traffic_day 2>/dev/null || echo "-")
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -1679,10 +1739,20 @@ show_sysinfo() {
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "DOMAIN" "$domain"
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "UPTIME" "$uptime"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${YELLOW}%-10s${RESET}: %-18s ${DIM}[Month]${RESET}                   ${BLUE}│${RESET}\n" "MONTH" "$month_val"
-  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$m_rx" "$m_tx"
-  printf "${BLUE}│${RESET} ${YELLOW}%-10s${RESET}: %-18s ${DIM}[Today]${RESET}                   ${BLUE}│${RESET}\n" "DAY" "$day_val"
-  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$d_rx" "$d_tx"
+  # trafik - format daftar, sama dengan dashboard login
+  local _sep _mtag _dtag _dn
+  _sep="- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+  printf "${DIM}%s${RESET}\n" "$_sep"
+  _mtag=""; _mn=$(date +%B 2>/dev/null || echo ""); [ -n "$_mn" ] && _mtag="[${_mn}]"
+  printf "${GREEN}%-10s${RESET} : %-18s %-14s\n" "MONTH" "$month_val" "$_mtag"
+  printf "${GREEN}%-10s${RESET} : %s\n" "RX" "$m_rx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TX" "$m_tx"
+  printf "${DIM}%s${RESET}\n" "$_sep"
+  _dtag=""; _dn=$(date +%A 2>/dev/null || echo ""); [ -n "$_dn" ] && _dtag="[${_dn}]"
+  printf "${GREEN}%-10s${RESET} : %-18s %-14s\n" "DAY" "$day_val" "$_dtag"
+  printf "${GREEN}%-10s${RESET} : %s\n" "RX" "$d_rx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TX" "$d_tx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TRAFFIC" "$(get_live_speed 2>/dev/null || echo '-')"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -1702,7 +1772,7 @@ show_status() {
 show_version() {
   local version client expiry
   version=$(cat "$BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
-  version="TUNNEL-PRO $version"
+  version="SUNEK-VPN $version"
   client=$(get_ip_cached 2>/dev/null || echo "-")
   expiry=$(get_expiry 2>/dev/null || echo "-")
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -1725,7 +1795,7 @@ show_menu() {
 set_brand_name() {
   echo -e "${CYAN}=== SET BRAND NAME ===${RESET}"
   local cur nb f
-  cur=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  cur=$(get_brand 2>/dev/null || echo "SUNEK VPN")
   echo -e "Brand saat ini: ${BOLD}$cur${RESET}"
   echo -ne "Brand baru (kosongkan batal): "
   read -r nb
@@ -1853,7 +1923,7 @@ do_create() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
   else
@@ -2052,7 +2122,7 @@ do_check_login() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "SSH/DropBear User Login"
@@ -2377,7 +2447,7 @@ do_create() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
     draw_box "VMESS" 60
@@ -2449,7 +2519,7 @@ do_create_custom() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; draw_box "VMESS CUSTOM" 60; fi
   echo -e "${GREY}Don't use special characters and uppercase!${RESET}"
   echo -e "${GREY}Just input a number for- Quota Limit, Limit IP, Format GB${RESET}"
@@ -2623,7 +2693,7 @@ do_check_login() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VMESS USER LOGIN"
@@ -2948,7 +3018,7 @@ do_create() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
     draw_box "VLESS" 60
@@ -3020,7 +3090,7 @@ do_create_custom() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; draw_box "VLESS CUSTOM" 60; fi
   echo -e "${GREY}Don't use special characters and uppercase!${RESET}"
   echo -e "${GREY}Just input a number for- Quota Limit, Limit IP, Format GB${RESET}"
@@ -3194,7 +3264,7 @@ do_check_login() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VLESS USER LOGIN"
@@ -3519,7 +3589,7 @@ do_create() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then
     draw_box "$brand" 60
     draw_box "TROJAN" 60
@@ -3591,7 +3661,7 @@ do_create_custom() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; draw_box "TROJAN CUSTOM" 60; fi
   echo -e "${GREY}Don't use special characters and uppercase!${RESET}"
   echo -e "${GREY}Just input a number for- Quota Limit, Limit IP, Format GB${RESET}"
@@ -3764,7 +3834,7 @@ do_check_login() {
   clear 2>/dev/null || printf '\033c'
   local brand
   brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="TUNNEL PRO"
+  [ -z "$brand" ] && brand="SUNEK VPN"
   if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "TROJAN USER LOGIN"
@@ -4042,7 +4112,7 @@ while true; do
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   echo -e "${BLUE}│${RESET}  1.) Check Bandwidth                               ${BLUE}│${RESET}"
   echo -e "${BLUE}│${RESET}  2.) Set Date Auto Reboot                          ${BLUE}│${RESET}"
-  echo -e "${BLUE}│${RESET}  3.) Reboot VPS                                    ${BLUE}│${RESET}"
+  echo -e "${BLUE}│${RESET}  3.) Lock Time (Ban 1 Akun)                      ${BLUE}│${RESET}"
   echo -e "${BLUE}│${RESET}  4.) Speed VPS                                     ${BLUE}│${RESET}"
   echo -e "${BLUE}│${RESET}  5.) Change Dropbear Version                        ${BLUE}│${RESET}"
   echo -e "${BLUE}│${RESET}  6.) Check All Service                             ${BLUE}│${RESET}"
@@ -4064,20 +4134,20 @@ while true; do
   case "$c" in
     1) bash "$BASE/features/bandwidth.sh" 2>&1 || echo -e "${YELLOW}Fitur bandwidth belum tersedia${RESET}"; pause;;
     2) bash "$BASE/features/reboot.sh" 2>&1 || echo -e "${YELLOW}Fitur reboot belum tersedia${RESET}"; pause;;
-    3) bash "$BASE/features/reboot.sh" 2>&1 || echo -e "${YELLOW}Fitur reboot belum tersedia${RESET}"; pause;; # reboot VPS via same
+    3) bash "$BASE/features/lock_time.sh" 2>&1 || echo -e "${YELLOW}Fitur lock_time belum tersedia${RESET}"; pause;;
     4) bash "$BASE/features/speedtest.sh" 2>&1 || echo -e "${YELLOW}Fitur speedtest belum tersedia${RESET}"; pause;;
     5) bash "$BASE/features/dropbear_version.sh" 2>&1 || echo -e "${YELLOW}Fitur dropbear_version belum tersedia${RESET}"; pause;;
     6) bash "$BASE/features/services.sh" 2>&1 || echo -e "${YELLOW}Fitur services belum tersedia${RESET}"; pause;;
-    7) bash "$BASE/features/backup.sh" 2>&1 || echo -e "${YELLOW}Fitur backup belum tersedia${RESET}"; pause;;
-    8) bash "$BASE/features/backup.sh" 2>&1 || echo -e "${YELLOW}Fitur backup belum tersedia${RESET}"; pause;;
+    7) bash "$BASE/features/backup.sh" backup 2>&1 || echo -e "${YELLOW}Fitur backup belum tersedia${RESET}"; pause;;
+    8) bash "$BASE/features/backup.sh" restore 2>&1 || echo -e "${YELLOW}Fitur restore belum tersedia${RESET}"; pause;;
     9) bash "$BASE/features/domain.sh" 2>&1 || echo -e "${YELLOW}Fitur domain belum tersedia${RESET}"; pause;;
     10) bash "$BASE/features/banner.sh" 2>&1 || echo -e "${YELLOW}Fitur banner belum tersedia${RESET}"; pause;;
-    11) bash "$BASE/features/services.sh" 2>&1 || echo -e "${YELLOW}Fitur services belum tersedia${RESET}"; pause;;
+    11) bash "$BASE/features/services.sh" menu 2>&1 || echo -e "${YELLOW}Fitur services belum tersedia${RESET}"; pause;;
     12) bash "$BASE/features/security.sh" 2>&1 || echo -e "${YELLOW}Fitur security belum tersedia${RESET}"; pause;;
     13) bash "$BASE/features/autoupdate.sh" 2>&1 || echo -e "${YELLOW}Fitur autoupdate belum tersedia${RESET}"; pause;;
     14) bash "$BASE/features/sysinfo_page.sh" 2>&1 || echo -e "${YELLOW}Fitur sysinfo belum tersedia${RESET}"; pause;;
-    15) bash "$BASE/features/dropbear_version.sh" 2>&1 || echo -e "${YELLOW}Fitur dropbear_version belum tersedia${RESET}"; pause;;
-    16) bash "$BASE/menu/advanced.sh" 2>&1 || echo -e "${YELLOW}Advanced belum tersedia${RESET}";;
+    15) bash "$BASE/features/dropbear_version.sh" list 2>&1 || echo -e "${YELLOW}Fitur dropbear_version belum tersedia${RESET}"; pause;;
+    16) bash "$BASE/menu/advanced.sh" 2>&1 || echo -e "${YELLOW}Advanced belum tersedia${RESET}"; pause;;
     17|b|B) break;;
     x|X) exit 0;;
     *) echo -e "${RED}Pilihan tidak valid${RESET}"; sleep 1;;
@@ -4125,7 +4195,7 @@ bot_test_send(){
   [ -z "${BOT_TOKEN:-}" ] || [ -z "${ADMIN_ID:-}" ] && { echo -e "${RED}Token/Admin kosong${RESET}"; return 1; }
   echo -e "${CYAN}Kirim tes ke $ADMIN_ID ...${RESET}"
   local resp
-  resp=$(curl -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=✅ mytunnel bot aktif — $(date '+%Y-%m-%d %H:%M') " 2>&1 || true)
+  resp=$(curl -4 -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${ADMIN_ID}" --data-urlencode "text=✅ mytunnel bot aktif — $(date '+%Y-%m-%d %H:%M') " 2>&1 || true)
   if echo "$resp" | grep -q '"ok":true'; then echo -e "${GREEN}Terkirim ✓${RESET}"; ah_log "bot test ok to $ADMIN_ID"; else echo -e "${RED}Gagal:${RESET} $resp" | head -c 200; echo; fi
 }
 
@@ -4508,6 +4578,9 @@ net.ipv4.tcp_ecn = 1
 net.core.optmem_max = 81920
 net.ipv4.udp_mem = 65536 131072 262144
 net.ipv4.ip_local_port_range = 1024 65535
+# conntrack: tabel penuh (7679/7680) membuat kernel drop packet
+net.netfilter.nf_conntrack_max = 65536
+net.netfilter.nf_conntrack_tcp_timeout_established = 7200
 GV_EOF
   chmod 644 "$conf" "$gconf" 2>/dev/null || true
   if [ -z "$BASE" ]; then
@@ -4699,6 +4772,17 @@ ACME_STUB
   echo -e "${GREEN}acme.sh terinstall: $ACME_HOME/acme.sh${RESET}"
 }
 
+# pastikan semua service yang sempat dimatikan hidup lagi walau cert.sh keluar di tengah
+_nginx_restore() {
+  local _u
+  for _u in $_prev_active; do
+    if ! systemctl start "$_u" 2>/dev/null; then
+      echo -e "${RED}Gagal start $_u setelah cert - cek: systemctl status $_u${RESET}" >&2 || true
+    fi
+  done
+}
+trap '_nginx_restore' EXIT
+
 issue_cert() {
   local domain cert_crt cert_key
   domain=$(get_domain)
@@ -4728,43 +4812,108 @@ issue_cert() {
     return 0
   fi
 
-  # real mode: stop nginx sementara agar port 80 bebas
-  echo -e "${CYAN}Hentikan nginx sementara untuk validasi port 80...${RESET}"
-  systemctl stop nginx 2>/dev/null || service nginx stop 2>/dev/null || nginx -s stop 2>/dev/null || true
+  # real mode: lepas SEMUA listener port 80, bukan cuma nginx.
+  # httpmux (python3) juga megang :80 - kalau cuma stop nginx, httpmux tetap listener
+  # dan acme.sh gagal: "tcp port 80 is already used by python3".
+  # PENTING: _prev_active harus global (tanpa local) - trap berjalan di luar scope fungsi
+  _prev_active=""; local _u
+  for _u in nginx stunnel4 mytunnel-httpmux mytunnel-sshws; do
+    if systemctl is-active --quiet "$_u" 2>/dev/null; then
+      _prev_active="$_prev_active $_u"
+      systemctl stop "$_u" 2>/dev/null || true
+    fi
+  done
+  # bersihkan sisa listener apa pun (fallback)
   fuser -k 80/tcp 2>/dev/null || true
   sleep 1
+  # pastikan benar-benar bebas sebelum lanjut
+  local _still
+  _still=$(ss -tlnp 2>/dev/null | grep ":80 " | head -1)
+  if [ -n "$_still" ]; then
+    echo -e "${YELLOW}Port 80 masih dipakai: ${_still}${RESET}"
+    echo -e "${YELLOW}Tutup dulu proses di port 80 lalu ulangi, atau pakai DNS-01${RESET}"
+    for _u in $_prev_active; do systemctl start "$_u" 2>/dev/null || true; done
+    die "Port 80 tidak bisa dibebaskan" "Lihat: ss -tlnp | grep ':80 '"
+  fi
 
   local acme="$ACME_HOME/acme.sh"
   [ -x "$acme" ] || acme="$HOME/.acme.sh/acme.sh"
   echo -e "${CYAN}Issue sertifikat Let's Encrypt untuk $domain (standalone)...${RESET}"
-  if ! "$acme" --issue --standalone -d "$domain" --keylength ec-256 2>&1 | tee -a "$LOG"; then
+  # CA eksplisit: default acme.sh = ZeroSSL yang butuh EAB & punya rate limit 1 hari.
+  # Let's Encrypt tidak butuh EAB dan lebih toleran untuk issue ulang.
+  if ! "$acme" --issue --standalone -d "$domain" --server letsencrypt --keylength ec-256 2>&1 | tee -a "$LOG"; then
     # fallback rsa
     echo -e "${YELLOW}EC gagal, coba RSA...${RESET}"
-    "$acme" --issue --standalone -d "$domain" 2>&1 | tee -a "$LOG" || {
+    "$acme" --issue --standalone -d "$domain" --server letsencrypt 2>&1 | tee -a "$LOG" || {
+      # nginx harus hidup lagi walau gagal - cert lama masih utuh (install还没 jalan)
       systemctl start nginx 2>/dev/null || true
       die "Gagal issue sertifikat untuk $domain" "Cek: 1) A record sudah point ke IP VPS, 2) port 80 terbuka (ufw allow 80), 3) tidak ada layanan lain di 80, 4) rate limit LE"
     }
   fi
 
-  echo -e "${CYAN}Install cert ke $CERT_DIR...${RESET}"
-  "$acme" --install-cert -d "$domain" \
-    --fullchain-file "$cert_crt" \
-    --key-file "$cert_key" \
-    --ecc 2>/dev/null || \
-  "$acme" --install-cert -d "$domain" \
-    --fullchain-file "$cert_crt" \
-    --key-file "$cert_key" 2>&1 | tee -a "$LOG" || \
-    die "Gagal install cert ke $CERT_DIR" "Cek permission $CERT_DIR dan log acme.sh"
+  # install ke STAGING dulu - cert lama masih dipakai nginx/stunnel, jangan ditimpa
+  # sebelum tau issue benar-benar sukses (acme.sh truncate file tujuan saat write)
+  local stg_crt="$CERT_DIR/.fullchain.crt.new" stg_key="$CERT_DIR/.private.key.new"
+  echo -e "${CYAN}Install cert ke staging...${RESET}"
+  "$acme" --install-cert -d "$domain" --ecc \
+    --fullchain-file "$stg_crt" \
+    --key-file "$stg_key" 2>&1 | tee -a "$LOG" || \
+    "$acme" --install-cert -d "$domain" --server letsencrypt \
+    --fullchain-file "$stg_crt" \
+    --key-file "$stg_key" 2>&1 | tee -a "$LOG" || \
+    { rm -f "$stg_crt" "$stg_key"; die "Gagal install cert" "Cek permission $CERT_DIR dan log acme.sh"; }
 
+  [ -s "$stg_crt" ] && [ -s "$stg_key" ] || { rm -f "$stg_crt" "$stg_key"; die "File cert kosong setelah issue" "Cek $LOG dan $ACME_HOME"; }
+
+  # validasi pair: cert public key harus == key public key
+  local _cp _kp
+  _cp=$(openssl x509 -in "$stg_crt" -noout -pubkey 2>/dev/null | openssl md5)
+  _kp=$(openssl pkey -in "$stg_key" -pubout 2>/dev/null | openssl md5)
+  if [ -z "$_cp" ] || [ "$_cp" != "$_kp" ]; then
+    rm -f "$stg_crt" "$stg_key"
+    die "Cert/key tidak pasangan" "Cert lama tidak disentuh. Cek log acme.sh"
+  fi
+
+  # baru sekarang pasang ke live path, dengan backup
+  cp -a "$cert_crt" "${cert_crt}.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+  cp -a "$cert_key" "${cert_key}.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+  mv -f "$stg_crt" "$cert_crt" || die "Gagal pasang cert" ""
+  mv -f "$stg_key" "$cert_key" || die "Gagal pasang key" ""
   chmod 600 "$cert_key" 2>/dev/null || true
   chmod 644 "$cert_crt" 2>/dev/null || true
-  [ -s "$cert_crt" ] && [ -s "$cert_key" ] || die "File cert kosong setelah issue" "Cek $LOG dan $ACME_HOME"
+
+  # stunnel (443) punya cert sendiri -> harus ikut ganti, kalau tidak 443 tetap pakai cert lama
+  if [ -f /etc/stunnel/stunnel.conf ] && grep -q "stunnel.pem" /etc/stunnel/stunnel.conf 2>/dev/null; then
+    if cat "$cert_crt" "$cert_key" > /etc/stunnel/stunnel.pem 2>/dev/null; then
+      chmod 600 /etc/stunnel/stunnel.pem 2>/dev/null || true
+      _st_ok=1
+      echo -e "${GREEN}stunnel.pem diperbarui (cert baru)${RESET}" 2>/dev/null || echo "stunnel.pem diperbarui (cert baru)"
+    else
+      echo -e "${YELLOW}Gagal update /etc/stunnel/stunnel.pem${RESET}" >&2 || echo "Gagal update stunnel.pem" >&2
+    fi
+  fi
 
   # cron auto-renew: acme.sh sudah pasang cron, tambah reload hook
+  # cert di-issue dengan --standalone (Le_Webroot=no), jadi 80 sengaja TIDAK dipakai nginx
   local cron_reload="0 2 * * * \"$acme\" --cron --home \"$ACME_HOME\" >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null; systemctl restart xray 2>/dev/null || true"
   (crontab -l 2>/dev/null | grep -v "mytunnel.*reload"; echo "$cron_reload # mytunnel reload") | crontab - 2>/dev/null || true
 
-  systemctl start nginx 2>/dev/null || true
+  # hidupkan lagi service yang sempat dimatikan (stunnel restart = muat cert baru)
+  # httpmux butuh port 80 benar-benar free -> start dengan retry, jangan sekali terus
+  sleep 1
+  for _u in $_prev_active; do
+    if [ "$_u" = "stunnel4" ]; then
+      systemctl restart "$_u" 2>/dev/null || true
+    else
+      systemctl start "$_u" 2>/dev/null || true
+      # retry 3x kalau masih belum active (port belum release)
+      local _try=0
+      while [ "$_try" -lt 3 ] && ! systemctl is-active --quiet "$_u" 2>/dev/null; do
+        sleep 1; _try=$((_try+1)); systemctl start "$_u" 2>/dev/null || true
+      done
+    fi
+  done
+  _prev_active=""
   echo -e "${GREEN}Sertifikat OK: $cert_crt${RESET}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] cert issued: $domain -> $cert_crt" >> "$LOG" 2>/dev/null || true
 }
@@ -4776,7 +4925,6 @@ main() {
   echo -e "${GREEN}[cert] Selesai${RESET}" | tee -a "$LOG" 2>/dev/null || true
 }
 main "$@"
-
 __EMBED_EOF__
 chmod 755 "$ETC/setup/cert.sh"
 mkdir -p "$ETC/usr/local/bin" 2>/dev/null || true
@@ -5431,7 +5579,8 @@ user www-data;
 worker_processes auto;
 pid /run/nginx.pid;
 include /etc/nginx/modules-enabled/*.conf;
-events { worker_connections 1024; }
+worker_rlimit_nofile 65535;
+events { worker_connections 4096; }
 http {
   sendfile on;
   include /etc/nginx/mime.types;
@@ -5684,7 +5833,7 @@ ensure_banner() {
   mkdir -p "$(dirname "$BANNER_SRC")" "$(dirname "$BANNER_DST")" 2>/dev/null || true
   if [ ! -f "$BANNER_SRC" ]; then
     cat > "$BANNER_SRC" << 'BNR'
-  TUNNEL PRO - No hacking, use legally
+  SUNEK VPN - No hacking, use legally
 BNR
     chmod 644 "$BANNER_SRC" 2>/dev/null || true
   fi
@@ -9000,10 +9149,11 @@ mkdir -p "$(dirname "$OFFSET_FILE")" 2>/dev/null || true
 OFFSET=0
 [ -f "$OFFSET_FILE" ] && OFFSET=$(cat "$OFFSET_FILE" 2>/dev/null | tr -dc '0-9' | head -c 20)
 [ -z "$OFFSET" ] && OFFSET=0
+ah_log "bot polling offset=$OFFSET"
 
 send_msg(){
   local chat_id="$1" text="$2"
-  curl -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${chat_id}" --data-urlencode "text=${text}" >/dev/null 2>&1 || true
+  curl -4 -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${chat_id}" --data-urlencode "text=${text}" >/dev/null 2>&1 || true
 }
 
 handle_update(){
@@ -9011,6 +9161,9 @@ handle_update(){
   local chat_id from_id text
   chat_id=$(echo "$upd" | jq -r '.message.chat.id // empty' 2>/dev/null)
   from_id=$(echo "$upd" | jq -r '.message.from.id // empty' 2>/dev/null)
+  # update offset supaya tidak proses update yang sama lagi
+  OFFSET=$((update_id + 1))
+  echo "$OFFSET" > "$OFFSET_FILE" 2>/dev/null || true
   # --- handle document (backup restore) ---
   local doc_id doc_name doc_size
   doc_id=$(echo "$upd" | jq -r '.message.document.file_id // empty' 2>/dev/null)
@@ -9047,7 +9200,7 @@ handle_update(){
   local reply=""
   case "$cmd" in
     /start|/help)
-      reply="TUNNEL PRO Bot (read-only)
+      reply="SUNEK VPN Bot (read-only)
 Bot tidak bisa buat akun — buat/hapus lewat menu VPS.
 /start - bantuan ini
 /status - info sistem
@@ -9080,7 +9233,7 @@ Ketik /start untuk bantuan"
 
 # main loop long-polling
 while true; do
-  resp=$(curl -fsS --max-time 35 "https://api.telegram.org/bot${BOT_TOKEN}/getUpdates" -d "offset=${OFFSET}" -d "timeout=30" 2>&1 || true)
+  resp=$(curl -4 -fsS --max-time 35 "https://api.telegram.org/bot${BOT_TOKEN}/getUpdates" -d "offset=${OFFSET}" -d "timeout=30" 2>&1 || true)
   if echo "$resp" | jq -e '.ok == true' >/dev/null 2>&1; then
     cnt=$(echo "$resp" | jq '.result | length' 2>/dev/null || echo 0)
     if [ "$cnt" -gt 0 ] 2>/dev/null; then
@@ -9123,7 +9276,7 @@ bh_status_text(){
   nginx=$(fh_svc_status nginx 2>/dev/null || echo "OFF")
   ver=$(cat "$ETC/config/version.txt" 2>/dev/null | head -1)
   [ -z "$ver" ] && ver="v1.0"
-  printf "TUNNEL PRO %s\nOS: %s\nDomain: %s\nXRAY: %s | NGINX: %s\nSSH: %s | Dropbear: %s\nUptime: %s" \
+  printf "SUNEK VPN %s\nOS: %s\nDomain: %s\nXRAY: %s | NGINX: %s\nSSH: %s | Dropbear: %s\nUptime: %s" \
     "$ver" "$os" "$ip" "$xray" "$nginx" \
     "$(fh_svc_status mytunnel-sshws 2>/dev/null || echo OFF)" \
     "$(fh_svc_status dropbear 2>/dev/null || echo OFF)" \
@@ -10459,7 +10612,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "reboot.sh" ] || [[ "$0" == *"reboot.sh" ]]; then main; fi
+if [ "${0##*/}" = "reboot.sh" ] || [[ "$0" == *"reboot.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/reboot.sh"
@@ -10544,7 +10697,8 @@ show_all() {
     printf "${BLUE}│${RESET} %-14s : ${col}%-8s${RESET}                              ${BLUE}│${RESET}\n" "$s" "$st"
   done
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${DIM}%-56s${RESET} ${BLUE}│${RESET}\n" "Akun: ssh=$(grep -c . "$ETC/db/ssh.txt" 2>/dev/null || echo 0) vmess=$(grep -c . "$ETC/db/vmess.txt" 2>/dev/null || echo 0) vless=$(grep -c . "$ETC/db/vless.txt" 2>/dev/null || echo 0) trojan=$(grep -c . "$ETC/db/trojan.txt" 2>/dev/null || echo 0)"
+  _accts=""; for _p in ssh vmess vless trojan; do _n=$(grep -c . "$ETC/db/$_p.txt" 2>/dev/null || true); [[ "$_n" =~ ^[0-9]+$ ]] || _n=0; [ -n "$_accts" ] && _accts="$_accts "; _accts="$_accts$_p=$_n"; done
+  printf "${BLUE}│${RESET} ${DIM}%-56s${RESET} ${BLUE}│${RESET}\n" "Akun: $_accts"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -10587,6 +10741,10 @@ manage_one() {
 }
 
 main() {
+  case "${1:-menu}" in
+    status) show_all; return ;;
+    restart-dead) restart_dead; return ;;
+  esac
   while true; do
     clear 2>/dev/null || printf "\033c"
     show_all
@@ -10601,7 +10759,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "services.sh" ] || [[ "$0" == *"services.sh" ]]; then main; fi
+if [ "${0##*/}" = "services.sh" ] || [[ "$0" == *"services.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/services.sh"
@@ -10765,6 +10923,11 @@ do_restore() {
 }
 
 main() {
+  case "${1:-menu}" in
+    backup) do_backup; return ;;
+    restore) do_list_backup; echo ""; do_restore; return ;;
+    list) do_list_backup; return ;;
+  esac
   while true; do
     clear 2>/dev/null || printf "\033c"
     echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -10781,7 +10944,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "backup.sh" ] || [[ "$0" == *"backup.sh" ]]; then main; fi
+if [ "${0##*/}" = "backup.sh" ] || [[ "$0" == *"backup.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/backup.sh"
@@ -10856,7 +11019,32 @@ main() {
   echo -e "${DIM}Issue sertifikat baru...${RESET}"
   local cert_ok=1
   if [ -x "$ETC/setup/cert.sh" ]; then
-    if ! bash "$ETC/setup/cert.sh" 2>&1 | tee -a "$LOG" 2>&1 | tail -n 30; then cert_ok=0; fi
+    # JANGAN `| tee | tail` lalu andai exit code: pipeline selalu return status terakhir
+    # (tail) = 0, jadi kegagalan cert.sh selalu ketutup. Cek cert-nya langsung.
+    bash "$ETC/setup/cert.sh" 2>&1 | tee -a "$LOG" 2>&1 | tail -n 30
+    local _c="$ETC/cert/fullchain.crt" _k="$ETC/cert/private.key"
+    if [ ! -s "$_c" ] || [ ! -s "$_k" ]; then
+      cert_ok=0
+    elif ! openssl x509 -in "$_c" -noout >/dev/null 2>&1; then
+      cert_ok=0
+    else
+      local _cp _kp
+      _cp=$(openssl x509 -in "$_c" -noout -pubkey 2>/dev/null | openssl md5)
+      _kp=$(openssl pkey -in "$_k" -pubout 2>/dev/null | openssl md5)
+      [ -z "$_cp" ] || [ "$_cp" != "$_kp" ] && cert_ok=0
+    fi
+    # WAJIB: cert harus milik domain BARU, bukan cert lama yang kebetulan masih valid
+    # tanpa cek ini domain.txt ganti tapi 443 tetap menyajikan cert domain lama
+    if [ "$cert_ok" -eq 1 ]; then
+      local _cn _san
+      _cn=$(openssl x509 -in "$ETC/cert/fullchain.crt" -noout -subject 2>/dev/null | sed "s/.*CN *= *//" | tr -d "\n" | tr "[:upper:]" "[:lower:]")
+      _san=$(openssl x509 -in "$ETC/cert/fullchain.crt" -noout -ext subjectAltName 2>/dev/null | grep -io "DNS:$new\b" | head -1)
+      if [ "$_cn" != "$new" ] && [ -z "$_san" ]; then
+        cert_ok=0
+        echo -e "${RED}Cert hasil issue bukan untuk $new (CN=$_cn) -> rollback${RESET}"
+      fi
+    fi
+    [ "$cert_ok" -eq 0 ] && echo -e "${RED}Cert tidak valid setelah issue -> rollback${RESET}"
   else
     # TEST MODE: dummy cert
     mkdir -p "${BASE}/etc/mytunnel/cert" 2>/dev/null || true
@@ -10866,8 +11054,19 @@ main() {
   fi
 
   if [ "$cert_ok" -eq 0 ]; then
-    echo -e "${RED}Gagal issue cert, rollback domain${RESET}"
+    echo -e "${RED}Gagal issue cert, rollback domain + pasang cert lama${RESET}"
     if [ -n "$bak" ] && [ -f "$bak" ]; then cp -a "$bak" "$DOMAIN_FILE" 2>/dev/null || true; fi
+    # pasang ulang cert terakhir yang valid supaya nginx tidak mati
+    local _lastc _lastk
+    _lastc=$(ls -t "${ETC}"/cert/fullchain.crt.bak-* 2>/dev/null | while read -r f; do [ -s "$f" ] && openssl x509 -in "$f" -noout >/dev/null 2>&1 && { echo "$f"; break; }; done)
+    _lastk=$(ls -t "${ETC}"/cert/private.key.bak-* 2>/dev/null | head -1)
+    if [ -n "$_lastc" ] && [ -f "$_lastk" ]; then
+      cp -f "$_lastc" "${ETC}/cert/fullchain.crt"; cp -f "$_lastk" "${ETC}/cert/private.key"
+      chmod 644 "${ETC}/cert/fullchain.crt"; chmod 600 "${ETC}/cert/private.key"
+      systemctl restart nginx 2>/dev/null && echo -e "${GREEN}Cert lama dipulihkan, nginx hidup lagi${RESET}"
+    else
+      echo -e "${YELLOW}Tidak ada backup cert valid - jalankan manual: setup/cert.sh${RESET}"
+    fi
     pause; return
   fi
 
@@ -10875,7 +11074,8 @@ main() {
   echo -e "${DIM}Update Nginx...${RESET}"
   local nginx_ok=1
   if [ -x "$ETC/setup/nginx.sh" ]; then
-    if ! bash "$ETC/setup/nginx.sh" 2>&1 | tee -a "$LOG" 2>&1 | tail -n 30; then nginx_ok=0; fi
+    bash "$ETC/setup/nginx.sh" 2>&1 | tee -a "$LOG" 2>&1 | tail -n 30
+  nginx -t >/dev/null 2>&1 || nginx_ok=0
   else
     # TEST: just patch server_name if exists
     if [ -f "${BASE}/etc/nginx/conf.d/mytunnel.conf" ]; then
@@ -10907,13 +11107,30 @@ main() {
     fi
   fi
 
+  # semua service yang pegang cert di memori harus restart/reload, bukan cuma nginx
+  if [ -z "$BASE" ]; then
+    local svc
+    for svc in stunnel4 xray; do
+      systemctl is-active --quiet "$svc" 2>/dev/null || continue
+      if systemctl restart "$svc" 2>/dev/null; then
+        echo -e "${GREEN}$svc restart OK (cert baru dipakai)${RESET}"
+      else
+        echo -e "${RED}Restart $svc gagal - cek: systemctl status $svc${RESET}"
+      fi
+    done
+    # stunnel belum aktif di test/skim, tetap pastikan jangan tertinggal
+    grep -q "stunnel.pem" /etc/stunnel/stunnel.conf 2>/dev/null && \
+      echo -e "${DIM}stunnel 443 pakai /etc/stunnel/stunnel.pem - sudah di-update cert.sh${RESET}"
+  fi
+
   echo -e "${GREEN}Domain diganti: $new${RESET}"
   echo -e "${YELLOW}Link lama perlu generate ulang (domain di link)${RESET}"
-  fh_log "domain -> $new"
+  echo -e " menu 2/3/4 -> pilih ${CYAN}list${RESET} lalu export ulang link ${CYAN}$new${RESET}"
+  fh_log "domain -> $new (xray restarted)"
   pause
 }
 
-if [ "${0##*/}" = "domain.sh" ] || [[ "$0" == *"domain.sh" ]]; then main; fi
+if [ "${0##*/}" = "domain.sh" ] || [[ "$0" == *"domain.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/domain.sh"
@@ -10937,7 +11154,7 @@ pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 edit_banner() {
   local cur preview
   if [ -f "$BANNER_FILE" ]; then cur=$(cat "$BANNER_FILE" 2>/dev/null | head -c 200); else cur=""; fi
-  [ -z "$cur" ] && cur=" | TUNNEL PRO - No hacking, use legally |"
+  [ -z "$cur" ] && cur=" | SUNEK VPN - No hacking, use legally |"
   preview=$(echo "$cur" | head -n 3 | tr -d '\r' | cut -c1-60)
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Change Banner SSH"
@@ -11101,7 +11318,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "banner.sh" ] || [[ "$0" == *"banner.sh" ]]; then main; fi
+if [ "${0##*/}" = "banner.sh" ] || [[ "$0" == *"banner.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/banner.sh"
@@ -11132,7 +11349,11 @@ show_status() {
   local ufw_st fail_st
   if command -v ufw >/dev/null 2>&1; then ufw_st=$(ufw status 2>&1 | head -1 | cut -c1-30); else ufw_st="not installed"; fi
   printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "UFW" "$ufw_st"
-  if command -v fail2ban-client >/dev/null 2>&1; then fail_st=$(fail2ban-client status 2>&1 | head -1 | cut -c1-30); else fail_st="not installed"; fi
+  # "Status" saja tak berguna - ambil daftar jail, bukan baris pertama
+  if command -v fail2ban-client >/dev/null 2>&1; then
+    fail_st=$(fail2ban-client status 2>&1 | sed -n "s/.*Jail list:[[:space:]]*//p" | cut -c1-28)
+    [ -z "$fail_st" ] && fail_st="no jail"
+  else fail_st="not installed"; fi
   printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "fail2ban" "$fail_st"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
@@ -11226,7 +11447,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "security.sh" ] || [[ "$0" == *"security.sh" ]]; then main; fi
+if [ "${0##*/}" = "security.sh" ] || [[ "$0" == *"security.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/security.sh"
@@ -11250,7 +11471,7 @@ get_local_ver() { cat "$VERSION_FILE" 2>/dev/null | head -1 | tr -d ' \n'; [ -z 
 get_repo_url() {
   local u
   u=$(cat "$REPO_FILE" 2>/dev/null | head -1 | tr -d ' \n')
-  [ -z "$u" ] && u="https://raw.githubusercontent.com/Emans27/mytunnel/main"
+  [ -z "$u" ] && u="https://raw.githubusercontent.com/Emans27/mytunnel-installer/main"
   echo "$u" | tr -d ' \n'
 }
 
@@ -11341,7 +11562,7 @@ main() {
   done
 }
 
-if [ "${0##*/}" = "autoupdate.sh" ] || [[ "$0" == *"autoupdate.sh" ]]; then main; fi
+if [ "${0##*/}" = "autoupdate.sh" ] || [[ "$0" == *"autoupdate.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/autoupdate.sh"
@@ -11386,7 +11607,7 @@ show() {
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "IP" "$(get_ip_cached 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
   printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "Domain" "$(cat "$ETC/config/domain.txt" 2>/dev/null | head -1 | tr -d ' \n' || echo -)"
-  printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "Brand" "$(cat "$ETC/config/brand.txt" 2>/dev/null | head -1 | cut -c1-44 || echo TUNNEL PRO)"
+  printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "Brand" "$(cat "$ETC/config/brand.txt" 2>/dev/null | head -1 | cut -c1-44 || echo SUNEK VPN)"
   printf "${BLUE}│${RESET} %-10s : %-44s ${BLUE}│${RESET}\n" "Uptime" "$(uptime -p 2>/dev/null | cut -c1-44 || echo -)"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   echo -e "${BLUE}│${RESET} ${DIM}Ports (ss -tlnp)${RESET}                                   ${BLUE}│${RESET}"
@@ -11419,6 +11640,11 @@ pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 main() {
   local cur
   cur=$(dropbear -V 2>&1 | head -1 | cut -c1-40 2>/dev/null || echo "-")
+  if [ "${1:-}" = "list" ]; then
+    echo -e " Versi sekarang: ${CYAN}$cur${RESET}"
+    [ -f "$VER_FILE" ] && { echo -e "${DIM}Daftar versi:${RESET}"; cat "$VER_FILE" 2>/dev/null | sed 's/^/  /'; } || echo -e "${DIM}(file versi kosong: $VER_FILE)${RESET}"
+    return
+  fi
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Change Dropbear Version"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
@@ -11457,7 +11683,7 @@ main() {
   pause
 }
 
-if [ "${0##*/}" = "dropbear_version.sh" ] || [[ "$0" == *"dropbear_version.sh" ]]; then main; fi
+if [ "${0##*/}" = "dropbear_version.sh" ] || [[ "$0" == *"dropbear_version.sh" ]]; then main "$@"; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/features/dropbear_version.sh"
@@ -11488,20 +11714,29 @@ command -v get_domain >/dev/null 2>&1 || get_domain(){ [ -f "$ETC_BASE/config/do
 command -v get_ip_cached >/dev/null 2>&1 || get_ip_cached(){ hostname -I 2>/dev/null | awk '{print $1}'; }
 command -v get_city_cached >/dev/null 2>&1 || get_city_cached(){ echo "-"; }
 command -v get_isp_cached >/dev/null 2>&1 || get_isp_cached(){ echo "-"; }
-command -v get_account_count >/dev/null 2>&1 || get_account_count(){ local f="$ETC_BASE/db/$1.txt"; [ -f "$f" ] && grep -cve '^\s*$' "$f" 2>/dev/null || echo 0; }
-command -v get_brand >/dev/null 2>&1 || get_brand(){ [ -f "$ETC_BASE/config/brand.txt" ] && head -1 "$ETC_BASE/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO"; }
+command -v get_account_count >/dev/null 2>&1 || get_account_count(){ local f="$ETC_BASE/db/$1.txt" n=0; if [ -f "$f" ]; then n=$(grep -cve '^\s*$' "$f" 2>/dev/null || true); fi; [[ "$n" =~ ^[0-9]+$ ]] || n=0; echo "$n"; }
+command -v get_brand >/dev/null 2>&1 || get_brand(){ [ -f "$ETC_BASE/config/brand.txt" ] && head -1 "$ETC_BASE/config/brand.txt" 2>/dev/null || echo "SUNEK VPN"; }
 command -v get_expiry >/dev/null 2>&1 || get_expiry(){ [ -f "$ETC_BASE/config/expiry.txt" ] && head -1 "$ETC_BASE/config/expiry.txt" 2>/dev/null || echo "-"; }
 command -v svc_status >/dev/null 2>&1 || svc_status(){ systemctl is-active --quiet "$1" 2>/dev/null && echo "ON" || echo "OFF"; }
 command -v draw_box >/dev/null 2>&1 || draw_box(){ local t="$1" w="${2:-60}"; echo "== $t =="; }
 
 # traffic helpers (fallback)
 get_traffic_month_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $11}' || echo "-"; }
-get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 && vnstat --oneline 2>/dev/null | awk -F';' '{print $5}' || echo "-"; }
+get_traffic_day_fallback(){ command -v vnstat >/dev/null 2>&1 || { echo "-"; return; }
+  local iface; iface=$(_traffic_iface)
+  local idx
+  idx=$(_traffic_day_idx)
+  if command -v jq >/dev/null 2>&1; then
+    vnstat -i "$iface" --json 2>/dev/null | jq -r ".interfaces[0].traffic.day[$idx].rx + .interfaces[0].traffic.day[$idx].tx" 2>/dev/null | awk '{printf "%.2f GiB", $1/1024/1024/1024}'
+  else
+    vnstat -i "$iface" --oneline 2>/dev/null | awk -F';' '{print $6}'
+  fi
+}
 
 render_login_dashboard(){
   clear 2>/dev/null || printf '\033c'
   local brand os ram swap city isp ip domain uptime
-  brand=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  brand=$(get_brand 2>/dev/null || echo "SUNEK VPN")
   os=$(get_os 2>/dev/null || echo "-")
   ram=$(get_ram 2>/dev/null || echo "-")
   swap=$(get_swap 2>/dev/null || echo "-")
@@ -11517,39 +11752,16 @@ render_login_dashboard(){
   if command -v get_traffic_month >/dev/null 2>&1; then month_val=$(get_traffic_month 2>/dev/null || echo "-"); else month_val=$(get_traffic_month_fallback); fi
   if command -v get_traffic_day >/dev/null 2>&1; then day_val=$(get_traffic_day 2>/dev/null || echo "-"); else day_val=$(get_traffic_day_fallback); fi
   if command -v get_traffic_rx_tx >/dev/null 2>&1; then
-    local vn; vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:- MTX:- DRX:- DTX:-")
-    m_rx=$(echo "$vn" | sed -n 's/.*MRX:\([^ ]*\).*/\1/p'); [ -z "$m_rx" ] && m_rx="-"
-    m_tx=$(echo "$vn" | sed -n 's/.*MTX:\([^ ]*\).*/\1/p'); [ -z "$m_tx" ] && m_tx="-"
-    d_rx=$(echo "$vn" | sed -n 's/.*DRX:\([^ ]*\).*/\1/p'); [ -z "$d_rx" ] && d_rx="-"
-    d_tx=$(echo "$vn" | sed -n 's/.*DTX:\([^ ]*\).*/\1/p'); [ -z "$d_tx" ] && d_tx="-"
+    local vn; vn=$(get_traffic_rx_tx 2>/dev/null || echo "MRX:[] MTX:[] DRX:[] DTX:[]")
+    # vnstat nilai berisi spasi ("421.67 GiB") -> ambil ant kurung siku, bukan split spasi
+    _v=${vn#*MRX:[}; m_rx=${_v%%]*}; _v=${vn#*MTX:[}; m_tx=${_v%%]*}
+    _v=${vn#*DRX:[}; d_rx=${_v%%]*}; _v=${vn#*DTX:[}; d_tx=${_v%%]*}
+    [ -z "$m_rx" ] && m_rx="-"; [ -z "$m_tx" ] && m_tx="-"
+    [ -z "$d_rx" ] && d_rx="-"; [ -z "$d_tx" ] && d_tx="-"
   else
     m_rx="-"; m_tx="-"; d_rx="-"; d_tx="-"
   fi
-  # live speed - ringan 0.3s sample, skip jika MYTUNNEL_PREFIX (test mode)
-  live_speed="-"
-  if [ -z "$MYTUNNEL_BASE" ]; then
-    if command -v vnstat >/dev/null 2>&1; then
-      # coba vnstat live 1 detik (timeout 2)
-      live_speed=$(timeout 2 vnstat -tr 1 2>/dev/null | awk '/rx|tx/ {print $2" "$3}' | head -1)
-      [ -z "$live_speed" ] && live_speed="-"
-      # jika masih -, coba baca /proc/net/dev 0.3s
-      if [ "$live_speed" = "-" ]; then
-        local iface rx1 tx1 rx2 tx2
-        iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
-        [ -z "$iface" ] && iface=$(ls /sys/class/net 2>/dev/null | grep -v lo | head -1)
-        if [ -n "$iface" ] && [ -f "/sys/class/net/$iface/statistics/rx_bytes" ]; then
-          rx1=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null); tx1=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null)
-          sleep 0.3 2>/dev/null
-          rx2=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null); tx2=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null)
-          if [ -n "$rx1" ] && [ -n "$rx2" ]; then
-            local diff=$(( (rx2 - rx1 + tx2 - tx1) * 8 ))
-            # bits per 0.3s -> Mbit/s = diff / 0.3 / 1e6
-            live_speed=$(awk "BEGIN{printf \"%.2f Mbit/s\", $diff/0.3/1000000}")
-          fi
-        fi
-      fi
-    fi
-  fi
+  live_speed=$(get_live_speed 2>/dev/null || echo "-")
   # bulan nama
   local month_name; month_name=$(date +%B 2>/dev/null || echo "")
 
@@ -11574,10 +11786,10 @@ render_login_dashboard(){
   # version info
   local version client expiry orderby
   version=$(cat "$ETC_BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
-  # TUNNELING format: SPv07.01.26 -> kita pakai TUNNEL-PRO prefix, tampil apa adanya
+  # TUNNELING format: SPv07.01.26 -> kita pakai SUNEK-VPN prefix, tampil apa adanya
   client=$(get_ip_cached 2>/dev/null || echo "-")
   expiry=$(get_expiry 2>/dev/null || echo "-")
-  orderby=$(get_brand 2>/dev/null || echo "TUNNEL PRO")
+  orderby=$(get_brand 2>/dev/null || echo "SUNEK VPN")
 
   # === RENDER (60 kolom, 1:1 TUNNELING) ===
   # brand header centered
@@ -11593,25 +11805,20 @@ render_login_dashboard(){
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "DOMAIN" "$domain"
   printf "${BLUE}│${RESET} ${CYAN}%-10s${RESET}: %-44s ${BLUE}│${RESET}\n" "UPTIME" "$uptime"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  # MONTH - 58 inner exact
-  local _line
-  if [ -n "$month_name" ]; then
-    _line=$(printf "%-10s: %-18s [%s]" "MONTH" "$month_val" "$month_name")
-  else
-    _line=$(printf "%-10s: %s" "MONTH" "$month_val")
-  fi
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
-  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$m_rx" "$m_tx"
-  local day_name; day_name=$(date +%A 2>/dev/null || echo "")
-  if [ -n "$day_name" ]; then
-    _line=$(printf "%-10s: %-18s [%s]" "DAY" "$day_val" "$day_name")
-  else
-    _line=$(printf "%-10s: %s" "DAY" "$day_val")
-  fi
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
-  printf "${BLUE}│${RESET}   RX: %-16s TX: %-16s              ${BLUE}│${RESET}\n" "$d_rx" "$d_tx"
-  _line=$(printf "%-10s: %s" "TRAFFIC" "$live_speed")
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
+  # trafik - format daftar (satu baris per field, pemisah garis putus)
+  local _sep _line
+  _sep="- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+  printf "${DIM}%s${RESET}\n" "$_sep"
+  _mtag=""; [ -n "$month_name" ] && _mtag="[${month_name}]"
+  printf "${GREEN}%-10s${RESET} : %-18s %-14s\n" "MONTH" "$month_val" "$_mtag"
+  printf "${GREEN}%-10s${RESET} : %s\n" "RX" "$m_rx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TX" "$m_tx"
+  printf "${DIM}%s${RESET}\n" "$_sep"
+  _dtag=""; _dtag_n=$(date +%A 2>/dev/null || echo ""); [ -n "$_dtag_n" ] && _dtag="[${_dtag_n}]"
+  printf "${GREEN}%-10s${RESET} : %-18s %-14s\n" "DAY" "$day_val" "$_dtag"
+  printf "${GREEN}%-10s${RESET} : %s\n" "RX" "$d_rx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TX" "$d_tx"
+  printf "${GREEN}%-10s${RESET} : %s\n" "TRAFFIC" "$live_speed"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 
   # service status
@@ -11619,7 +11826,8 @@ render_login_dashboard(){
 
   # list accounts box - TUNNELING style
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "LIST ACCOUNTS"
+  _t="LIST ACCOUNTS"; _l=$(( (58 - ${#_t}) / 2 )); _r=$(( 58 - ${#_t} - _l ))
+  printf "${BLUE}│${RESET}%*s${BOLD}%s${RESET}%*s${BLUE}│${RESET}\n" "$_l" "" "$_t" "$_r" ""
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
   _line=$(printf "%-18s : %-4s ACCOUNT" "SSH/OPENVPN" "$c_ssh"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
   _line=$(printf "%-18s : %-4s ACCOUNT" "VMESS" "$c_vmess"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
@@ -11674,12 +11882,12 @@ fi
 __EMBED_EOF__
 chmod 644 "${BASE}/etc/profile.d/mytunnel.sh"
 cat > "$ETC/config/banner.txt" << '__EMBED_EOF__'
- | TUNNEL PRO - No hacking, use legally |
+ | SUNEK VPN - No hacking, use legally |
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/banner.txt"
 cat > "$ETC/config/brand.txt" << '__EMBED_EOF__'
-TUNNEL PRO
+SUNEK VPN
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/brand.txt"
@@ -11696,7 +11904,7 @@ v1.1.0
 __EMBED_EOF__
 chmod 644 "$ETC/config/version.txt"
 cat > "$ETC/config/repo.txt" << '__EMBED_EOF__'
-https://raw.githubusercontent.com/Emans27/mytunnel/main
+https://raw.githubusercontent.com/Emans27/mytunnel-installer/main
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/repo.txt"
@@ -12135,9 +12343,11 @@ if [ -z "$BASE" ]; then echo "  Reboot disarankan jika BBR/resolver diubah."; fi
 __EMBED_EOF__
 chmod 755 "$ETC/uninstall.sh"
 cat > "$ETC/config/expiry.txt" << '__EMBED_EOF__'
-2026-12-31
+NEVER
 
 __EMBED_EOF__
+# izinkan override saat install: MYTUNNEL_EXPIRY=2099-12-31 bash install.sh
+if [ -n "${MYTUNNEL_EXPIRY:-}" ]; then printf '%s\n' "$MYTUNNEL_EXPIRY" > "$ETC/config/expiry.txt"; fi
 chmod 644 "$ETC/config/expiry.txt"
 echo -e "${CYAN}[4/13] Pasang perintah menu...${RESET}"
 chmod +x "$ETC/menu/"*.sh "$ETC/setup/"*.sh "$ETC/cron/"*.sh "$ETC/features/"*.sh "$ETC/bot/"*.sh "$ETC/advanced/"*.sh 2>/dev/null || true
@@ -12278,7 +12488,7 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  ✓ Install MyTunnel $(cat "$ETC/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0") selesai${RESET}"
 echo -e "${GREEN}══════════════════════════════════════════════════${RESET}"
 DOMAIN=$(cat "$ETC/config/domain.txt" 2>/dev/null || echo "-")
-BRAND=$(cat "$ETC/config/brand.txt" 2>/dev/null || echo "TUNNEL PRO")
+BRAND=$(cat "$ETC/config/brand.txt" 2>/dev/null || echo "SUNEK VPN")
 VER=$(cat "$ETC/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
 echo -e "  ${BOLD}Versi   :${RESET} $VER"
 echo -e "  ${BOLD}Domain  :${RESET} ${CYAN}$DOMAIN${RESET}"
@@ -12318,8 +12528,11 @@ echo -e "  ${BOLD}Cara buka menu:${RESET}"
 echo -e "    ${CYAN}menu${RESET}  (atau ${CYAN}/usr/local/bin/menu${RESET}, ${CYAN}mytunnel-doctor${RESET})"
 echo -e "  ${BOLD}Update:${RESET}  ${CYAN}menu -> FEATURES -> Auto Update${RESET}  atau  ${CYAN}bash $ETC/features/autoupdate.sh${RESET}"
 echo -e "  ${BOLD}Uninstall:${RESET} ${CYAN}bash ${BASE}/uninstall.sh${RESET}  (ketik ${BOLD}hapus${RESET})"
-echo -e "  ${BOLD}Satu perintah (baru):${RESET}"
-echo -e "    ${DIM}wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh${RESET}"
+echo -e "  ${BOLD}Copy-paste ke VPS baru (satu baris):${RESET}"
+echo -e "    ${CYAN}bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh)\" --domain <domain> --brand \"<Brand>\" --yes${RESET}"
+echo -e "    ${DIM}Interaktif (tanya domain/brand sendiri):${RESET}"
+echo -e "    ${CYAN}curl -fsSL -o install.sh https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh && chmod +x install.sh && bash install.sh${RESET}"
+echo -e "    ${DIM}Override expiry: MYTUNNEL_EXPIRY=2099-12-31 bash install.sh${RESET}"
 echo -e "    ${DIM}MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh  # non-interaktif${RESET}"
 echo ""
 _log "install selesai: domain=$DOMAIN brand=$BRAND ver=$VER"

@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## Unreleased — `final-443-stream`
+- Added `configure-final-443.sh` as a separate, idempotent final-443 migration.
+- Added nginx `stream ssl_preread`: ALPN `h2`/`http/1.1` to local `9443`; legacy fallback to stunnel `127.0.0.1:4443`.
+- Added nginx `worker_connections 4096` and `worker_rlimit_nofile 65535`.
+- Added persistent conntrack tuning: `nf_conntrack_max=65536`, `nf_conntrack_tcp_timeout_established=7200`.
+- Added timestamped backups, `--dry-run`, `--rollback`, automatic rollback on failed `nginx -t`.
+- `install.sh` and `main` remain unchanged. Push/merge pending review.
+
 ## v1.1.0 — 2026-10-02 — Review Akhir BAGIAN A-C
 ### Added
 - Audit kode: shellcheck 168 warnings → 0, eval 4 → 0, backtick 0

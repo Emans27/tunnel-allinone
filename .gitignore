@@ -1,3 +1,10 @@
 *.log
 /tmp/
 root/backup/
+*.bak-*
+*.pem
+*.key
+*.crt
+*.conf.local
+.env
+

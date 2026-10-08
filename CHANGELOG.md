@@ -1,12 +1,23 @@
 # CHANGELOG
 
-## Unreleased — `final-443-stream`
-- Added `configure-final-443.sh` as a separate, idempotent final-443 migration.
-- Added nginx `stream ssl_preread`: ALPN `h2`/`http/1.1` to local `9443`; legacy fallback to stunnel `127.0.0.1:4443`.
-- Added nginx `worker_connections 4096` and `worker_rlimit_nofile 65535`.
-- Added persistent conntrack tuning: `nf_conntrack_max=65536`, `nf_conntrack_tcp_timeout_established=7200`.
-- Added timestamped backups, `--dry-run`, `--rollback`, automatic rollback on failed `nginx -t`.
-- `install.sh` and `main` remain unchanged. Push/merge pending review.
+## v1.2.0 — 2026-10-08 — Final 443 stream + traffic fix
+### Added
+- `configure-final-443.sh` as a separate, idempotent final-443 migration.
+- nginx `stream ssl_preread`: ALPN `h2`/`http/1.1` to local `9443`; legacy fallback to stunnel `127.0.0.1:4443`.
+- nginx `worker_connections 4096` and `worker_rlimit_nofile 65535`.
+- Persistent conntrack tuning: `nf_conntrack_max=65536`, `nf_conntrack_tcp_timeout_established=7200`.
+- Timestamped backups, `--dry-run`, `--rollback`, automatic rollback on failed `nginx -t`.
+
+### Fixed
+- Traffic iface auto-detect (`_traffic_iface`, `ip route` default) — replaces hardcoded `enp3s0` that broke on `eth0`/`ens3`/`ens18` VPS.
+- WIB day bucket single source of truth (`_traffic_day_idx`) — `get_traffic_day`, `get_traffic_rx_tx`, and fallback now read the same `day[]` index (previously inconsistent `-1` vs `-2`).
+- `get_traffic_*` use `vnstat --json` + `jq` (robust field mapping vs `--oneline | awk -F';'`); `jq` guard added to fallback.
+- `curl -4` on all Telegram API calls (avoids IPv6 failure path).
+- Bot long-polling: persist `OFFSET=$((update_id+1))` per update — prevents reprocessing the same message.
+
+### Note
+- Traffic helpers verify: `bash -n` OK, shellcheck 0 error, 0 hardcoded iface, day-index unit tests 4/4 PASS.
+- Full 443 stream path (nginx `ssl_preread`/ALPN split) still needs LIVE per-transport testing on a real VPS before relying on it in production.
 
 ## v1.1.0 — 2026-10-02 — Review Akhir BAGIAN A-C
 ### Added

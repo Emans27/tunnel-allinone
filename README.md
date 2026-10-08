@@ -28,12 +28,12 @@ Varian tunneling All-In-One netral universal **Debian 11/12 + Ubuntu 18/20/22/24
 | Port bebas | 80, 443, 444, 81, 8443 | Preflight `ss -tlnp` warning jika bentrok; 80/443 **exclusive tunneling** (tanpa mux/sslh) |
 | Internet | ping 1.1.1.1 + DNS | preflight cek |
 
-## Arsitektur Final 443 (branch `final-443-stream`)
+## Arsitektur Final 443
 
 `install.sh` lama tidak diubah. Terapkan konfigurasi final bertahap setelah install:
 
 ```bash
-wget -qO configure-final-443.sh https://raw.githubusercontent.com/Emans27/tunnel-allinone/final-443-stream/configure-final-443.sh
+wget -qO configure-final-443.sh https://raw.githubusercontent.com/Emans27/tunnel-allinone/main/configure-final-443.sh
 less configure-final-443.sh
 bash configure-final-443.sh --dry-run
 bash configure-final-443.sh

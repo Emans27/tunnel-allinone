@@ -323,7 +323,7 @@ __EMBED_EOF__
 chmod 644 "$ETC/lib/sysinfo.sh"
 cat > "$ETC/lib/xray_helpers.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel lib/xray_helpers.sh - helpers untuk 12 inbounds (ws/grpc/hu/xhttp)
+# mytunnel lib/xray_helpers.sh - helpers untuk 9 inbounds (ws/grpc/hu)
 # shellcheck disable=SC1091,SC1090
 # Preserve BASE if caller already set full /etc/mytunnel path (menu)
 if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
@@ -373,9 +373,9 @@ _validate_cfg() {
 
 _proto_tags() {
   case "$1" in
-    vmess) echo "vmess-ws vmess-grpc vmess-hu vmess-xh" ;;
-    vless) echo "vless-ws vless-grpc vless-hu vless-xh" ;;
-    trojan) echo "trojan-ws trojan-grpc trojan-hu trojan-xh" ;;
+    vmess) echo "vmess-ws vmess-grpc vmess-hu" ;;
+    vless) echo "vless-ws vless-grpc vless-hu" ;;
+    trojan) echo "trojan-ws trojan-grpc trojan-hu" ;;
     *) echo "" ;;
   esac
 }
@@ -414,9 +414,9 @@ xray_add_client() {
     local clean_tmp
     clean_tmp=$(mktemp)
     case "$proto" in
-      vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu" or .tag=="vmess-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
-      vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu" or .tag=="vless-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
-      trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu" or .tag=="trojan-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
+      vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
+      vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
+      trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$clean_tmp" 2>&1 || true ;;
     esac
     if [ -s "$clean_tmp" ]; then cp -a "$clean_tmp" "$cfg" 2>/dev/null || true; chmod 644 "$cfg" 2>/dev/null || true; fi
     rm -f "$clean_tmp" 2>/dev/null || true
@@ -427,24 +427,21 @@ xray_add_client() {
       jq --arg id "$secret" --arg email "$email" '
         (.inbounds[] | select(.tag=="vmess-ws")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
         (.inbounds[] | select(.tag=="vmess-grpc")| .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="vmess-hu")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="vmess-xh")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}]
+        (.inbounds[] | select(.tag=="vmess-hu")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}]
       ' "$cfg" > "$tmp" 2>&1 || add_ok=0
       ;;
     vless)
       jq --arg id "$secret" --arg email "$email" '
         (.inbounds[] | select(.tag=="vless-ws")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
         (.inbounds[] | select(.tag=="vless-grpc")| .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="vless-hu")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="vless-xh")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}]
+        (.inbounds[] | select(.tag=="vless-hu")  | .settings.clients) += [{"id": $id, "level": 0, "email": $email}]
       ' "$cfg" > "$tmp" 2>&1 || add_ok=0
       ;;
     trojan)
       jq --arg pw "$secret" --arg email "$email" '
         (.inbounds[] | select(.tag=="trojan-ws")  | .settings.clients) += [{"password": $pw, "level": 0, "email": $email}] |
         (.inbounds[] | select(.tag=="trojan-grpc")| .settings.clients) += [{"password": $pw, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="trojan-hu")  | .settings.clients) += [{"password": $pw, "level": 0, "email": $email}] |
-        (.inbounds[] | select(.tag=="trojan-xh")  | .settings.clients) += [{"password": $pw, "level": 0, "email": $email}]
+        (.inbounds[] | select(.tag=="trojan-hu")  | .settings.clients) += [{"password": $pw, "level": 0, "email": $email}]
       ' "$cfg" > "$tmp" 2>&1 || add_ok=0
       ;;
   esac
@@ -460,8 +457,8 @@ xray_add_client() {
     chmod 644 "$cfg" 2>/dev/null || true
     return 1
   fi
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray add $proto $email (4 inbounds ws/grpc/hu/xhttp)" >> "$LOG" 2>/dev/null || true
-  echo -e "${GREEN}Client $email ditambahkan ke $proto (4 transports ws/grpc/hu/xhttp)${RESET}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray add $proto $email (3 inbounds ws/grpc/hu)" >> "$LOG" 2>/dev/null || true
+  echo -e "${GREEN}Client $email ditambahkan ke $proto (3 transports ws/grpc/hu)${RESET}"
 }
 
 xray_del_client() {
@@ -476,9 +473,9 @@ xray_del_client() {
   bak=$(_backup_cfg)
   tmp=$(mktemp)
   case "$proto" in
-    vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu" or .tag=="vmess-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
-    vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu" or .tag=="vless-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
-    trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu" or .tag=="trojan-xh") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
   esac
   cp -a "$tmp" "$cfg" 2>/dev/null || { echo -e "${RED}Gagal tulis $cfg${RESET}" >&2; rm -f "$tmp"; return 1; }
   chmod 644 "$cfg" 2>/dev/null || true
@@ -949,17 +946,15 @@ _proto_tag() { case "$1" in vmess) echo "vmess-ws";; vless) echo "vless-ws";; tr
 # shellcheck disable=SC2317
 _proto_tags_all() {
   case "$1" in
-    vmess) echo "vmess-ws vmess-grpc vmess-hu vmess-xh";;
-    vless) echo "vless-ws vless-grpc vless-hu vless-xh";;
-    trojan) echo "trojan-ws trojan-grpc trojan-hu trojan-xh";;
+    vmess) echo "vmess-ws vmess-grpc vmess-hu";;
+    vless) echo "vless-ws vless-grpc vless-hu";;
+    trojan) echo "trojan-ws trojan-grpc trojan-hu";;
     *) echo "";;
   esac
 }
 _proto_ws_path() { case "$1" in vmess) echo "/vmess";; vless) echo "/vless";; trojan) echo "/trojan";; *) echo "";; esac; }
 _proto_hu_path() { case "$1" in vmess) echo "/upvmess";; vless) echo "/upvless";; trojan) echo "/uptrojan";; *) echo "";; esac; }
 _proto_grpc_service() { case "$1" in vmess) echo "vmess";; vless) echo "vless";; trojan) echo "trojan";; *) echo "";; esac; }
-# XHTTP mode=auto mewajibkan subpath setelah nama path; /xvless polos selalu 404.
-_proto_xhttp_path() { case "$1" in vmess) echo "/xvmess/abc";; vless) echo "/xvless/abc";; trojan) echo "/xtrojan/abc";; *) echo "";; esac; }
 _proto_db() { echo "$ETC/db/$1.txt"; }
 _proto_lockfile() { echo "$ETC/db/.$1.lock"; }
 
@@ -1265,11 +1260,10 @@ gen_links() {
   nontls_port=$(echo "$ports" | cut -d'|' -f2 | tr -d ' ' | cut -d',' -f1)
   [ -z "$tls_port" ] && tls_port=443
   [ -z "$nontls_port" ] && nontls_port=80
-  local ws_path hu_path grpc_svc xhttp_path
+  local ws_path hu_path grpc_svc
   ws_path=$(_proto_ws_path "$proto")
   hu_path=$(_proto_hu_path "$proto")
   grpc_svc=$(_proto_grpc_service "$proto")
-  xhttp_path=$(_proto_xhttp_path "$proto")
   case "$proto" in
     vmess)
       local b64
@@ -1296,8 +1290,6 @@ gen_links() {
       echo "vless://${id}@${domain}:${tls_port}?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless&sni=${domain}#${user}"
       echo "vless://${id}@${domain}:${tls_port}?path=/upvless&security=tls&encryption=none&host=${domain}&type=httpupgrade&sni=${domain}#${user}"
       echo "vless://${id}@${domain}:${nontls_port}?path=/upvless&security=none&encryption=none&host=${domain}&type=httpupgrade#${user}"
-      echo "vless://${id}@${domain}:${tls_port}?path=${xhttp_path}&security=tls&encryption=none&host=${domain}&type=xhttp&mode=auto&sni=${domain}#${user}"
-      echo "vless://${id}@${domain}:${nontls_port}?path=${xhttp_path}&security=none&encryption=none&host=${domain}&type=xhttp&mode=auto#${user}"
       ;;
     trojan)
       echo "trojan://${id}@${domain}:${tls_port}?path=/trojan&security=tls&host=${domain}&type=ws&sni=${domain}#${user}"
@@ -1319,11 +1311,10 @@ print_proto_account_info() {
   used=$(proto_get_field "$proto" "$user" 6)
   status=$(proto_get_field "$proto" "$user" 7)
   domain=$(_get_domain)
-  local ws_path hu_path grpc_svc xhttp_path
+  local ws_path hu_path grpc_svc
   ws_path=$(_proto_ws_path "$proto")
   hu_path=$(_proto_hu_path "$proto")
   grpc_svc=$(_proto_grpc_service "$proto")
-  xhttp_path=$(_proto_xhttp_path "$proto")
   local pf="$ETC/config/ports.conf"
   local TLS_PORT="443" NONTLS_PORT="80" ANY_PORT="80,443"
   # shellcheck disable=SC1090
@@ -1381,7 +1372,7 @@ print_proto_account_info() {
   elif [ "$proto" = "vless" ]; then
     printf "${CYAN}%-15s${RESET} : %s\n" "id" "$id"
     printf "${CYAN}%-15s${RESET} : %s\n" "Encryption" "none"
-    if [ "$proto" = "vless" ]; then printf "${CYAN}%-15s${RESET} : %s\n" "Network" "ws,grpc,upgrade,xhttp"; else printf "${CYAN}%-15s${RESET} : %s\n" "Network" "ws,grpc,upgrade"; fi
+    printf "${CYAN}%-15s${RESET} : %s\n" "Network" "ws,grpc,upgrade"
     if [ "$proto" = "vmess" ]; then
       printf "${CYAN}%-15s${RESET} : %s\n" "path ws" "/vmess - /whatever"
     else
@@ -1389,7 +1380,6 @@ print_proto_account_info() {
     fi
     printf "${CYAN}%-15s${RESET} : %s\n" "serviceName" "$grpc_svc"
     printf "${CYAN}%-15s${RESET} : %s\n" "path upgrade" "$hu_path"
-  printf "${CYAN}%-15s${RESET} : %s\n" "path xhttp" "$xhttp_path"
     printf "${CYAN}%-15s${RESET} : %s\n" "Expired On" "$expiry"
     printf "${CYAN}%-15s${RESET} : %s\n" "Quota" "$quota_h"
     printf "${CYAN}%-15s${RESET} : %s\n" "Limit IP" "${limit_ip:-0} (0=No Limit)"
@@ -5002,7 +4992,7 @@ __EMBED_EOF__
 chmod 755 "$ETC/usr/local/bin/mytunnel-tlsmux.py"
 cat > "$ETC/setup/xray.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel setup/xray.sh - install & config Xray (12 inbounds (ws/grpc/hu/xhttp + api): ws+grpc+httpupgrade)
+# mytunnel setup/xray.sh - install & config Xray (9 inbounds (ws/grpc/hu + api): ws+grpc+httpupgrade)
 # shellcheck disable=SC1091,SC1090
 set -e
 BASE="${MYTUNNEL_PREFIX:-}"
@@ -5045,9 +5035,9 @@ write_config() {
     cp -a "$XRAY_CFG" "$bak" 2>/dev/null || true
     echo -e "${YELLOW}Backup config lama: $bak${RESET}"
   fi
-  local keep_vmess_ws="[]" keep_vmess_grpc="[]" keep_vmess_hu="[]" keep_vmess_xh="[]"
-  local keep_vless_ws="[]" keep_vless_grpc="[]" keep_vless_hu="[]" keep_vless_xh="[]"
-  local keep_trojan_ws="[]" keep_trojan_grpc="[]" keep_trojan_hu="[]" keep_trojan_xh="[]"
+  local keep_vmess_ws="[]" keep_vmess_grpc="[]" keep_vmess_hu="[]"
+  local keep_vless_ws="[]" keep_vless_grpc="[]" keep_vless_hu="[]"
+  local keep_trojan_ws="[]" keep_trojan_grpc="[]" keep_trojan_hu="[]"
   local keep_outbounds="[]" keep_routing="[]"
   if [ -f "$XRAY_CFG" ] && command -v jq >/dev/null 2>&1; then
     keep_vmess_ws=$(jq -c '[.inbounds[] | select(.tag=="vmess-ws") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
@@ -5059,10 +5049,7 @@ write_config() {
     keep_trojan_ws=$(jq -c '[.inbounds[] | select(.tag=="trojan-ws") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
     keep_trojan_grpc=$(jq -c '[.inbounds[] | select(.tag=="trojan-grpc") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
     keep_trojan_hu=$(jq -c '[.inbounds[] | select(.tag=="trojan-hu") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
-    keep_vmess_xh=$(jq -c '[.inbounds[] | select(.tag=="vmess-xh") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
-    keep_vless_xh=$(jq -c '[.inbounds[] | select(.tag=="vless-xh") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
-    keep_trojan_xh=$(jq -c '[.inbounds[] | select(.tag=="trojan-xh") | .settings.clients] | .[0] // []' "$XRAY_CFG" 2>/dev/null || echo "[]")
-    for v in keep_vmess_ws keep_vmess_grpc keep_vmess_hu keep_vmess_xh keep_vless_ws keep_vless_grpc keep_vless_hu keep_vless_xh keep_trojan_ws keep_trojan_grpc keep_trojan_hu keep_trojan_xh; do
+    for v in keep_vmess_ws keep_vmess_grpc keep_vmess_hu keep_vless_ws keep_vless_grpc keep_vless_hu keep_trojan_ws keep_trojan_grpc keep_trojan_hu; do
       # no eval: cek via indirect expansion, reset jika bukan array JSON
       _val="${!v}"
       if ! printf '%s' "$_val" | jq -e 'type=="array"' >/dev/null 2>&1; then
@@ -5168,30 +5155,6 @@ write_config() {
       "streamSettings": { "network": "httpupgrade", "httpupgradeSettings": { "path": "/uptrojan" } }
     },
     {
-      "tag": "vmess-xh",
-      "port": 10031,
-      "listen": "127.0.0.1",
-      "protocol": "vmess",
-      "settings": { "clients": [] },
-      "streamSettings": { "network": "xhttp", "xhttpSettings": { "path": "/xvmess", "mode": "auto" } }
-    },
-    {
-      "tag": "vless-xh",
-      "port": 10032,
-      "listen": "127.0.0.1",
-      "protocol": "vless",
-      "settings": { "clients": [], "decryption": "none" },
-      "streamSettings": { "network": "xhttp", "xhttpSettings": { "path": "/xvless", "mode": "auto" } }
-    },
-    {
-      "tag": "trojan-xh",
-      "port": 10033,
-      "listen": "127.0.0.1",
-      "protocol": "trojan",
-      "settings": { "clients": [] },
-      "streamSettings": { "network": "xhttp", "xhttpSettings": { "path": "/xtrojan", "mode": "auto" } }
-    },
-    {
       "tag": "api",
       "port": 10085,
       "listen": "127.0.0.1",
@@ -5212,22 +5175,16 @@ write_config() {
 CFG_EOF
   if command -v jq >/dev/null 2>&1; then
     local tmp="$XRAY_CFG.tmp"
-    jq --argjson a "$keep_vmess_ws" --argjson b "$keep_vmess_grpc" --argjson c "$keep_vmess_hu" --argjson j "$keep_vmess_xh" \
-       --argjson d "$keep_vless_ws" --argjson e "$keep_vless_grpc" --argjson f "$keep_vless_hu" --argjson k "$keep_vless_xh" \
-       --argjson g "$keep_trojan_ws" --argjson h "$keep_trojan_grpc" --argjson i "$keep_trojan_hu" --argjson l "$keep_trojan_xh" \
-       --argjson extra_out "$keep_outbounds" --argjson extra_rules "$keep_routing" '
+    jq --argjson a "$keep_vmess_ws" --argjson b "$keep_vmess_grpc" --argjson c "$keep_vmess_hu"        --argjson d "$keep_vless_ws" --argjson e "$keep_vless_grpc" --argjson f "$keep_vless_hu"        --argjson g "$keep_trojan_ws" --argjson h "$keep_trojan_grpc" --argjson i "$keep_trojan_hu"        --argjson extra_out "$keep_outbounds" --argjson extra_rules "$keep_routing" '
       (.inbounds[] | select(.tag=="vmess-ws") | .settings.clients) = $a |
       (.inbounds[] | select(.tag=="vmess-grpc") | .settings.clients) = $b |
       (.inbounds[] | select(.tag=="vmess-hu") | .settings.clients) = $c |
-      (.inbounds[] | select(.tag=="vmess-xh") | .settings.clients) = $j |
       (.inbounds[] | select(.tag=="vless-ws") | .settings.clients) = $d |
       (.inbounds[] | select(.tag=="vless-grpc") | .settings.clients) = $e |
       (.inbounds[] | select(.tag=="vless-hu") | .settings.clients) = $f |
-      (.inbounds[] | select(.tag=="vless-xh") | .settings.clients) = $k |
       (.inbounds[] | select(.tag=="trojan-ws") | .settings.clients) = $g |
       (.inbounds[] | select(.tag=="trojan-grpc") | .settings.clients) = $h |
       (.inbounds[] | select(.tag=="trojan-hu") | .settings.clients) = $i |
-      (.inbounds[] | select(.tag=="trojan-xh") | .settings.clients) = $l |
       .outbounds += $extra_out |
       .routing.rules += $extra_rules
     ' "$XRAY_CFG" > "$tmp" 2>/dev/null && mv "$tmp" "$XRAY_CFG" || echo -e "${YELLOW}jq inject gagal, lanjut default${RESET}"
@@ -5237,7 +5194,7 @@ CFG_EOF
   chmod 644 "$XRAY_LOGDIR/"*.log 2>/dev/null || true
   chown nobody:nogroup "$XRAY_LOGDIR" 2>/dev/null || true
   chown nobody:nogroup "$XRAY_LOGDIR/"*.log 2>/dev/null || true
-  echo -e "${GREEN}Config Xray ditulis: $XRAY_CFG (12 inbounds ws+grpc+hu+xhttp)${RESET}"
+  echo -e "${GREEN}Config Xray ditulis: $XRAY_CFG (9 inbounds ws+grpc+hu)${RESET}"
 }
 
 validate_config() {
@@ -5517,39 +5474,6 @@ location = /uptrojan {
   proxy_read_timeout 3600s;
   proxy_buffering off;
   proxy_send_timeout 3600s;
-}
-location /xvmess {
-  proxy_pass http://127.0.0.1:10031;
-  proxy_http_version 1.1;
-  proxy_set_header Host $host;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_read_timeout 3600s;
-  proxy_buffering off;
-  proxy_send_timeout 3600s;
-  proxy_request_buffering off;
-}
-location /xvless {
-  proxy_pass http://127.0.0.1:10032;
-  proxy_http_version 1.1;
-  proxy_set_header Host $host;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_read_timeout 3600s;
-  proxy_buffering off;
-  proxy_send_timeout 3600s;
-  proxy_request_buffering off;
-}
-location /xtrojan {
-  proxy_pass http://127.0.0.1:10033;
-  proxy_http_version 1.1;
-  proxy_set_header Host $host;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_read_timeout 3600s;
-  proxy_buffering off;
-  proxy_send_timeout 3600s;
-  proxy_request_buffering off;
 }
 location = /ssh-ws {
   proxy_pass http://127.0.0.1:10004;
@@ -12022,8 +11946,8 @@ check_proto() {
     cnt=$(jq --arg email "$user" --arg prefix "$proto" '[.inbounds[] | select(.tag | startswith($prefix)) | .settings.clients[]? | select(.email==$email)] | length' "$XRAY_CFG" 2>/dev/null || echo 0)
     if [ "$cnt" -eq 0 ]; then
       echo -e "  ${YELLOW}⚠ $user ada di db tapi HILANG di Xray${RESET} (exp $exp)"; miss_xray=$((miss_xray+1))
-    elif [ "$cnt" -lt 4 ] 2>/dev/null; then
-      echo -e "  ${YELLOW}⚠ $user ada di db tapi PARSIAL di Xray ($cnt/4 transports)${RESET} (exp $exp)"; miss_xray=$((miss_xray+1))
+    elif [ "$cnt" -lt 3 ] 2>/dev/null; then
+      echo -e "  ${YELLOW}⚠ $user ada di db tapi PARSIAL di Xray ($cnt/3 transports)${RESET} (exp $exp)"; miss_xray=$((miss_xray+1))
     fi
   done < "$db"
   # reverse: Xray clients not in db

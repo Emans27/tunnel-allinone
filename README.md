@@ -54,7 +54,6 @@ Jalur:
 | WS | `/vless`, `/vmess`, `/trojan` | 80, 443, 8443 | Xray WS inbound |
 | gRPC | `serviceName=vless/vmess/trojan` | 443, 8443 | Xray gRPC via `grpc_pass` |
 | HTTPUpgrade | `/upvless`, `/upvmess`, `/uptrojan` | 80, 443, 8443 | Xray HTTPUpgrade |
-| XHTTP | `/xvless` (dan proto lain jika tersedia) | 80, 443, 8443 | Xray XHTTP, `mode=auto` |
 
 Skrip idempoten: backup di `/root/mytunnel-443-backup/<timestamp>/`, `nginx -t` sebelum reload, rollback otomatis bila validasi gagal. Rollback manual:
 

@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## v1.3.0 — 2026-10-08 — Hapus XHTTP (tidak kompatibel)
+### Removed
+- XHTTP transport dihapus total dari stack (9 inbounds: ws/grpc/httpupgrade, sebelumnya 12).
+- Inbound `vmess-xh`/`vless-xh`/`trojan-xh` (port 10031-10033) dihapus dari config Xray.
+- nginx `location /xvmess`, `/xvless`, `/xtrojan` dihapus dari mytunnel-locations.inc.
+- Link generator: 2 baris `type=xhttp` per akun vless dihapus; menu info `path xhttp` dihapus.
+- Doctor check: ambang "PARSIAL" 4 -> 3 transports.
+- Fungsi `_proto_xhttp_path()` dihapus.
+
+### Why
+Xray server (26.3.27) memakai `xhttp` dengan path dinamis UUID (`/<uuid>?x_padding=`),
+sementara config memakai path statis `/xvmess`. Hasil uji live: handshake selalu 404
+dari Xray (nginx routing sudah benar, terbukti via debug log `test location`).
+Tidak memperbaiki tanpa menyelaraskan versi klien/server, jadi XHTTP dihapus.
+
+### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
+- WS 443, WS 8443, gRPC 443, HTTPUpgrade 443: exit IP 206.189.32.83 (PASS)
+- ALPN `h2`/`http/1.1` -> nginx 9443; tanpa ALPN -> stunnel 4443 (PASS)
+- `bash -n` exit 0, shellcheck -S error exit 0, test-mode install PASS
+
 ## v1.2.0 — 2026-10-08 — Final 443 stream + traffic fix
 ### Added
 - `configure-final-443.sh` as a separate, idempotent final-443 migration.

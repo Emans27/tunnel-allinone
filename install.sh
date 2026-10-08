@@ -8096,12 +8096,36 @@ LOG="${BASE}/var/log/mytunnel.log"
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"; RESET="${RESET:-\033[0m}"
 
+_free_port80(){
+  # Site default bawaan paket nginx (/etc/nginx/sites-enabled/default) memegang
+  # "listen 80 default_server" -> httpmux gagal bind :80 (EADDRINUSE).
+  # Pindahkan ke /root/backup lalu reload nginx. Jangan sentuh config mytunnel
+  # sendiri (mytunnel.conf sengaja TIDAK listen 80, 80 dipakai httpmux).
+  local f=/etc/nginx/sites-enabled/default
+  if [ -e "$f" ] && grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?80([[:space:];])' "$f" 2>/dev/null; then
+    mkdir -p /root/backup 2>/dev/null || true
+    mv -f "$f" "/root/backup/nginx-default.pre-httpmux-$(date +%Y%m%d-%H%M%S)" 2>/dev/null \
+      || rm -f "$f" 2>/dev/null || true
+    echo -e "${YELLOW}httpmux: nginx default site (pemegang :80) dipindah ke /root/backup${RESET}"
+    if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then
+      systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+    fi
+  fi
+  # pastikan benar-benar bebas (listener httpmux sendiri tidak dihitung)
+  if ss -ltn 2>/dev/null | grep -q ':80 ' && ! systemctl is-active --quiet mytunnel-httpmux 2>/dev/null; then
+    echo -e "${YELLOW}PERINGATAN: masih ada listener di :80 (httpmux bisa gagal bind)${RESET}"
+    ss -ltnp 2>/dev/null | grep ':80 ' | head -3
+  fi
+}
+
 install_httpmux() {
   local dst="$BIN/mytunnel-httpmux.py"
   if [ -n "$BASE" ]; then
     echo -e "${YELLOW}[TEST] httpmux -> $dst${RESET}"
     return 0
   fi
+  # httpmux WAJIB bisa bind :80 -> singkirkan dulu pemegangnya
+  _free_port80
   cat > "$dst" << 'PYEOF'
 #!/usr/bin/env python3
 import socket, threading, time, hashlib, base64, re
@@ -8138,6 +8162,9 @@ def handle_client(conn, addr):
             c=conn.recv(4096)
             if not c: break
             data+=c
+            # banner SSH ("SSH-2.0-...") tidak pernah memuat \r\n\r\n -> deteksi
+            # lebih awal, kalau tidak loop menunggu sampai timeout
+            if data.lstrip().startswith(b"SSH-"): break
             if len(data)>16384: break
         if not data:
             log(f"{addr} no data"); conn.close(); return
@@ -8145,6 +8172,7 @@ def handle_client(conn, addr):
         first_line=txt.splitlines()[0] if txt else ""
         log(f"{addr} {first_line} len={len(data)}")
         is_connect = txt.lstrip().upper().startswith("CONNECT")
+        is_rawssh = data.lstrip().startswith(b"SSH-")
         has_upgrade = "upgrade: websocket" in txt.lower()
         m=re.search(r"Sec-WebSocket-Key:\s*(.+)\r\n", txt, re.I)
         key=m.group(1).strip() if m else "dGhlIHNhbXBsZSBub25jZQ=="
@@ -8251,6 +8279,28 @@ def handle_client(conn, addr):
                 t2=threading.Thread(target=pipe, args=(ssh,conn), daemon=True)
                 t1.start(); t2.start(); t1.join(); t2.join()
                 log(f"{addr} CONNECT tunnel done"); return
+        elif is_rawssh:
+            # SSH polos ke :80 (app tidak pakai CONNECT/WS) -> teruskan ke SSH
+            try:
+                ssh=socket.create_connection((SSH_HOST, SSH_PORT), timeout=5)
+                ssh.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
+                for _s in (ssh, conn):
+                    try:
+                        _s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                        _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 120)
+                        _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
+                        _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 8)
+                    except: pass
+                conn.settimeout(None); ssh.settimeout(None)
+                if data: ssh.sendall(data)
+                log(f"{addr} raw SSH -> {SSH_HOST}:{SSH_PORT}")
+            except Exception as e:
+                log(f"{addr} raw ssh fail {e}"); conn.close(); return
+            t1=threading.Thread(target=pipe, args=(conn,ssh), daemon=True)
+            t2=threading.Thread(target=pipe, args=(ssh,conn), daemon=True)
+            t1.start(); t2.start(); t1.join(); t2.join()
+            log(f"{addr} raw SSH done"); return
         else:
             try:
                 backend=socket.create_connection((NGINX_BACKEND_HOST, NGINX_BACKEND_PORT), timeout=5)
@@ -12424,6 +12474,12 @@ echo -e "${CYAN}[9b/13] Setup tlsmux + stunnel (final 443 fallback)...${RESET}"
 _log "[9b/13] tlsmux+stunnel"
 if ! bash "$ETC/setup/tlsmux.sh" 2>&1 | tee -a "$LOG"; then
   echo -e "${YELLOW}Setup tlsmux/stunnel gagal, lanjut (cek manual $ETC/setup/tlsmux.sh)${RESET}" | tee -a "$LOG" 2>/dev/null || true
+fi
+
+echo -e "${CYAN}[9c/13] Setup httpmux port 80 (SSH enhanced)...${RESET}"
+_log "[9c/13] httpmux"
+if ! bash "$ETC/setup/httpmux.sh" install 2>&1 | tee -a "$LOG"; then
+  echo -e "${YELLOW}Setup httpmux gagal, lanjut (cek manual $ETC/setup/httpmux.sh)${RESET}" | tee -a "$LOG" 2>/dev/null || true
 fi
 
 echo -e "${CYAN}[10/13] Setup Dropbear...${RESET}"

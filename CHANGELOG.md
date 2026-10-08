@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## v1.7.1 — 2026-10-08 — Port 80 (SSH + enhanced mode) tidak pernah terpasang
+### Fixed
+- `setup/httpmux.sh` ada di installer tapi **driver tidak pernah memanggilnya**, jadi
+  `mytunnel-httpmux` (listener :80) tidak pernah jalan. Akibatnya port 80 dipegang
+  server default bawaan paket nginx (`sites-enabled/default`, halaman "Welcome to nginx")
+  dan bukan oleh mux mytunnel -> SSH port 80 dan enhanced mode HTTP Custom mati.
+  Driver sekarang memanggilnya di tahap baru `[9c/13]` setelah nginx + tlsmux.
+- `install_httpmux()` sekarang menjalankan `_free_port80` lebih dulu: `sites-enabled/default`
+  yang memegang `listen 80 default_server` dipindah ke `/root/backup/` lalu nginx direload.
+  Tanpa ini httpmux gagal bind :80 (EADDRINUSE).
+- `mytunnel-httpmux.py` hanya punya dua cabang (CONNECT -> SSH, sisanya -> nginx :8080),
+  sehingga **raw SSH** di port 80 (klien mengirim banner `SSH-2.0-...`) dilempar ke nginx
+  dan menggantung sampai timeout. Ditambah deteksi banner SSH + cabang ketiga
+  `is_rawssh` yang meneruskan langsung ke SSH :22. Loop pembaca header juga berhenti
+  lebih awal saat melihat banner SSH (banner tidak pernah memuat `\r\n\r\n`, jadi
+  tanpa itu selalu menunggu sampai timeout).
+- Peringatan "masih ada listener di :80" tidak lagi muncul saat httpmux sendiri yang
+  memegang port itu.
+
+### Verified (live, VPS 206.189.32.83, dari host luar)
+- `mytunnel-httpmux` active, listener `0.0.0.0:80`; `/etc/nginx/sites-enabled/` kosong.
+- HTTP biasa :80 -> 204 (diteruskan ke nginx :8080).
+- Raw SSH :80 -> banner `SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.17` + key exchange;
+  `ssh -p 80` dari luar berhasil sampai MOTD.
+- CONNECT enhanced :80 -> `HTTP/1.1 200 Connection Established` + banner SSH.
+- `bash -n` + shellcheck -S error = 0 (install.sh); python `py_compile` OK.
+
 ## v1.7.0 — 2026-10-08 — Fix UDP-Custom (1-65535) tidak pernah terpasang
 ### Fixed
 - `setup/udp-custom.sh` menunjuk URL rilis yang **404**

@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## v1.6.2 — 2026-10-08 — Notif recovery disamakan + hapus ssh_compact_line
+### Changed
+- `do_recovery()` (menu SSH no. 11/12): notif Telegram kini pakai
+  `ah_notify_admin_mono "$(ssh_account_block ...)"` -> blok penuh mono per baris,
+  sama seperti create/trial (sebelumnya satu baris `host:443@u:p & host:80@u:p`).
+
+### Removed
+- `ssh_compact_line()` — sudah tidak dipakai siapa pun (dead code).
+
 ## v1.6.1 — 2026-10-08 — Baris ringkas SSH dipisah jadi 2 baris
 ### Changed
 - `ssh_account_block()`: baris ringkas akun SSH kini **dua baris terpisah**

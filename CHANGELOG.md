@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## v1.5.0 — 2026-10-08 — Baris ringkas akun SSH + notif Telegram mono
+### Added
+- `ssh_compact_line(user, pass)` di `lib/ssh_helpers.sh`: hasilkan satu baris ringkas
+  `host:TLS@user:pass & host:NONTLS@user:pass` (port diambil dari `ports.conf`,
+  ambil port pertama dari `TLS_PORT` dan `NONTLS_PORT`).
+- `print_ssh_account_info` mencetak baris ringkas itu di akhir blok (terminal).
+
+### Changed
+- Notif Telegram saat buat akun SSH (create/trial/recovery) kini mengirim HANYA baris
+  ringkas dalam mono (inline code), bukan seluruh blok `Account Created Successfully`.
+  Contoh: `` `host:443@user:pass & host:80@user:pass` ``
+
+### Verified
+- Harness: baris ringkas = `tesc.sunekvip.cc.cd:443@emon:emon & tesc.sunekvip.cc.cd:80@emon:emon`;
+  notif Telegram = `` `tesc.sunekvip.cc.cd:443@emon:emon & tesc.sunekvip.cc.cd:80@emon:emon` ``;
+  blok terminal tetap tampil + baris ringkas di akhir. `bash -n`/shellcheck -S error 0.
+
 ## v1.4.0 — 2026-10-08 — Perbaikan stunnel/tlsmux + guard listen 443 + label vless
 ### Fixed
 - **CRITICAL** `configure-final-443.sh`: `apply_http_tls_listen()` sekarang MENGHAPUS

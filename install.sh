@@ -774,6 +774,24 @@ _mt_port_active() {
   return 0
 }
 
+# baris ringkas akun SSH (1-ketuk copy): host:TLS@user:pass & host:NONTLS@user:pass
+ssh_compact_line() {
+  local user="$1" pass="$2"
+  local domain
+  domain=$(cat "$ETC/config/domain.txt" 2>/dev/null | head -1 | tr -d '\n\r ')
+  case "$domain" in ""|"-") domain="-";; esac
+  local pf="$ETC/config/ports.conf"
+  local TLS_PORT="8443" NONTLS_PORT="80"
+  # shellcheck disable=SC1090
+  if [ -f "$pf" ]; then . "$pf" 2>/dev/null || true; fi
+  local t n
+  t=$(printf '%s' "${TLS_PORT:-}" | tr -d ' ' | cut -d',' -f1)
+  n=$(printf '%s' "${NONTLS_PORT:-}" | tr -d ' ' | cut -d',' -f1)
+  [ -n "$t" ] || t=443
+  [ -n "$n" ] || n=80
+  printf '%s:%s@%s:%s & %s:%s@%s:%s\n' "$domain" "$t" "$user" "$pass" "$domain" "$n" "$user" "$pass"
+}
+
 print_ssh_account_info() {
   local user="$1" pass="$2" expiry="$3" limit_ip="$4"
   local domain
@@ -832,6 +850,8 @@ print_ssh_account_info() {
     # no optional, no link: dash after core already printed, no extra needed (avoid double)
     :
   fi
+  # baris ringkas (1-ketuk copy): host:TLS@user:pass & host:NONTLS@user:pass
+  if declare -f ssh_compact_line >/dev/null 2>&1; then ssh_compact_line "$user" "$pass"; fi
   echo ""
 }
 
@@ -1958,9 +1978,9 @@ do_create() {
     local exp
     exp=$(ssh_get_field "$user" 3 2>/dev/null || echo "-")
     print_ssh_account_info "$user" "$pass" "$exp" "$limit_ip" 2>/dev/null || true
-    # notify Telegram admin (auto-kirim akun)
+    # notify Telegram admin: hanya baris ringkas mono (bukan blok panjang)
     if declare -f ah_notify_admin >/dev/null 2>&1; then
-      _ntf=$(print_ssh_account_info "$user" "$pass" "$exp" "$limit_ip" 2>/dev/null || echo "SSH $user | $pass | exp $exp | limit $limit_ip")
+      _ntf="\`$(ssh_compact_line "$user" "$pass" 2>/dev/null)\`"
       ah_notify_admin "$_ntf" 2>/dev/null || true
     fi
   else
@@ -2023,7 +2043,7 @@ do_trial() {
   echo -e "${GREEN}Trial dibuat ${_human} (exp $exp, limit $trial_limit IP)${RESET}"
   print_ssh_account_info "$user" "$pass" "$exp" "$trial_limit" 2>/dev/null || true
   if declare -f ah_notify_admin >/dev/null 2>&1; then
-    _ntf=$(print_ssh_account_info "$user" "$pass" "$exp" "$trial_limit" 2>/dev/null || echo "SSH trial $user | $pass | exp $exp")
+    _ntf="\`$(ssh_compact_line "$user" "$pass" 2>/dev/null)\`"
     ah_notify_admin "$_ntf" 2>/dev/null || true
   fi
   echo -e "${YELLOW}Akan dihapus otomatis ${_human}${RESET}"
@@ -2265,7 +2285,10 @@ do_recovery() {
   echo -e "${GREEN}Recovery OK: $user -> $new_exp${RESET}"
   local _out; _out=$(print_ssh_account_info "$user" "$pass" "$new_exp" "${limit:-0}" 2>&1) || _out="Akun $user dipulihkan exp $new_exp"
   echo "$_out"
-  if declare -f ah_notify_admin >/dev/null 2>&1; then ah_notify_admin "$_out" 2>/dev/null || true; echo -e "${GREEN}Terkirim ke bot ✓${RESET}"; fi
+  if declare -f ah_notify_admin >/dev/null 2>&1; then
+    ah_notify_admin "\`$(ssh_compact_line "$user" "$pass" 2>/dev/null)\`" 2>/dev/null || true
+    echo -e "${GREEN}Terkirim ke bot ✓${RESET}"
+  fi
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ssh recovery $user $exp -> $new_exp" >> "$LOG" 2>/dev/null || true
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }

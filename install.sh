@@ -1603,6 +1603,115 @@ fh_backup_file() {
 # ponytail: single backup per op; upgrade to rotation when disk pressure arises
 
 __EMBED_EOF__
+cat > "$ETC/lib/banner_guard.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel lib/banner_guard.sh - banner permanen (immutable) + enforce restore
+# shellcheck disable=SC1091,SC1090,SC2154
+# Banner "permanen": semua salinan diberi chattr +i. File immutable tidak bisa
+# ditulis/dihapus/di-rename bahkan oleh root sampai atributnya dilepas.
+# Canonical: $ETC/config/banner.txt (sumber tunggal).
+if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
+  ETC="$BASE"
+else
+  BASE="${MYTUNNEL_PREFIX:-}"
+  ETC="${BASE}/etc/mytunnel"
+fi
+BG_CANON="$ETC/config/banner.txt"
+BG_LOCK="$ETC/config/.banner.lock"
+BG_SHA="$ETC/config/banner.sha256"
+
+bg_paths() {
+  # salinan yang benar-benar dikonsumsi sshd/dropbear + salinan internal
+  printf '%s\n' \
+    "$BG_CANON" \
+    "${BASE}/etc/dropbear/banner" \
+    "${BASE}/etc/mytunnel/banner.txt"
+  [ -z "$BASE" ] && printf '%s\n' "/etc/dropbear/banner" "/etc/mytunnel/banner.txt"
+}
+
+bg_is_immutable() {
+  local f="$1" a
+  command -v lsattr >/dev/null 2>&1 || return 1
+  a=$(lsattr -d "$f" 2>/dev/null | awk '{print $1}')
+  [ -n "$a" ] || return 1
+  case "$a" in *i*) return 0 ;; *) return 1 ;; esac
+}
+
+bg_lock_file() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  bg_is_immutable "$f" && return 0
+  chattr +i "$f" 2>/dev/null && return 0
+  return 1
+}
+
+bg_unlock_file() {
+  local f="$1"
+  [ -e "$f" ] || return 0
+  bg_is_immutable "$f" || return 0
+  chattr -i "$f" 2>/dev/null
+}
+
+bg_unlock() {
+  local f
+  while IFS= read -r f; do bg_unlock_file "$f"; done < <(bg_paths)
+  return 0
+}
+
+# tulis banner baru -> sync ke semua salinan -> kunci
+bg_set() {
+  local content
+  content=$(cat 2>/dev/null)
+  [ -z "${content//[[:space:]]/}" ] && { echo "banner kosong, batal" >&2; return 1; }
+  bg_unlock || true
+  mkdir -p "$ETC/config" "${BASE}/etc/dropbear" 2>/dev/null || true
+  printf '%s' "$content" > "$BG_CANON" 2>/dev/null || { echo "gagal tulis $BG_CANON" >&2; return 1; }
+  [ -f "$BG_CANON" ] && [ "$(wc -c < "$BG_CANON")" -gt 0 ] || { echo "banner 0 byte, batal" >&2; return 1; }
+  cp -f "$BG_CANON" "${BASE}/etc/dropbear/banner" 2>/dev/null || true
+  cp -f "$BG_CANON" "${BASE}/etc/mytunnel/banner.txt" 2>/dev/null || true
+  if [ -z "$BASE" ]; then
+    mkdir -p /etc/dropbear 2>/dev/null || true
+    cp -f "$BG_CANON" /etc/dropbear/banner 2>/dev/null || true
+    cp -f "$BG_CANON" /etc/mytunnel/banner.txt 2>/dev/null || true
+  fi
+  bg_lock || true
+  return 0
+}
+
+# paksa semua salinan == canonical lalu kunci; dipanggil cron + installer
+bg_enforce() {
+  local f rc=0
+  [ -s "$BG_CANON" ] || return 0
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    [ "$f" = "$BG_CANON" ] && { bg_lock_file "$f" || rc=1; continue; }
+    if ! cmp -s "$BG_CANON" "$f" 2>/dev/null; then
+      bg_unlock_file "$f"
+      mkdir -p "$(dirname "$f")" 2>/dev/null || true
+      cp -f "$BG_CANON" "$f" 2>/dev/null || rc=1
+    fi
+    bg_lock_file "$f" || rc=1
+  done < <(bg_paths)
+  # hash + flag lock (dipakai menu untuk status)
+  if command -v sha256sum >/dev/null 2>&1; then
+    bg_unlock_file "$BG_SHA"; sha256sum "$BG_CANON" 2>/dev/null | awk '{print $1}' > "$BG_SHA" 2>/dev/null; bg_lock_file "$BG_SHA"
+  fi
+  bg_unlock_file "$BG_LOCK"; echo "$(date +%s)" > "$BG_LOCK" 2>/dev/null; bg_lock_file "$BG_LOCK"
+  return $rc
+}
+
+bg_status() {
+  local f locked=0 total=0
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    [ -f "$f" ] || continue
+    total=$((total + 1))
+    bg_is_immutable "$f" && locked=$((locked + 1))
+  done < <(bg_paths)
+  if [ "$locked" -eq "$total" ] && [ "$total" -gt 0 ]; then echo "PERMANENT ($locked/$total locked)"; else echo "AKTIF ($locked/$total locked)"; fi
+}
+__EMBED_EOF__
+chmod 644 "$ETC/lib/banner_guard.sh" 2>/dev/null || true
 chmod 644 "$ETC/lib/features_helpers.sh"
 cat > "$ETC/lib/advanced_helpers.sh" << '__EMBED_EOF__'
 #!/bin/bash
@@ -9242,6 +9351,32 @@ for s in xray nginx dropbear mytunnel-sshws mytunnel-bot mytunnel-slowdns; do
 done
 
 __EMBED_EOF__
+cat > "$ETC/cron/banner_guard.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel cron/banner_guard.sh - enforce banner permanen: restore salinan + kunci immutable
+# shellcheck disable=SC1091,SC1090,SC2154
+BASE="${MYTUNNEL_PREFIX:-}"
+ETC="${BASE}/etc/mytunnel"
+if [ -f "$ETC/lib/banner_guard.sh" ]; then
+  # shellcheck disable=SC1090
+  . "$ETC/lib/banner_guard.sh" 2>/dev/null || exit 0
+else
+  exit 0
+fi
+LOG="${BASE}/var/log/mytunnel.log"
+changed=0
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  [ -f "$BG_CANON" ] || exit 0
+  if ! cmp -s "$BG_CANON" "$f" 2>/dev/null || ! bg_is_immutable "$f"; then changed=1; fi
+done < <(bg_paths)
+bg_enforce 2>/dev/null || true
+if [ "$changed" = "1" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] banner_guard: banner dipulihkan/dikunci ulang" >> "$LOG" 2>/dev/null || true
+fi
+exit 0
+__EMBED_EOF__
+chmod 755 "$ETC/cron/banner_guard.sh" 2>/dev/null || true
 chmod 755 "$ETC/cron/bot_notify.sh"
 cat > "$ETC/bot/bot.sh" << '__EMBED_EOF__'
 #!/bin/bash
@@ -11227,32 +11362,6 @@ main() {
 
   # semua service yang pegang cert di memori harus restart/reload, bukan cuma nginx
   if [ -z "$BASE" ]; then
-    local svc
-    for svc in stunnel4 xray; do
-      systemctl is-active --quiet "$svc" 2>/dev/null || continue
-      if systemctl restart "$svc" 2>/dev/null; then
-        echo -e "${GREEN}$svc restart OK (cert baru dipakai)${RESET}"
-      else
-        echo -e "${RED}Restart $svc gagal - cek: systemctl status $svc${RESET}"
-      fi
-    done
-    # stunnel belum aktif di test/skim, tetap pastikan jangan tertinggal
-    grep -q "stunnel.pem" /etc/stunnel/stunnel.conf 2>/dev/null && \
-      echo -e "${DIM}stunnel 443 pakai /etc/stunnel/stunnel.pem - sudah di-update cert.sh${RESET}"
-  fi
-
-  echo -e "${GREEN}Domain diganti: $new${RESET}"
-  echo -e "${YELLOW}Link lama perlu generate ulang (domain di link)${RESET}"
-  echo -e " menu 2/3/4 -> pilih ${CYAN}list${RESET} lalu export ulang link ${CYAN}$new${RESET}"
-  fh_log "domain -> $new (xray restarted)"
-  pause
-}
-
-if [ "${0##*/}" = "domain.sh" ] || [[ "$0" == *"domain.sh" ]]; then main "$@"; fi
-
-__EMBED_EOF__
-chmod 755 "$ETC/features/domain.sh"
-cat > "$ETC/features/banner.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel features/banner.sh - edit banner SSH & response halaman web (60 kolom) - FIX HTML multiline
 # shellcheck disable=SC1091,SC2154,SC1090,SC2034
@@ -11263,6 +11372,8 @@ NGINX_CONF="${BASE}/etc/nginx/conf.d/mytunnel.conf"
 [ -z "$BASE" ] && NGINX_CONF="/etc/nginx/conf.d/mytunnel.conf"
 LOG="${BASE}/var/log/mytunnel.log"
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/features_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+# banner guard
+[ -f "$ETC/lib/banner_guard.sh" ] && . "$ETC/lib/banner_guard.sh" 2>/dev/null || true
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 CYAN="${CYAN:-\033[0;36m}"; BLUE="${BLUE:-\033[0;34m}"; RESET="${RESET:-\033[0m}"
 BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"
@@ -11316,7 +11427,8 @@ $line"; fi
   fi
   echo -e "${GREEN}Banner diubah ($(wc -c < "$BANNER_FILE" 2>/dev/null | tr -d ' ') bytes)${RESET}"
   fh_log "banner updated $(wc -c < "$BANNER_FILE" 2>/dev/null | tr -d ' ') bytes" 2>/dev/null || true
-  pause
+  bg_enforce 2>/dev/null || true
+  pauserce 2>/dev/null || true
 }
 
 edit_response() {
@@ -11429,37 +11541,50 @@ main() {
     echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${BLUE}│${RESET} 1.) Edit Banner SSH                               ${BLUE}│${RESET}"
     echo -e "${BLUE}│${RESET} 2.) Edit Response Web (HTML custom)               ${BLUE}│${RESET}"
-    echo -e "${BLUE}│${RESET} 3.) Kembali                                       ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 3.) Jadikan banner permanen (chattr +i)            ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 4.) Kembali                                       ${BLUE}│${RESET}"
     echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
     read -rp " Pilih [1-3]: " c 2>/dev/null || c=3
-    case "$c" in 1) edit_banner ;; 2) edit_response ;; 3) break ;; *) echo -e "${RED}Tidak valid${RESET}"; sleep 1;; esac
+    case "$c" in 1) edit_banner ;; 2) edit_response ;; 3) if command -v bg_enforce >/dev/null 2>&1; then bg_enforce 2>/dev/null; echo -e "${GREEN}Status: $(bg_status 2>/dev/null)${RESET}"; pause; else echo -e "${YELLOW}banner_guard tidak tersedia${RESET}"; pause; fi ;; 4) break ;; *) echo -e "${RED}Tidak valid${RESET}"; sleep 1;; esac
   done
 }
 
 if [ "${0##*/}" = "banner.sh" ] || [[ "$0" == *"banner.sh" ]]; then main "$@"; fi
 
-__EMBED_EOF__
-chmod 755 "$ETC/features/banner.sh"
-cat > "$ETC/features/security.sh" << '__EMBED_EOF__'
+
+main() {
+  while true; do
+    clear 2>/dev/null || printf "\033c"
 #!/bin/bash
-# mytunnel features/security.sh - SYN protection, UFW/iptables, fail2ban ringan (60 kolom)
+# mytunnel features/security.sh - hardening: SYN protection, UFW, fail2ban, SSH hardening, banner lock (60 kolom)
 # shellcheck disable=SC1091,SC1090,SC2154
 BASE="${MYTUNNEL_PREFIX:-}"
 ETC="${BASE}/etc/mytunnel"
 LOG="${BASE}/var/log/mytunnel.log"
-for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/features_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+SSHD_CFG="${BASE}/etc/ssh/sshd_config"
+[ -z "$BASE" ] && SSHD_CFG="/etc/ssh/sshd_config"
+SSHD_D="${BASE}/etc/ssh/sshd_config.d"
+[ -z "$BASE" ] && SSHD_D="/etc/ssh/sshd_config.d"
+for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/features_helpers.sh" "$ETC/lib/banner_guard.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 CYAN="${CYAN:-\033[0;36m}"; BLUE="${BLUE:-\033[0;34m}"; RESET="${RESET:-\033[0m}"
 BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"
 
 pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 
+_cron_file() { [ -n "$BASE" ] && echo "$BASE/etc/cron.d/mytunnel" || echo "/etc/cron.d/mytunnel"; }
+_real() { [ -n "$BASE" ] && echo "$BASE$1" || echo "$1"; }
+
+_ssh_port_used() {
+  # port yang WAJIB dipertahankan: 22 + OpenSSH 444 (ports.conf) + TLS/NONTLS/WS
+  echo "22 444 443 8443 80 8080 90 10004 53 5300 2082 2083 8880"
+}
+
 show_status() {
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Security Status"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  local syn cookies synack
-  : "${synack:-}"  # kept for future SYN-ACK check
+  local syn cookies
   syn=$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null || echo "?")
   cookies=$(sysctl -n net.ipv4.tcp_syn_retries 2>/dev/null || echo "?")
   printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "tcp_syncookies" "$syn"
@@ -11467,12 +11592,27 @@ show_status() {
   local ufw_st fail_st
   if command -v ufw >/dev/null 2>&1; then ufw_st=$(ufw status 2>&1 | head -1 | cut -c1-30); else ufw_st="not installed"; fi
   printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "UFW" "$ufw_st"
-  # "Status" saja tak berguna - ambil daftar jail, bukan baris pertama
   if command -v fail2ban-client >/dev/null 2>&1; then
     fail_st=$(fail2ban-client status 2>&1 | sed -n "s/.*Jail list:[[:space:]]*//p" | cut -c1-28)
     [ -z "$fail_st" ] && fail_st="no jail"
   else fail_st="not installed"; fi
   printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "fail2ban" "$fail_st"
+  # SSH hardening state
+  local pr pw mx
+  pr=$(sshd -T 2>/dev/null | awk '$1=="permitrootlogin"{print $2}'); [ -z "$pr" ] && pr="?"
+  pw=$(sshd -T 2>/dev/null | awk '$1=="passwordauthentication"{print $2}'); [ -z "$pw" ] && pw="?"
+  mx=$(sshd -T 2>/dev/null | awk '$1=="maxauthtries"{print $2}'); [ -z "$mx" ] && mx="?"
+  printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "ssh PermitRootLogin" "$pr"
+  printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "ssh PasswordAuth" "$pw"
+  printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "ssh MaxAuthTries" "$mx"
+  local bg="n/a"
+  if command -v bg_status >/dev/null 2>&1; then bg=$(bg_status 2>/dev/null); fi
+  printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "banner" "$(echo "$bg" | cut -c1-30)"
+  local aup="?"
+  if command -v unattended-upgrade >/dev/null 2>&1; then
+    if ls /etc/apt/apt.conf.d/*unattended* >/dev/null 2>&1; then aup="installed"; else aup="binary only"; fi
+  else aup="not installed"; fi
+  printf "${BLUE}│${RESET} %-22s : %-30s ${BLUE}│${RESET}\n" "unattended-upgrades" "$aup"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -11489,65 +11629,221 @@ net.ipv4.tcp_max_syn_backlog=2048
 net.ipv4.tcp_keepalive_time=300
 SYS
   chmod 644 "$conf" 2>/dev/null || true
-  # Ensure SSH not locked: allow 22 before UFW changes
-  if [ -z "$BASE" ]; then
-    sysctl -p "$conf" 2>&1 | head -n 10 || sysctl -w net.ipv4.tcp_syncookies=1 2>&1 | head
-    # UFW rate limit SYN if UFW active
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>&1 | grep -q "Status: active"; then
-      ufw limit 22/tcp 2>&1 | head -5 || true
-      echo -e "${GREEN}UFW limit 22/tcp diterapkan (rate limit)${RESET}"
-    else
-      echo -e "${DIM}UFW tidak aktif, skip rate limit (aktifkan UFW dulu)${RESET}"
-    fi
-    fh_log "security syncookies enabled"
-    echo -e "${GREEN}SYN protection aktif${RESET}"
-  else
-    echo "[TEST MODE] config ditulis: $conf" | tee -a "$LOG" 2>/dev/null
-    cat "$conf" 2>/dev/null | sed 's/^/  /'
-    fh_log "security syncookies (test) $conf"
+  # allow port SSH dulu supaya tidak mengunci diri sendiri
+  if command -v ufw >/dev/null 2>&1; then
+    for p in 22 90 $(_ssh_port_used); do ufw allow "$p/tcp" >/dev/null 2>&1 || true; done
   fi
+  [ -z "$BASE" ] && sysctl -p "$conf" >/dev/null 2>&1 || true
+  [ -z "$BASE" ] && ufw --force enable >/dev/null 2>&1 || true
+  echo -e "${GREEN}SYN protection + UFW rules siap${RESET}"
+  fh_log "security: syncookies enabled"
   pause
 }
 
 setup_fail2ban() {
-  echo -e "${CYAN}=== Fail2ban untuk sshd ===${RESET}"
+  echo -e "${DIM}Setup fail2ban sshd...${RESET}"
   if ! command -v fail2ban-client >/dev/null 2>&1; then
-    echo -e "${YELLOW}fail2ban belum terinstall${RESET}"
-    echo -ne " Install? [y/N]: "; read -r a 2>/dev/null || true
-    if [[ "$a" =~ ^[Yy]$ ]]; then
-      if [ -z "$BASE" ]; then
-        apt-get update -y >/dev/null 2>&1; apt-get install -y fail2ban >/dev/null 2>&1 && echo -e "${GREEN}Terinstall${RESET}" || echo -e "${RED}Gagal install${RESET}"
-      else echo -e "${DIM}[TEST MODE] simulasi install fail2ban${RESET}"; fi
-    else pause; return; fi
+    if [ -n "$BASE" ]; then
+      echo -e "${DIM}[TEST MODE] simulasi install fail2ban${RESET}"
+    else
+      if fh_need_confirm "fail2ban belum terinstall. Install sekarang?"; then
+        apt-get update -y >/dev/null 2>&1; apt-get install -y fail2ban >/dev/null 2>&1 && echo -e "${GREEN}Terinstall${RESET}" || { echo -e "${RED}Gagal install fail2ban${RESET}"; pause; return 1; }
+      else
+        echo "Batal"; pause; return
+      fi
+    fi
   fi
-  if [ -z "$BASE" ]; then
-    # Minimal jail for sshd
-    mkdir -p /etc/fail2ban/jail.d 2>/dev/null || true
-    cat > /etc/fail2ban/jail.d/mytunnel-sshd.conf 2>/dev/null <<'JAIL'
-[sshd]
+  local jail
+  jail="${BASE}/etc/fail2ban/jail.d/mytunnel-sshd.conf"
+  [ -z "$BASE" ] && jail="/etc/fail2ban/jail.d/mytunnel-sshd.conf"
+  mkdir -p "$(dirname "$jail")" 2>/dev/null || true
+  cat > "$jail" 2>/dev/null <<'JAIL'
+[mytunnel-sshd]
 enabled = true
-port = 22
+port = 22,90,444
+filter = sshd
+logpath = /var/log/auth.log
+            /var/log/secure
 maxretry = 5
-bantime = 600
 findtime = 600
+bantime = 3600
+ignoreip = 127.0.0.1/8 ::1
 JAIL
+  chmod 644 "$jail" 2>/dev/null || true
+  if [ -z "$BASE" ]; then
+    systemctl enable fail2ban >/dev/null 2>&1 || true
     systemctl restart fail2ban 2>/dev/null || service fail2ban restart 2>/dev/null || true
-    fail2ban-client status sshd 2>&1 | head -n 20
-    fh_log "fail2ban sshd enabled"
-    echo -e "${GREEN}Fail2ban sshd aktif${RESET}"
+    sleep 1
+    fail2ban-client status mytunnel-sshd 2>&1 | head -n 12
   else
-    local jail="${BASE}/etc/fail2ban/jail.d/mytunnel-sshd.conf"
-    mkdir -p "$(dirname "$jail")" 2>/dev/null || true
-    cat > "$jail" 2>/dev/null <<'JAIL'
-[sshd]
-enabled = true
-port = 22
-maxretry = 5
-bantime = 600
-JAIL
-    echo "[TEST MODE] jail ditulis: $jail" | tee -a "$LOG" 2>/dev/null
-    cat "$jail" 2>/dev/null | sed 's/^/  /'
+    echo -e "${DIM}[TEST MODE] jail ditulis: $jail${RESET}"
   fi
+  fh_log "security: fail2ban mytunnel-sshd enabled"
+  pause
+}
+
+# --- SSH hardening: root login key-only, password auth off, maxauthtries 3 ---
+# Aman karena: allow port 22/90/444 dulu, validasi sshd -t, rollback kalau gagal.
+harden_ssh() {
+  [ -f "$SSHD_CFG" ] || { echo -e "${RED}sshd_config tidak ada${RESET}"; pause; return 1; }
+  local keys=0
+  for af in /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys; do
+    [ -s "$af" ] && keys=$((keys + 1))
+  done
+  echo -e "${DIM}Authorized_keys ditemukan: $keys${RESET}"
+  if [ "$keys" -eq 0 ]; then
+    echo -e "${RED}TIDAK ADA authorized_keys - password auth akan mengunci semua orang. Batal.${RESET}"
+    echo -e "${DIM}Tambah public key dulu: ssh-copy-id root@host${RESET}"
+    pause; return 1
+  fi
+  if ! fh_need_confirm "Terapkan hardening (root key-only, password off, maxauthtries 3)?"; then echo "Batal"; pause; return; fi
+  if command -v ufw >/dev/null 2>&1; then
+    for p in 22 90 $(_ssh_port_used); do ufw allow "$p/tcp" >/dev/null 2>&1 || true; done
+  fi
+  local bak drop
+  bak="${SSHD_CFG}.bak-$(date +%Y%m%d-%H%M%S)"
+  cp -a "$SSHD_CFG" "$bak" 2>/dev/null || true
+  if [ -n "$BASE" ]; then
+    echo -e "${DIM}[TEST MODE] hardening ditulis ke tunel drop-in${RESET}"
+    drop="$SSHD_CFG.harden.test"
+    { echo "PermitRootLogin yes"; echo "PasswordAuthentication no"; echo "MaxAuthTries 3"; } > "$drop"
+    chmod 644 "$drop" 2>/dev/null || true
+    echo -e "${GREEN}Hardening tertulis (test mode)${RESET}"
+    fh_log "security: ssh hardening (test)"
+    pause
+    return 0
+  fi
+  # drop-in lebih aman: tidak menyentuh baris lain, menang karena Include di atas
+  mkdir -p "$SSHD_D" 2>/dev/null || true
+  drop="$SSHD_D/99-mytunnel-harden.conf"
+  cat > "$drop" 2>/dev/null <<'HARD'
+# mytunnel SSH hardening - dikelola installer (hapus file ini untuk revert)
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
+HARD
+  chmod 644 "$drop" 2>/dev/null || true
+  if ! sshd -t 2>/dev/null; then
+    echo -e "${RED}sshd -t gagal, rollback${RESET}"
+    rm -f "$drop" 2>/dev/null || true
+    [ -f "$bak" ] && cp -a "$bak" "$SSHD_CFG" 2>/dev/null || true
+    pause; return 1
+  fi
+  echo -e "${GREEN}sshd -t OK${RESET}"
+  # reload dulu; restart hanya kalau perlu
+  systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null || true
+  sleep 1
+  local ok=0
+  for p in 22 90; do
+    if ss -lnt 2>/dev/null | grep -qE "[:.]${p}[[:space:]]"; then ok=$((ok + 1)); fi
+  done
+  if [ "$ok" -eq 0 ]; then
+    echo -e "${RED}Port SSH tidak listen setelah reload - rollback${RESET}"
+    rm -f "$drop" 2>/dev/null || true
+    systemctl reload sshd 2>/dev/null || service ssh restart 2>/dev/null || true
+    pause; return 1
+  fi
+  echo -e "${GREEN}Hardening aktif. Login root tetap bisa via public key.${RESET}"
+  echo -e "${DIM}Cek cepat: ssh -p 22 root@<host> sebelum tutup sesi ini.${RESET}"
+  fh_log "security: ssh hardened (drop-in $drop)"
+  pause
+}
+
+revert_ssh() {
+  local drop="$SSHD_D/99-mytunnel-harden.conf"
+  [ -f "$drop" ] || { echo -e "${DIM}Tidak ada drop-in hardening${RESET}"; pause; return; }
+  if ! fh_need_confirm "Revert hardening SSH (password auth kembali aktif)?"; then echo "Batal"; pause; return; fi
+  rm -f "$drop" 2>/dev/null || true
+  sshd -t 2>/dev/null && systemctl reload sshd 2>/dev/null || true
+  echo -e "${GREEN}Hardening dihapus${RESET}"
+  fh_log "security: ssh hardening reverted"
+  pause
+}
+
+# --- banner permanen ---
+make_banner_permanent() {
+  if ! command -v bg_enforce >/dev/null 2>&1; then echo -e "${RED}banner_guard tidak tersedia${RESET}"; pause; return; fi
+  if ! command -v chattr >/dev/null 2>&1; then
+    echo -e "${YELLOW}chattr tidak tersedia (paket e2fsprogs). Banner tidak bisa dibuat immutable.${RESET}"
+    pause; return 1
+  fi
+  echo -e "${DIM}Banner -> chmod 644 + chattr +i di semua salinan (config, /etc/dropbear, /etc/mytunnel)${RESET}"
+  if ! fh_need_confirm "Jadikan banner permanen (perlu uninstall/@chattr -i untuk mengubah)?"; then echo "Batal"; pause; return; fi
+  bg_enforce 2>/dev/null || true
+  echo -e "${GREEN}Status: $(bg_status 2>/dev/null)${RESET}"
+  fh_log "security: banner permanent"
+  pause
+}
+
+unlock_banner() {
+  if ! command -v bg_unlock >/dev/null 2>&1; then echo -e "${RED}banner_guard tidak tersedia${RESET}"; pause; return; fi
+  echo -e "${YELLOW}Buka lock banner (bisa diedit lagi)?${RESET}"
+  if ! fh_need_confirm "Lepas chattr +i dari semua salinan banner?"; then echo "Batal"; pause; return; fi
+  bg_unlock 2>/dev/null || true
+  echo -e "${GREEN}Lock dilepas. Status: $(bg_status 2>/dev/null)${RESET}"
+  fh_log "security: banner unlocked"
+  pause
+}
+
+setup_unattended() {
+  if ! command -v unattended-upgrade >/dev/null 2>&1; then
+    if [ -n "$BASE" ]; then echo -e "${DIM}[TEST MODE] simulasi install unattended-upgrades${RESET}"
+    else
+      fh_need_confirm "Install unattended-upgrades (patch keamanan otomatis)?" || { echo "Batal"; pause; return; }
+      apt-get update -y >/dev/null 2>&1; apt-get install -y unattended-upgrades >/dev/null 2>&1 || { echo -e "${RED}Gagal install${RESET}"; pause; return 1; }
+    fi
+  fi
+  local cf
+  cf="${BASE}/etc/apt/apt.conf.d/20auto-upgrades"
+  [ -z "$BASE" ] && cf="/etc/apt/apt.conf.d/20auto-upgrades"
+  mkdir -p "$(dirname "$cf")" 2>/dev/null || true
+  cat > "$cf" 2>/dev/null <<'AUTOUP'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+AUTOUP
+  chmod 644 "$cf" 2>/dev/null || true
+  if [ -z "$BASE" ]; then
+    systemctl enable unattended-upgrades >/dev/null 2>&1 || true
+    systemctl restart unattended-upgrades 2>/dev/null || true
+  fi
+  echo -e "${GREEN}Auto security update aktif${RESET}"
+  fh_log "security: unattended-upgrades enabled"
+  pause
+}
+
+# --- banner guard cron ---
+install_banner_cron() {
+  local cf
+  cf=$(_cron_file)
+  mkdir -p "$(dirname "$cf")" 2>/dev/null || true
+  [ -f "$cf" ] || : > "$cf" 2>/dev/null || true
+  if ! grep -q "banner_guard.sh" "$cf" 2>/dev/null; then
+    echo "*/5 * * * * root $ETC/cron/banner_guard.sh 2>/dev/null" >> "$cf" 2>/dev/null || true
+    echo -e "${GREEN}Cron banner_guard ditambahkan (*/5)${RESET}"
+  else
+    echo -e "${DIM}Cron banner_guard sudah ada${RESET}"
+  fi
+  chmod 644 "$cf" 2>/dev/null || true
+  [ -z "$BASE" ] && systemctl restart cron 2>/dev/null || true
+  fh_log "security: banner_guard cron"
+  pause
+}
+
+apply_all() {
+  echo -e "${BOLD}Hardening lengkap${RESET}"
+  echo -e "${DIM}1) SYN protection  2) fail2ban (butuh konfirmasi)  3) SSH hardening (butuh konfirmasi)${RESET}"
+  echo -e "${DIM}4) banner permanen  5) cron banner_guard  6) auto security update${RESET}"
+  if ! fh_need_confirm "Jalankan semua langkah di atas sekarang?"; then echo "Batal"; pause; return; fi
+  enable_syncookies_nopause 2>/dev/null || true
+  setup_fail2ban_nopause 2>/dev/null || true
+  install_banner_cron_nopause 2>/dev/null || true
+  if command -v bg_enforce >/dev/null 2>&1; then bg_enforce 2>/dev/null || true; fi
+  echo -e "${GREEN}Selesai. SSH hardening & fail2ban konfirmasi terpisah tersedia di menu.${RESET}"
+  fh_log "security: apply all"
   pause
 }
 
@@ -11558,20 +11854,39 @@ main() {
     echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${BLUE}│${RESET} 1.) Aktifkan SYN protection (sysctl+UFW)         ${BLUE}│${RESET}"
     echo -e "${BLUE}│${RESET} 2.) Setup fail2ban sshd                         ${BLUE}│${RESET}"
-    echo -e "${BLUE}│${RESET} 3.) Kembali                                      ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 3.) Hardening SSH (root key-only, no password)   ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 4.) Revert hardening SSH                         ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 5.) Jadikan banner permanen                      ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 6.) Buka lock banner                             ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 7.) Pasang cron banner_guard (*/5)               ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 8.) Auto security update (unattended-upgrades)    ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 9.) Terapkan semua (hati-hati, tanpa SSH harden)  ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 10.) Kembali                                     ${BLUE}│${RESET}"
     echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-    read -rp " Pilih [1-3]: " c 2>/dev/null || c=3
-    case "$c" in 1) enable_syncookies ;; 2) setup_fail2ban ;; 3) break ;; *) echo -e "${RED}Tidak valid${RESET}"; sleep 1;; esac
+    read -rp " Pilih [1-10]: " c 2>/dev/null || c=10
+    case "$c" in
+      1) enable_syncookies ;;
+      2) setup_fail2ban ;;
+      3) harden_ssh ;;
+      4) revert_ssh ;;
+      5) make_banner_permanent ;;
+      6) unlock_banner ;;
+      7) install_banner_cron ;;
+      8) setup_unattended ;;
+      9) apply_all ;;
+      10) break ;;
+      *) echo -e "${RED}Tidak valid${RESET}"; sleep 1 ;;
+    esac
   done
 }
 
 if [ "${0##*/}" = "security.sh" ] || [[ "$0" == *"security.sh" ]]; then main "$@"; fi
 
-__EMBED_EOF__
-chmod 755 "$ETC/features/security.sh"
-cat > "$ETC/features/autoupdate.sh" << '__EMBED_EOF__'
+port = 22
+maxretry = 5
+bantime = 600
 #!/bin/bash
-# mytunnel features/autoupdate.sh - cek VERSION dari repo di config/repo.txt (60 kolom)
+# mytunnel features/autoupdate.sh - cek VERSION repo + verifikasi SHA256 sebelum eksekusi (60 kolom)
 # shellcheck disable=SC1091,SC1090,SC2154
 BASE="${MYTUNNEL_PREFIX:-}"
 ETC="${BASE}/etc/mytunnel"
@@ -11585,12 +11900,32 @@ BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"
 
 pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 
-get_local_ver() { cat "$VERSION_FILE" 2>/dev/null | head -1 | tr -d ' \n'; [ -z "$(cat "$VERSION_FILE" 2>/dev/null)" ] && echo "v0.0.0" || cat "$VERSION_FILE" 2>/dev/null | head -1 | tr -d ' \n'; }
 get_repo_url() {
   local u
   u=$(cat "$REPO_FILE" 2>/dev/null | head -1 | tr -d ' \n')
-  [ -z "$u" ] && u="https://raw.githubusercontent.com/Emans27/mytunnel-installer/main"
+  [ -z "$u" ] && u="https://raw.githubusercontent.com/Emans27/tunnel-allinone/main"
   echo "$u" | tr -d ' \n'
+}
+
+# SHA256SUMS: ambil hash untuk nama file tertentu (format: "<hash>  <name>")
+_fetch_expected_sha() {
+  local repo="$1" name="$2" sf
+  command -v curl >/dev/null 2>&1 || return 1
+  sf=$(mktemp 2>/dev/null) || return 1
+  if curl -fsSL --max-time 20 "$repo/SHA256SUMS" -o "$sf" >/dev/null 2>&1 && [ -s "$sf" ]; then
+    awk -v n="$name" '$2==n {print $1; exit}' "$sf"
+    rm -f "$sf" 2>/dev/null || true
+    return 0
+  fi
+  rm -f "$sf" 2>/dev/null || true
+  return 1
+}
+
+_sha_file() {
+  local f="$1"
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$f" 2>/dev/null | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$f" 2>/dev/null | awk '{print $1}'
+  fi
 }
 
 check_update() {
@@ -11606,8 +11941,8 @@ check_update() {
   remote_ver=$(curl -fsSL --max-time 10 "$repo/VERSION" 2>/dev/null | head -1 | tr -d ' \n\r')
   if [ -z "$remote_ver" ]; then
     echo -e "${YELLOW}Tidak bisa ambil VERSION dari repo${RESET}"
-    echo -e "${DIM}Pastikan $REPO_FILE berisi URL raw, contoh:${RESET}"
-    echo -e "${DIM}https://raw.githubusercontent.com/USER/REPO/main${RESET}"
+    echo -e "${DIM}Repo harus publik (raw.githubusercontent.com tidak bisa akses repo private).${RESET}"
+    echo -e "${DIM}Ganti lewat menu ini (Atur URL repo) atau edit $REPO_FILE${RESET}"
     pause; return
   fi
   echo -e " Remote: ${GREEN}$remote_ver${RESET}"
@@ -11619,7 +11954,6 @@ check_update() {
   changelog=$(curl -fsSL --max-time 10 "$repo/CHANGELOG.md" 2>/dev/null | head -n 30)
   if [ -n "$changelog" ]; then echo -e "${DIM}Changelog (30 baris):${RESET}"; echo "$changelog" | head -n 30 | sed 's/^/  /'; fi
   if ! fh_need_confirm " Update sekarang? (backup dulu)"; then echo "Batal"; pause; return; fi
-  # backup before update
   local bak_dir="${BASE}/root/backup"
   [ -z "$BASE" ] && bak_dir="/root/backup"
   mkdir -p "$bak_dir" 2>/dev/null || true
@@ -11628,23 +11962,39 @@ check_update() {
   if [ -n "$BASE" ]; then tar -czf "$pre" -C "$BASE" etc/mytunnel 2>/dev/null || true; else tar -czf "$pre" -C / etc/mytunnel 2>/dev/null || true; fi
   chmod 600 "$pre" 2>/dev/null || true
   echo -e "${DIM}Backup: $pre${RESET}"
-  # fetch install.sh
-  local tmp
+
+  local tmp expect got
   tmp=$(mktemp)
-  if curl -fsSL --max-time 30 "$repo/install.sh" -o "$tmp" 2>&1 | head -5; then
-    if bash -n "$tmp" 2>&1; then
-      echo -e "${GREEN}Update valid, jalankan...${RESET}"
-      if [ -z "$BASE" ]; then
-        bash "$tmp" --no-deps 2>&1 | tail -n 20
-        echo "$remote_ver" > "$VERSION_FILE" 2>/dev/null
-        fh_log "autoupdate $local_ver -> $remote_ver"
-        echo -e "${GREEN}Update selesai${RESET}"
-      else
-        echo "[TEST MODE] simulasi update $local_ver -> $remote_ver" | tee -a "$LOG" 2>/dev/null
-        echo "$remote_ver" > "$VERSION_FILE" 2>/dev/null || true
-      fi
-    else echo -e "${RED}install.sh remote tidak valid (bash -n gagal)${RESET}"; fi
-  else echo -e "${RED}Gagal unduh install.sh${RESET}"; fi
+  if ! curl -fsSL --max-time 30 "$repo/install.sh" -o "$tmp" >/dev/null 2>&1; then
+    echo -e "${RED}Gagal unduh install.sh${RESET}"; rm -f "$tmp" 2>/dev/null || true; pause; return 1
+  fi
+  # verifikasi checksum dari repo yang sama sebelum eksekusi root
+  expect=$(_fetch_expected_sha "$repo" "install.sh" 2>/dev/null || echo "")
+  if [ -n "$expect" ]; then
+    got=$(_sha_file "$tmp")
+    if [ "$got" != "$expect" ]; then
+      echo -e "${RED}SHA256 mismatch - update DIBATALKAN${RESET}"
+      echo -e "${DIM}expect: $expect${RESET}"
+      echo -e "${DIM}got   : ${got:-none}${RESET}"
+      rm -f "$tmp" 2>/dev/null || true; pause; return 1
+    fi
+    echo -e "${GREEN}Checksum OK${RESET}"
+  else
+    echo -e "${YELLOW}SHA256SUMS tidak tersedia di repo - lanjut tanpa verifikasi${RESET}"
+  fi
+  if ! bash -n "$tmp" 2>&1; then
+    echo -e "${RED}install.sh remote tidak valid (bash -n gagal)${RESET}"; rm -f "$tmp" 2>/dev/null || true; pause; return 1
+  fi
+  echo -e "${GREEN}Update valid, jalankan...${RESET}"
+  if [ -z "$BASE" ]; then
+    bash "$tmp" --no-deps 2>&1 | tail -n 20
+    echo "$remote_ver" > "$VERSION_FILE" 2>/dev/null
+    fh_log "autoupdate $local_ver -> $remote_ver"
+    echo -e "${GREEN}Update selesai${RESET}"
+  else
+    echo "[TEST MODE] simulasi update $local_ver -> $remote_ver" | tee -a "$LOG" 2>/dev/null
+    echo "$remote_ver" > "$VERSION_FILE" 2>/dev/null || true
+  fi
   rm -f "$tmp" 2>/dev/null || true
   pause
 }
@@ -11656,6 +12006,32 @@ set_repo() {
   read -rp " URL repo baru (kosong batal): " nr 2>/dev/null || return
   nr=$(echo "$nr" | tr -d ' \n')
   [ -z "$nr" ] && { echo "Batal"; pause; return; }
+  echo "$nr" > "$REPO_FILE" 2>/dev/null
+  chmod 644 "$REPO_FILE" 2>/dev/null || true
+  echo -e "${GREEN}Repo disimpan${RESET}"
+  fh_log "repo -> $nr"
+  pause
+}
+
+main() {
+  while true; do
+    clear 2>/dev/null || printf "\033c"
+    echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+    printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Auto Update"
+    echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+    echo -e " Lokal: $(cat "$VERSION_FILE" 2>/dev/null | head -1 || echo v0.0.0)  Repo: $(cat "$REPO_FILE" 2>/dev/null | head -1 || echo default)"
+    echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${BLUE}│${RESET} 1.) Cek & update sekarang                         ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 2.) Atur URL repo                                 ${BLUE}│${RESET}"
+    echo -e "${BLUE}│${RESET} 3.) Kembali                                       ${BLUE}│${RESET}"
+    echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+    read -rp " Pilih [1-3]: " c 2>/dev/null || c=3
+    case "$c" in 1) check_update ;; 2) set_repo ;; 3) break ;; *) echo -e "${RED}Tidak valid${RESET}"; sleep 1;; esac
+  done
+}
+
+if [ "${0##*/}" = "autoupdate.sh" ] || [[ "$0" == *"autoupdate.sh" ]]; then main "$@"; fi
+
   echo "$nr" > "$REPO_FILE" 2>/dev/null
   chmod 644 "$REPO_FILE" 2>/dev/null || true
   echo -e "${GREEN}Repo disimpan${RESET}"
@@ -11758,8 +12134,8 @@ pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 main() {
   local cur
   cur=$(dropbear -V 2>&1 | head -1 | cut -c1-40 2>/dev/null || echo "-")
-  if [ "${1:-}" = "list" ]; then
-    echo -e " Versi sekarang: ${CYAN}$cur${RESET}"
+https://raw.githubusercontent.com/Emans27/tunnel-allinone/main
+
     [ -f "$VER_FILE" ] && { echo -e "${DIM}Daftar versi:${RESET}"; cat "$VER_FILE" 2>/dev/null | sed 's/^/  /'; } || echo -e "${DIM}(file versi kosong: $VER_FILE)${RESET}"
     return
   fi

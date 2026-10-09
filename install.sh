@@ -381,6 +381,50 @@ _proto_tags() {
   esac
 }
 
+# --- live apply via Xray API (HandlerService): tambah/hapus user TANPA restart ---
+_LIVE_FLAG="${MYTUNNEL_PREFIX:-}/run/mytunnel-live-apply"
+_xray_api_port() {
+  local p=""
+  if [ -f "$XRAY_CFG" ] && command -v jq >/dev/null 2>&1; then
+    p=$(jq -r '.inbounds[] | select(.tag=="api") | .port // empty' "$XRAY_CFG" 2>/dev/null | head -1)
+  fi
+  [ -z "$p" ] && p=10085
+  echo "$p" | tr -d ' \n'
+}
+# _xray_live_apply <add|del> <proto> <secret> <email>
+# sukses -> tulis flag; xray_reload membaca flag dan skip restart.
+_xray_live_apply() {
+  local op="$1" proto="$2" secret="$3" email="$4"
+  [ -n "${MYTUNNEL_PREFIX:-}" ] && return 1   # test mode: biarkan fallback restart
+  command -v jq >/dev/null 2>&1 || return 1
+  local bin port t tmp rc=0
+  bin=$(_xray_bin); port=$(_xray_api_port)
+  for t in $(_proto_tags "$proto"); do
+    if [ "$op" = "add" ]; then
+      # payload: struktur inbound dari config aktif, hanya user ini di clients
+      tmp=$(mktemp)
+      jq --arg tag "$t" --arg email "$email" --arg id "$secret" --arg proto "$proto" '
+        [.inbounds[] | select(.tag==$tag)] |
+        {inbounds: map(.settings.clients =
+          [(if $proto=="trojan" then {password:$id,level:0,email:$email}
+            else {id:$id,level:0,email:$email} end)])}
+      ' "$XRAY_CFG" > "$tmp" 2>/dev/null
+      if [ ! -s "$tmp" ]; then rm -f "$tmp"; return 1; fi
+      "$bin" api adu --server=127.0.0.1:"$port" "$tmp" >/dev/null 2>&1 || rc=1
+      rm -f "$tmp"
+    else
+      "$bin" api rmu --server=127.0.0.1:"$port" -tag="$t" "$email" >/dev/null 2>&1 || rc=1
+    fi
+  done
+  [ "$rc" -eq 0 ] || return 1
+  mkdir -p "$(dirname "$_LIVE_FLAG")" 2>/dev/null || true
+  date +%s > "$_LIVE_FLAG" 2>/dev/null || true
+  return 0
+}
+# ponytail: flag sekali-pakai + TTL 30s; kalau perlu sinkron config non-client
+# (routing/warp) dalam jendela 30s setelah add/del, restart bisa terlewat —
+# upgrade path: ganti flag jadi diff-test config vs running instance.
+
 xray_add_client() {
   local proto="$1" secret="$2" email="$3"
   local cfg
@@ -459,6 +503,8 @@ xray_add_client() {
     return 1
   fi
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray add $proto $email (3 inbounds ws/grpc/hu)" >> "$LOG" 2>/dev/null || true
+  # apply ke instance berjalan via API: sukses -> flag skip restart
+  _xray_live_apply add "$proto" "$secret" "$email" 2>/dev/null || true
   echo -e "${GREEN}Client $email ditambahkan ke $proto (3 transports ws/grpc/hu)${RESET}"
 }
 
@@ -488,6 +534,8 @@ xray_del_client() {
     return 1
   fi
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray del $proto $email" >> "$LOG" 2>/dev/null || true
+  # hapus dari instance berjalan via API: sukses -> flag skip restart
+  _xray_live_apply del "$proto" "" "$email" 2>/dev/null || true
   echo -e "${GREEN}Client $email dihapus dari $proto${RESET}"
 }
 
@@ -499,6 +547,18 @@ xray_reload() {
     echo -e "${YELLOW}[TEST MODE] xray reload simulasi (skip systemctl)${RESET}"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray reload (simulated)" >> "$LOG" 2>/dev/null || true
     return 0
+  fi
+  # live apply baru saja sukses (TTL 30s): config file & instance sudah sinkron
+  if [ -f "$_LIVE_FLAG" ]; then
+    local fs ts
+    fs=$(stat -c %Y "$_LIVE_FLAG" 2>/dev/null || echo 0)
+    ts=$(date +%s 2>/dev/null || echo 0)
+    if [ "$((ts - fs))" -le 30 ]; then
+      rm -f "$_LIVE_FLAG" 2>/dev/null || true
+      echo -e "${GREEN}xray sudah di-apply via API (restart dilewati)${RESET}"
+      return 0
+    fi
+    rm -f "$_LIVE_FLAG" 2>/dev/null || true   # flag basi -> restart normal
   fi
   systemctl restart xray 2>/dev/null || systemctl reload xray 2>/dev/null || service xray restart 2>/dev/null || {
     pkill -HUP xray 2>/dev/null || true
@@ -9134,6 +9194,7 @@ CONF="$ETC/config/bot.conf"
 . "$CONF" 2>/dev/null || exit 0
 [ -z "${BOT_TOKEN:-}" ] || [ -z "${ADMIN_ID:-}" ] && exit 0
 [ -f "$ETC/lib/advanced_helpers.sh" ] && . "$ETC/lib/advanced_helpers.sh" 2>/dev/null || true
+[ -f "$ETC/lib/features_helpers.sh" ] && . "$ETC/lib/features_helpers.sh" 2>/dev/null || true
 # H-3 expiry check (ssh + vmess/vless/trojan)
 _now=$(date +%s 2>/dev/null)
 for db in "$ETC/db/ssh.txt" "$ETC/db/vmess.txt" "$ETC/db/vless.txt" "$ETC/db/trojan.txt"; do

@@ -1603,41 +1603,30 @@ fh_backup_file() {
 # ponytail: single backup per op; upgrade to rotation when disk pressure arises
 
 __EMBED_EOF__
-cat > "$ETC/lib/banner_guard.sh" << '__EMBED_EOF__'
+cat > "$ETC/lib/brand_guard.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel lib/banner_guard.sh - banner permanen (immutable) + enforce restore
+# mytunnel lib/brand_guard.sh - brand permanen (immutable + restore dari canon)
 # shellcheck disable=SC1091,SC1090,SC2154
-# Banner "permanen": semua salinan diberi chattr +i. File immutable tidak bisa
-# ditulis/dihapus/di-rename bahkan oleh root sampai atributnya dilepas.
-# Canonical: $ETC/config/banner.txt (sumber tunggal).
+# Banner SSH tetap BEBAS diubah (menu 10). Yang dikunci hanya BRAND NAME.
+# Brand di-set saat instalasi (--brand "Nama"), lalu file-nya chattr +i supaya
+# tidak bisa diubah/dihapus/di-rename bahkan oleh root. Canon root-only dipakai
+# untuk memulihkan kalau atribut sempat dilepas.
 if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
   ETC="$BASE"
 else
   BASE="${MYTUNNEL_PREFIX:-}"
   ETC="${BASE}/etc/mytunnel"
 fi
-BG_CANON="$ETC/config/banner.txt"
-BG_LOCK="$ETC/config/.banner.lock"
-BG_SHA="$ETC/config/banner.sha256"
 BG_BRAND="$ETC/config/brand.txt"
-
-bg_paths() {
-  # salinan yang benar-benar dikonsumsi sshd/dropbear + salinan internal
-  printf '%s\n' \
-    "$BG_CANON" \
-    "${BASE}/etc/dropbear/banner" \
-    "${BASE}/etc/mytunnel/banner.txt"
-  [ -z "$BASE" ] && printf '%s\n' "/etc/dropbear/banner" "/etc/mytunnel/banner.txt"
-}
-
-# brand: lock-only (bukan salinan banner, jangan pernah ditimpa)
-bg_lock_targets() {
-  printf '%s\n' "$BG_BRAND"
-}
+BG_CANON="$ETC/config/.brand.canon"
+BG_LOCK="$ETC/config/.brand.lock"
+BG_LOG="${BASE}/var/log/mytunnel.log"
+BG_DEFAULT="SUNEK VPN"
 
 bg_is_immutable() {
   local f="$1" a
   command -v lsattr >/dev/null 2>&1 || return 1
+  [ -e "$f" ] || return 1
   a=$(lsattr -d "$f" 2>/dev/null | awk '{print $1}')
   [ -n "$a" ] || return 1
   case "$a" in *i*) return 0 ;; *) return 1 ;; esac
@@ -1645,10 +1634,9 @@ bg_is_immutable() {
 
 bg_lock_file() {
   local f="$1"
-  [ -f "$f" ] || return 0
+  [ -e "$f" ] || return 0
   bg_is_immutable "$f" && return 0
-  chattr +i "$f" 2>/dev/null && return 0
-  return 1
+  chattr +i "$f" 2>/dev/null
 }
 
 bg_unlock_file() {
@@ -1658,94 +1646,73 @@ bg_unlock_file() {
   chattr -i "$f" 2>/dev/null
 }
 
-bg_unlock() {
-  local f
-  while IFS= read -r f; do bg_unlock_file "$f"; done < <(bg_paths)
-  while IFS= read -r f; do bg_unlock_file "$f"; done < <(bg_lock_targets)
-  return 0
+# baca brand aktif (read tidak terpengaruh +i)
+bg_read() {
+  local v
+  if [ -f "$BG_BRAND" ]; then
+    v=$(head -1 "$BG_BRAND" 2>/dev/null | tr -d '\r\n')
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  fi
+  printf '%s' "$BG_DEFAULT"
 }
 
-# tulis banner baru -> sync ke semua salinan -> kunci
+bg_canon_read() {
+  local v
+  if [ -f "$BG_CANON" ]; then
+    v=$(head -1 "$BG_CANON" 2>/dev/null | tr -d '\r\n')
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  fi
+  printf ''
+}
+
+# dipakai installer: tulis brand + canon lalu kunci
 bg_set() {
-  local content
-  content=$(cat 2>/dev/null)
-  [ -z "${content//[[:space:]]/}" ] && { echo "banner kosong, batal" >&2; return 1; }
-  bg_unlock || true
-  mkdir -p "$ETC/config" "${BASE}/etc/dropbear" 2>/dev/null || true
-  printf '%s' "$content" > "$BG_CANON" 2>/dev/null || { echo "gagal tulis $BG_CANON" >&2; return 1; }
-  [ -f "$BG_CANON" ] && [ "$(wc -c < "$BG_CANON")" -gt 0 ] || { echo "banner 0 byte, batal" >&2; return 1; }
-  cp -f "$BG_CANON" "${BASE}/etc/dropbear/banner" 2>/dev/null || true
-  cp -f "$BG_CANON" "${BASE}/etc/mytunnel/banner.txt" 2>/dev/null || true
-  if [ -z "$BASE" ]; then
-    mkdir -p /etc/dropbear 2>/dev/null || true
-    cp -f "$BG_CANON" /etc/dropbear/banner 2>/dev/null || true
-    cp -f "$BG_CANON" /etc/mytunnel/banner.txt 2>/dev/null || true
-  fi
-  bg_lock || true
+  local v="$1"
+  [ -z "$v" ] && v="$BG_DEFAULT"
+  bg_unlock_file "$BG_BRAND"
+  bg_unlock_file "$BG_CANON"
+  mkdir -p "$ETC/config" 2>/dev/null || true
+  printf '%s\n' "$v" > "$BG_BRAND" 2>/dev/null || return 1
+  printf '%s\n' "$v" > "$BG_CANON" 2>/dev/null || true
+  chmod 644 "$BG_BRAND" "$BG_CANON" 2>/dev/null || true
+  bg_lock_file "$BG_CANON"
+  bg_lock_file "$BG_BRAND"
   return 0
 }
 
-# paksa semua salinan == canonical lalu kunci; dipanggil cron + installer
+# paksa: brand == canon, lalu kunci; dipanggil installer + cron
 bg_enforce() {
-  local f rc=0
-  [ -s "$BG_CANON" ] || return 0
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    [ "$f" = "$BG_CANON" ] && { bg_lock_file "$f" || rc=1; continue; }
-    if ! cmp -s "$BG_CANON" "$f" 2>/dev/null; then
-      bg_unlock_file "$f"
-      mkdir -p "$(dirname "$f")" 2>/dev/null || true
-      cp -f "$BG_CANON" "$f" 2>/dev/null || rc=1
-    fi
-    bg_lock_file "$f" || rc=1
-  done < <(bg_paths)
-  # hash + flag lock (dipakai menu untuk status)
-  if command -v sha256sum >/dev/null 2>&1; then
-    bg_unlock_file "$BG_SHA"; sha256sum "$BG_CANON" 2>/dev/null | awk '{print $1}' > "$BG_SHA" 2>/dev/null; bg_lock_file "$BG_SHA"
+  local canon cur rc=0 changed=0
+  canon=$(bg_canon_read)
+  [ -z "$canon" ] && canon="$BG_DEFAULT"
+  cur=$(bg_read)
+  if [ ! -f "$BG_CANON" ] || [ "$canon" != "$cur" ]; then
+    bg_unlock_file "$BG_CANON"
+    printf '%s\n' "$canon" > "$BG_CANON" 2>/dev/null || rc=1
+    chmod 644 "$BG_CANON" 2>/dev/null || true
   fi
-  bg_unlock_file "$BG_LOCK"; echo "$(date +%s)" > "$BG_LOCK" 2>/dev/null; bg_lock_file "$BG_LOCK"
-  # brand: kunci saja, TIDAK disalin dari canonical
-  local b
-  while IFS= read -r b; do
-    [ -z "$b" ] && continue
-    bg_lock_file "$b" || true
-  done < <(bg_lock_targets)
+  if [ "$cur" != "$canon" ]; then
+    bg_unlock_file "$BG_BRAND"
+    printf '%s\n' "$canon" > "$BG_BRAND" 2>/dev/null || rc=1
+    changed=1
+  fi
+  chmod 644 "$BG_BRAND" 2>/dev/null || true
+  bg_lock_file "$BG_CANON" || rc=1
+  bg_lock_file "$BG_BRAND" || rc=1
+  if [ "$changed" = "1" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] brand_guard: brand dikembalikan ke '$canon'" >> "$BG_LOG" 2>/dev/null || true
+  fi
   return $rc
 }
 
 bg_status() {
-  local f locked=0 total=0
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    [ -f "$f" ] || continue
-    total=$((total + 1))
-    bg_is_immutable "$f" && locked=$((locked + 1))
-  done < <(bg_paths)
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    [ -f "$f" ] || continue
-    total=$((total + 1))
-    bg_is_immutable "$f" && locked=$((locked + 1))
-  done < <(bg_lock_targets)
-  if [ "$locked" -eq "$total" ] && [ "$total" -gt 0 ]; then echo "PERMANENT ($locked/$total locked)"; else echo "AKTIF ($locked/$total locked)"; fi
-}
-
-# set brand (unik per VPS) -> unlock, tulis, kunci lagi
-bg_set_brand() {
-  local val="$1"
-  [ -z "$val" ] && return 1
-  bg_unlock_file "$BG_BRAND"
-  mkdir -p "$(dirname "$BG_BRAND")" 2>/dev/null || true
-  printf '%s\n' "$val" > "$BG_BRAND" 2>/dev/null || return 1
-  bg_lock_file "$BG_BRAND" || true
-  return 0
-}
-
-# brand tetap bisa dibaca walau immutable (read tidak terpengaruh +i)
-bg_get_brand() {
-  [ -f "$BG_BRAND" ] && head -1 "$BG_BRAND" 2>/dev/null || echo "SUNEK VPN"
+  local b s
+  b=$(bg_read)
+  if bg_is_immutable "$BG_BRAND"; then s="PERMANEN (terkunci)"; else s="TERBUKA (bisa diubah)"; fi
+  printf 'brand=%s | %s' "$b" "$s"
 }
 __EMBED_EOF__
+chmod 644 "$ETC/lib/brand_guard.sh" 2>/dev/null || true
 chmod 644 "$ETC/lib/banner_guard.sh" 2>/dev/null || true
 chmod 644 "$ETC/lib/features_helpers.sh"
 cat > "$ETC/lib/advanced_helpers.sh" << '__EMBED_EOF__'
@@ -9275,15 +9242,17 @@ _unlock_expired() {
               awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="active"}1' "$ETC/db/${proto}.txt" > /tmp/.li_tmp.$$ 2>/dev/null && cat /tmp/.li_tmp.$$ > "$ETC/db/${proto}.txt" 2>/dev/null
             ) 200>"$ETC/db/.${proto}.lock" 2>/dev/null || awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="active"}1' "$ETC/db/${proto}.txt" > /tmp/.li_tmp.$$ 2>/dev/null && cat /tmp/.li_tmp.$$ > "$ETC/db/${proto}.txt" 2>/dev/null
             chmod 600 "$ETC/db/${proto}.txt" 2>/dev/null || true
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] limitip auto-unlock $proto $user" >> "$LOG" 2>/dev/null || true
-          fi
-        fi
-      fi
-      rm -f "$f" 2>/dev/null || true
-    fi
-  done
-  rm -f /tmp/.li_tmp.$$ 2>/dev/null || true
-}
+cat > "$ETC/cron/brand_guard.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel cron/brand_guard.sh - enforce brand TETAP (immutable + restore dari canon)
+# shellcheck disable=SC1091,SC1090,SC2154
+BASE="${MYTUNNEL_PREFIX:-}"
+ETC="${BASE}/etc/mytunnel"
+if [ -f "$ETC/lib/brand_guard.sh" ]; then . "$ETC/lib/brand_guard.sh" 2>/dev/null || exit 0; else exit 0; fi
+bg_enforce >/dev/null 2>&1 || true
+exit 0
+__EMBED_EOF__
+chmod 755 "$ETC/cron/brand_guard.sh" 2>/dev/null || true
 
 run_once() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
@@ -9384,31 +9353,6 @@ for s in xray nginx dropbear mytunnel-sshws mytunnel-bot mytunnel-slowdns; do
   fi
 done
 
-__EMBED_EOF__
-cat > "$ETC/cron/banner_guard.sh" << '__EMBED_EOF__'
-#!/bin/bash
-# mytunnel cron/banner_guard.sh - enforce banner permanen: restore salinan + kunci immutable
-# shellcheck disable=SC1091,SC1090,SC2154
-BASE="${MYTUNNEL_PREFIX:-}"
-ETC="${BASE}/etc/mytunnel"
-if [ -f "$ETC/lib/banner_guard.sh" ]; then
-  # shellcheck disable=SC1090
-  . "$ETC/lib/banner_guard.sh" 2>/dev/null || exit 0
-else
-  exit 0
-fi
-LOG="${BASE}/var/log/mytunnel.log"
-changed=0
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  [ -f "$BG_CANON" ] || exit 0
-  if ! cmp -s "$BG_CANON" "$f" 2>/dev/null || ! bg_is_immutable "$f"; then changed=1; fi
-done < <(bg_paths)
-bg_enforce 2>/dev/null || true
-if [ "$changed" = "1" ]; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] banner_guard: banner dipulihkan/dikunci ulang" >> "$LOG" 2>/dev/null || true
-fi
-exit 0
 __EMBED_EOF__
 chmod 755 "$ETC/cron/banner_guard.sh" 2>/dev/null || true
 chmod 755 "$ETC/cron/bot_notify.sh"

@@ -1619,6 +1619,7 @@ fi
 BG_CANON="$ETC/config/banner.txt"
 BG_LOCK="$ETC/config/.banner.lock"
 BG_SHA="$ETC/config/banner.sha256"
+BG_BRAND="$ETC/config/brand.txt"
 
 bg_paths() {
   # salinan yang benar-benar dikonsumsi sshd/dropbear + salinan internal
@@ -1627,6 +1628,11 @@ bg_paths() {
     "${BASE}/etc/dropbear/banner" \
     "${BASE}/etc/mytunnel/banner.txt"
   [ -z "$BASE" ] && printf '%s\n' "/etc/dropbear/banner" "/etc/mytunnel/banner.txt"
+}
+
+# brand: lock-only (bukan salinan banner, jangan pernah ditimpa)
+bg_lock_targets() {
+  printf '%s\n' "$BG_BRAND"
 }
 
 bg_is_immutable() {
@@ -1655,6 +1661,7 @@ bg_unlock_file() {
 bg_unlock() {
   local f
   while IFS= read -r f; do bg_unlock_file "$f"; done < <(bg_paths)
+  while IFS= read -r f; do bg_unlock_file "$f"; done < <(bg_lock_targets)
   return 0
 }
 
@@ -1697,6 +1704,12 @@ bg_enforce() {
     bg_unlock_file "$BG_SHA"; sha256sum "$BG_CANON" 2>/dev/null | awk '{print $1}' > "$BG_SHA" 2>/dev/null; bg_lock_file "$BG_SHA"
   fi
   bg_unlock_file "$BG_LOCK"; echo "$(date +%s)" > "$BG_LOCK" 2>/dev/null; bg_lock_file "$BG_LOCK"
+  # brand: kunci saja, TIDAK disalin dari canonical
+  local b
+  while IFS= read -r b; do
+    [ -z "$b" ] && continue
+    bg_lock_file "$b" || true
+  done < <(bg_lock_targets)
   return $rc
 }
 
@@ -1708,7 +1721,29 @@ bg_status() {
     total=$((total + 1))
     bg_is_immutable "$f" && locked=$((locked + 1))
   done < <(bg_paths)
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    [ -f "$f" ] || continue
+    total=$((total + 1))
+    bg_is_immutable "$f" && locked=$((locked + 1))
+  done < <(bg_lock_targets)
   if [ "$locked" -eq "$total" ] && [ "$total" -gt 0 ]; then echo "PERMANENT ($locked/$total locked)"; else echo "AKTIF ($locked/$total locked)"; fi
+}
+
+# set brand (unik per VPS) -> unlock, tulis, kunci lagi
+bg_set_brand() {
+  local val="$1"
+  [ -z "$val" ] && return 1
+  bg_unlock_file "$BG_BRAND"
+  mkdir -p "$(dirname "$BG_BRAND")" 2>/dev/null || true
+  printf '%s\n' "$val" > "$BG_BRAND" 2>/dev/null || return 1
+  bg_lock_file "$BG_BRAND" || true
+  return 0
+}
+
+# brand tetap bisa dibaca walau immutable (read tidak terpengaruh +i)
+bg_get_brand() {
+  [ -f "$BG_BRAND" ] && head -1 "$BG_BRAND" 2>/dev/null || echo "SUNEK VPN"
 }
 __EMBED_EOF__
 chmod 644 "$ETC/lib/banner_guard.sh" 2>/dev/null || true
@@ -1978,10 +2013,9 @@ set_brand_name() {
   read -r nb
   [ -z "$nb" ] && { echo "Batal."; pause; return; }
   f="$BASE/config/brand.txt"
-  backup_file "$f" >/dev/null 2>&1 || true
-  if echo "$nb" > "$f" 2>/dev/null; then echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; else echo -e "${RED}Gagal tulis $f${RESET}"; fi
+  if command -v bg_set_brand >/dev/null 2>&1; then bg_set_brand "$nb" 2>/dev/null || { echo -e "${RED}Gagal set brand${RESET}"; pause; return; }; echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; else if echo "$nb" > "$f" 2>/dev/null; then echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; bg_enforce 2>/dev/null || true; else echo -e "${RED}Gagal tulis $f${RESET}"; fi; fi
+  if command -v bg_set_brand >/dev/null 2>&1; then bg_set_brand "$nb" 2>/dev/null || { echo -e "${RED}Gagal set brand${RESET}"; pause; return; }; echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; else backup_file "$f" >/dev/null 2>&1 || true; if echo "$nb" > "$f" 2>/dev/null; then echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; bg_enforce 2>/dev/null || true; else echo -e "${RED}Gagal tulis $f${RESET}"; fi; fi
   pause
-}
 
 check_services() {
   echo -e "${CYAN}=== CHECK SERVICES ===${RESET}"

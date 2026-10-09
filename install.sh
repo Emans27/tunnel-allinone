@@ -1046,11 +1046,7 @@ gen_uuid() {
 }
 
 gen_password() {
-  local p=""
-  if command -v openssl >/dev/null 2>&1; then p=$(openssl rand -base64 12 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c 12); fi
-  [ -z "$p" ] && p=$(head -c 24 /dev/urandom 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c 12)
-  [ -z "$p" ] && p=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 12)
-  echo "$p" | tr -d ' \n'
+  gen_uuid
 }
 
 _ensure_proto_db() {

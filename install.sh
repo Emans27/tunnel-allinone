@@ -233,8 +233,9 @@ get_uptime() { uptime -p 2>/dev/null | sed 's/up //' || awk '{printf "%d hours, 
 get_domain() { [ -f "${ETC_BASE}/config/domain.txt" ] && head -1 "${ETC_BASE}/config/domain.txt" 2>/dev/null | tr -d '\n' || echo "-"; }
 get_ip_cached() {
   if _cache_valid; then local c; c=$(_cache_get IP); [ -n "$c" ] && echo "$c" && return 0; fi
-  local ip; ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || curl -s --max-time 3 ipinfo.io/ip 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
-  ip=$(echo "$ip" | tr -d ' \n'); [ -z "$ip" ] && ip="-"; _cache_set IP "$ip"; echo "$ip"
+  # prefer IPv4: -4 paksa curl A record; fallback lokal difilter IPv6
+  local ip; ip=$(curl -s4 --max-time 3 ifconfig.me 2>/dev/null || curl -s4 --max-time 3 ipinfo.io/ip 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+  ip=$(echo "$ip" | tr -d ' \n' | grep -Eo '[0-9]+(\.[0-9]+){3}' | head -1); [ -z "$ip" ] && ip="-"; _cache_set IP "$ip"; echo "$ip"
 }
 get_city_cached() {
   if _cache_valid; then local c; c=$(_cache_get CITY); [ -n "$c" ] && echo "$c" && return 0; fi
@@ -1624,7 +1625,12 @@ ah_download_https(){
   return 0
 }
 ah_get_ip(){
-  curl -fsS --max-time 5 https://ifconfig.me 2>/dev/null || curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || echo "-"
+  # IPv4-only: hindari IPv6 dari curl default / hostname -I
+  local ip
+  ip=$(curl -fsS4 --max-time 5 https://ifconfig.me 2>/dev/null || curl -fsS4 --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null)
+  ip=$(printf '%s' "$ip" | tr -d ' \n' | grep -Eo '[0-9]+(\.[0-9]+){3}' | head -1)
+  [ -z "$ip" ] && ip="-"
+  printf '%s' "$ip"
 }
 ah_notify_admin(){
   local msg="$1"
@@ -11039,7 +11045,7 @@ main() {
   fi
   # Cek DNS A record (perlu dig/getent/host curl doh)
   local pub_ip dns_ip
-  pub_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || curl -s --max-time 5 https://ifconfig.me 2>/dev/null | head -c 32)
+  pub_ip=$(curl -s4 --max-time 5 https://api.ipify.org 2>/dev/null || curl -s4 --max-time 5 https://ifconfig.me 2>/dev/null | head -c 32)
   if command -v dig >/dev/null 2>&1; then dns_ip=$(dig +short A "$new" 2>/dev/null | head -1 | tr -d ' \n')
   elif command -v getent >/dev/null 2>&1; then dns_ip=$(getent hosts "$new" 2>/dev/null | awk '{print $1}' | head -1)
   elif command -v host >/dev/null 2>&1; then dns_ip=$(host -t A "$new" 2>/dev/null | awk '{print $4}' | head -1)

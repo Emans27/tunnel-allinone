@@ -1,5 +1,5 @@
 #!/bin/bash
-# mytunnel install.sh - SUNEK VPN v1.1.0 (TAHAP 1+2+3+4+5+6+8)
+# mytunnel install.sh - SUNEK VPN v1.8.0 (TAHAP 1+2+3+4+5+6+8)
 # Debian 11/12, Ubuntu 18/20/22/24 - disarankan Debian 12 / Ubuntu 22.04
 # Idempotent, testable via MYTUNNEL_PREFIX=... MYTUNNEL_DOMAIN=example.com bash install.sh --no-deps
 # Aman: wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh
@@ -1839,7 +1839,7 @@ show_status() {
 
 show_version() {
   local version client expiry
-  version=$(cat "$BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
+  version=$(cat "$BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.8.0")
   version="SUNEK-VPN $version"
   client=$(get_ip_cached 2>/dev/null || echo "-")
   expiry=$(get_expiry 2>/dev/null || echo "-")
@@ -11903,7 +11903,7 @@ render_login_dashboard(){
 
   # version info
   local version client expiry orderby
-  version=$(cat "$ETC_BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
+  version=$(cat "$ETC_BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.8.0")
   # TUNNELING format: SPv07.01.26 -> kita pakai SUNEK-VPN prefix, tampil apa adanya
   client=$(get_ip_cached 2>/dev/null || echo "-")
   expiry=$(get_expiry 2>/dev/null || echo "-")
@@ -12017,7 +12017,7 @@ cat > "$ETC/config/dropbear_versions.txt" << '__EMBED_EOF__'
 __EMBED_EOF__
 chmod 644 "$ETC/config/dropbear_versions.txt"
 cat > "$ETC/config/version.txt" << '__EMBED_EOF__'
-v1.1.0
+v1.8.0
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/version.txt"
@@ -12028,6 +12028,214 @@ __EMBED_EOF__
 chmod 644 "$ETC/config/repo.txt"
 cat > "$ETC/CHANGELOG.md" << '__EMBED_EOF__'
 # CHANGELOG
+
+## v1.8.0 — 2026-10-09 — IP publik salah baca (IPv6) + xray live-apply tanpa restart
+### Fixed
+- `get_ip_cached()` dan `ah_get_ip()` memakai `curl` tanpa `-4`, sehingga di host
+  dual-stack hasilnya bisa IPv6 (`2400:6180:...`) dan muncul di menu IP/client,
+  WARP, SlowDNS, dan notifikasi bot. Keduanya sekarang memaksa IPv4 (`curl -s4`)
+  dan mem-parse ulang hasilnya dengan regex IPv4; fallback `hostname -I` (yang
+  mengembalikan IPv6 lebih dulu) juga difilter.
+- `features/domain.sh`: `pub_ip` untuk pengecekan A-record ikut dipaksa IPv4 —
+  sebelumnya bisa membandingkan A-record IPv4 dengan IP publik IPv6 dan
+  melaporkan mismatch palsu.
+
+### Added
+- `_xray_live_apply()` di `lib/xray_helpers.sh`: add/del client dikirim ke instance
+  Xray yang sedang berjalan lewat Xray API (HandlerService, `xray api adu/rmu`),
+  lalu menulis flag `/run/mytunnel-live-apply` yang membuat `xray_reload()` melewati
+  restart. Klien baru langsung aktif tanpa memutus sesi lain.
+- `cron/bot_notify.sh` memuat `features_helpers.sh` (helper `fh_*` sebelumnya tidak
+  tersedia di konteks cron).
+
+### Verified (live, VPS 206.189.32.83)
+- IPv6 `2400:6180:0:d2:0:3:367f:8000` -> regex tolak (`[]`), IPv4 -> `206.189.32.83`.
+- `ah_get_ip` = `get_ip_cached` = `206.189.32.83`.
+- Repo <-> VPS: 70/70 file embedded identik (diff per-blok + tar pull ulang).
+- `bash -n` seluruh 70 blok + `install.sh` = 0 error.
+
+## v1.7.1 — 2026-10-08 — Port 80 (SSH + enhanced mode) tidak pernah terpasang
+### Fixed
+- `setup/httpmux.sh` ada di installer tapi **driver tidak pernah memanggilnya**, jadi
+  `mytunnel-httpmux` (listener :80) tidak pernah jalan. Akibatnya port 80 dipegang
+  server default bawaan paket nginx (`sites-enabled/default`, halaman "Welcome to nginx")
+  dan bukan oleh mux mytunnel -> SSH port 80 dan enhanced mode HTTP Custom mati.
+  Driver sekarang memanggilnya di tahap baru `[9c/13]` setelah nginx + tlsmux.
+- `install_httpmux()` sekarang menjalankan `_free_port80` lebih dulu: `sites-enabled/default`
+  yang memegang `listen 80 default_server` dipindah ke `/root/backup/` lalu nginx direload.
+  Tanpa ini httpmux gagal bind :80 (EADDRINUSE).
+- `mytunnel-httpmux.py` hanya punya dua cabang (CONNECT -> SSH, sisanya -> nginx :8080),
+  sehingga **raw SSH** di port 80 (klien mengirim banner `SSH-2.0-...`) dilempar ke nginx
+  dan menggantung sampai timeout. Ditambah deteksi banner SSH + cabang ketiga
+  `is_rawssh` yang meneruskan langsung ke SSH :22. Loop pembaca header juga berhenti
+  lebih awal saat melihat banner SSH (banner tidak pernah memuat `\r\n\r\n`, jadi
+  tanpa itu selalu menunggu sampai timeout).
+- Peringatan "masih ada listener di :80" tidak lagi muncul saat httpmux sendiri yang
+  memegang port itu.
+
+### Verified (live, VPS 206.189.32.83, dari host luar)
+- `mytunnel-httpmux` active, listener `0.0.0.0:80`; `/etc/nginx/sites-enabled/` kosong.
+- HTTP biasa :80 -> 204 (diteruskan ke nginx :8080).
+- Raw SSH :80 -> banner `SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.17` + key exchange;
+  `ssh -p 80` dari luar berhasil sampai MOTD.
+- CONNECT enhanced :80 -> `HTTP/1.1 200 Connection Established` + banner SSH.
+- `bash -n` + shellcheck -S error = 0 (install.sh); python `py_compile` OK.
+
+## v1.7.0 — 2026-10-08 — Fix UDP-Custom (1-65535) tidak pernah terpasang
+### Fixed
+- `setup/udp-custom.sh` menunjuk URL rilis yang **404**
+  (`.../releases/latest/download/udp-custom`) sehingga binary tidak pernah terunduh.
+  Diganti ke lokasi file yang benar + **SHA256 dipin** dan diverifikasi sebelum
+  binary dipasang (gagal = batal, tidak dieksekusi).
+- `--listen $range` adalah flag yang **tidak ada** di binary ePro v1.4. Field
+  `listen` hanya menerima **satu port**; rentang 1-65535 ditangani binary lewat
+  iptables DNAT (PREROUTING) untuk semua port kecuali `--exclude`.
+  Unit systemd diperbaiki jadi `server --config <json> --exclude <ports>`.
+- Config JSON `/etc/udp/config.json` tidak pernah dibuat (script lama hanya menulis
+  file shell vars). Sekarang dibuat dengan `listen`, buffer, dan auth.
+- Rule firewall tidak pernah ditambahkan sehingga UDP tetap diblokir. Karena DNAT
+  terjadi sebelum filter/INPUT, firewall melihat port hasil terjemahan — jadi rule
+  yang benar hanya `LISTEN_PORT/udp` (bukan seluruh rentang). `ufw allow` ditambah
+  otomatis (install) dan dihapus saat uninstall.
+- `_status` / `_install` / `_uninstall` dirapikan: cek SHA, laporan jumlah DNAT,
+  pembersihan DNAT saat uninstall, perbaikan interpolasi warna (`${RED:-...}`) yang
+  kehilangan kurung kurawal.
+- `_mt_port_active`: kenali `udp-custom` di samping `mytunnel-udp-custom`.
+
+### Verified (live, VPS 206.189.32.83)
+- `udp-custom` active, listen UDP :36712; 22 DNAT rule (1-65535 minus exclude).
+- SHA256 binary cocok dengan yang dipin.
+- Paket uji dari luar ke port acak dalam rentang: DNAT + INPUT ACCEPT naik,
+  tidak ada UFW BLOCK, sampai ke socket aplikasi.
+- `bash -n` + shellcheck -S error: 0 pada install.sh dan script embedded.
+
+## v1.6.2 — 2026-10-08 — Notif recovery disamakan + hapus ssh_compact_line
+### Changed
+- `do_recovery()` (menu SSH no. 11/12): notif Telegram kini pakai
+  `ah_notify_admin_mono "$(ssh_account_block ...)"` -> blok penuh mono per baris,
+  sama seperti create/trial (sebelumnya satu baris `host:443@u:p & host:80@u:p`).
+
+### Removed
+- `ssh_compact_line()` — sudah tidak dipakai siapa pun (dead code).
+
+## v1.6.1 — 2026-10-08 — Baris ringkas SSH dipisah jadi 2 baris
+### Changed
+- `ssh_account_block()`: baris ringkas akun SSH kini **dua baris terpisah**
+  (`host:443@user:pass` lalu `host:80@user:pass`), bukan satu baris digabung spasi.
+- Di Telegram, tiap baris tetap dibungkus `<code>` sendiri -> dua chip mono terpisah.
+
+## v1.6.0 — 2026-10-08 — Blok akun SSH (mono per baris) + create/trial
+### Added
+- `ssh_account_block()` di `lib/ssh_helpers.sh`: cetak blok akun SSH persis
+  (HOST/Username/Password, Expired, TLS/NoneTLS/Any/OpenSSH/Dropbear, lalu
+  SlowDNS/UDP-Custom/OHP+SSH/Squid/UDPGW/OpenVPN TCP+SSL+UDP+DNS/OHP+OVPN,
+  baris ringkas `host:443@user:pass  host:80@user:pass`, dan link config).
+  Nilai port dibaca dari `ports.conf` (dinamis).
+- `ah_notify_admin_mono()` di `lib/advanced_helpers.sh`: kirim blok ke Telegram
+  dengan tiap baris dibungkus `<code>` (parse_mode=HTML) -> mono per baris,
+  bukan satu code block `<pre>`. Escape `&`/`<`/`>`; fallback teks biasa.
+
+### Changed
+- `print_ssh_account_info()` = jarak + `ssh_account_block` + jarak (terminal).
+- Notif Telegram saat **create** dan **trial** akun SSH kini mengirim blok lengkap
+  sebagai mono per baris (sebelumnya hanya baris ringkas).
+- Pemisah blok pakai 36 tanda minus biasa (`------------------------------------`),
+  bukan karakter box.
+
+### Unchanged
+- Service, port, config VPS: tidak diubah (hanya file di `/etc/mytunnel`).
+- `main` tidak disentuh; kerja ini di branch `final-443-stream`.
+
+### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
+- Blok persis sesuai spec: dash 36, label rata kolom 16, dua spasi di baris ringkas.
+- Telegram API balas `"ok":true`; payload `<code>...</code>` per baris.
+- `ssh_create` dgn username yang sudah ada -> pesan error + exit 2, DB tidak bertambah.
+- `bash -n` + shellcheck -S error: 0.
+
+## v1.5.0 — 2026-10-08 — Baris ringkas akun SSH + notif Telegram mono
+### Added
+- `ssh_compact_line(user, pass)` di `lib/ssh_helpers.sh`: hasilkan satu baris ringkas
+  `host:TLS@user:pass & host:NONTLS@user:pass` (port diambil dari `ports.conf`,
+  ambil port pertama dari `TLS_PORT` dan `NONTLS_PORT`).
+- `print_ssh_account_info` mencetak baris ringkas itu di akhir blok (terminal).
+
+### Changed
+- Notif Telegram saat buat akun SSH (create/trial/recovery) kini mengirim HANYA baris
+  ringkas dalam mono (inline code), bukan seluruh blok `Account Created Successfully`.
+  Contoh: `` `host:443@user:pass & host:80@user:pass` ``
+
+### Verified
+- Harness: baris ringkas = `tesc.sunekvip.cc.cd:443@emon:emon & tesc.sunekvip.cc.cd:80@emon:emon`;
+  notif Telegram = `` `tesc.sunekvip.cc.cd:443@emon:emon & tesc.sunekvip.cc.cd:80@emon:emon` ``;
+  blok terminal tetap tampil + baris ringkas di akhir. `bash -n`/shellcheck -S error 0.
+
+## v1.4.0 — 2026-10-08 — Perbaikan stunnel/tlsmux + guard listen 443 + label vless
+### Fixed
+- **CRITICAL** `configure-final-443.sh`: `apply_http_tls_listen()` sekarang MENGHAPUS
+  `listen 443` / `listen [::]:443` dari `mytunnel.conf` saat menambah `listen 127.0.0.1:9443`.
+  Sebelumnya 443 dipegang nginx (http) DAN blok `stream ssl_preread` -> nginx gagal start
+  (`bind() to 0.0.0.0:443 failed (98)`) saat reload/restart. Terverifikasi live: skenario
+  regresi (listen 443 ada) kini lolos, nginx tetap active.
+- `setup/tlsmux.sh`: kini self-contained — tulis `mytunnel-tlsmux.py`, bikin systemd unit
+  `mytunnel-tlsmux.service`, install stunnel4 (apt), tulis `/etc/stunnel/stunnel.conf`
+  (`accept 127.0.0.1:4443 -> 127.0.0.1:1443`), bikin `stunnel.pem` (cert LE, fallback
+  self-signed), bikin unit `mytunnel-stunnel.service`, matikan SysV `stunnel4`.
+  Sebelumnya file ini hanya menulis python + chmod; tidak ada unit/conf.
+
+### Changed
+- `install.sh`: `setup/tlsmux.sh` kini DIPANGGIL di driver sebagai `[9b/13]` (setelah nginx).
+  Sebelumnya ter-embed tapi tidak pernah dieksekusi -> stunnel tak terpasang, prasyarat
+  `configure-final-443.sh` tidak terpenuhi.
+- Label output create VLESS disederhanakan jadi 5 (sesuai transport yang tersisa):
+  `VLESS WS TLS`, `VLESS WS NO TLS`, `VLESS GRPC`, `VLESS Upgrade TLS`, `VLESS Upgrade NO TLS`.
+  Baris label XHTTP yang tersisa (dead, tanpa link pasangannya) dihapus.
+
+### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
+- stunnel dihapus (apt remove) -> `tlsmux.sh` memasangnya kembali; unit tlsmux+stunnel active,
+  listen 127.0.0.1:1443 dan 127.0.0.1:4443.
+- tlsmux routing: banner SSH -> sshd (`SSH-2.0-OpenSSH_8.9p1`), HTTP -> nginx 8080 (204).
+- Regresi listen 443: `configure-final-443.sh` menghapus 443, `nginx -t` lulus, nginx active.
+- Idempoten: run kedua -> "sistem sudah memakai konfigurasi final — tidak ada yang diubah".
+- Transport: WS 443, gRPC 443 pass (exit IP 206.189.32.83); ALPN h2 -> 9443; no-ALPN -> stunnel 4443.
+
+## v1.3.0 — 2026-10-08 — Hapus XHTTP (tidak kompatibel)
+### Removed
+- XHTTP transport dihapus total dari stack (9 inbounds: ws/grpc/httpupgrade, sebelumnya 12).
+- Inbound `vmess-xh`/`vless-xh`/`trojan-xh` (port 10031-10033) dihapus dari config Xray.
+- nginx `location /xvmess`, `/xvless`, `/xtrojan` dihapus dari mytunnel-locations.inc.
+- Link generator: 2 baris `type=xhttp` per akun vless dihapus; menu info `path xhttp` dihapus.
+- Doctor check: ambang "PARSIAL" 4 -> 3 transports.
+- Fungsi `_proto_xhttp_path()` dihapus.
+
+### Why
+Xray server (26.3.27) memakai `xhttp` dengan path dinamis UUID (`/<uuid>?x_padding=`),
+sementara config memakai path statis `/xvmess`. Hasil uji live: handshake selalu 404
+dari Xray (nginx routing sudah benar, terbukti via debug log `test location`).
+Tidak memperbaiki tanpa menyelaraskan versi klien/server, jadi XHTTP dihapus.
+
+### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
+- WS 443, WS 8443, gRPC 443, HTTPUpgrade 443: exit IP 206.189.32.83 (PASS)
+- ALPN `h2`/`http/1.1` -> nginx 9443; tanpa ALPN -> stunnel 4443 (PASS)
+- `bash -n` exit 0, shellcheck -S error exit 0, test-mode install PASS
+
+## v1.2.0 — 2026-10-08 — Final 443 stream + traffic fix
+### Added
+- `configure-final-443.sh` as a separate, idempotent final-443 migration.
+- nginx `stream ssl_preread`: ALPN `h2`/`http/1.1` to local `9443`; legacy fallback to stunnel `127.0.0.1:4443`.
+- nginx `worker_connections 4096` and `worker_rlimit_nofile 65535`.
+- Persistent conntrack tuning: `nf_conntrack_max=65536`, `nf_conntrack_tcp_timeout_established=7200`.
+- Timestamped backups, `--dry-run`, `--rollback`, automatic rollback on failed `nginx -t`.
+
+### Fixed
+- Traffic iface auto-detect (`_traffic_iface`, `ip route` default) — replaces hardcoded `enp3s0` that broke on `eth0`/`ens3`/`ens18` VPS.
+- WIB day bucket single source of truth (`_traffic_day_idx`) — `get_traffic_day`, `get_traffic_rx_tx`, and fallback now read the same `day[]` index (previously inconsistent `-1` vs `-2`).
+- `get_traffic_*` use `vnstat --json` + `jq` (robust field mapping vs `--oneline | awk -F';'`); `jq` guard added to fallback.
+- `curl -4` on all Telegram API calls (avoids IPv6 failure path).
+- Bot long-polling: persist `OFFSET=$((update_id+1))` per update — prevents reprocessing the same message.
+
+### Note
+- Traffic helpers verify: `bash -n` OK, shellcheck 0 error, 0 hardcoded iface, day-index unit tests 4/4 PASS.
+- Full 443 stream path (nginx `ssl_preread`/ALPN split) still needs LIVE per-transport testing on a real VPS before relying on it in production.
 
 ## v1.1.0 — 2026-10-02 — Review Akhir BAGIAN A-C
 ### Added
@@ -12055,11 +12263,10 @@ cat > "$ETC/CHANGELOG.md" << '__EMBED_EOF__'
 - TAHAP 6: bot+warp+routing+slowdns (optional, admin-only, keep_outbounds preserve)
 - TAHAP 8: SSH extra (Squid/UDPGW/OHP/OpenVPN/SlowDNS/UDP-Custom) exclusive 80/443
 
-
 __EMBED_EOF__
 chmod 644 "$ETC/CHANGELOG.md"
 cat > "$ETC/VERSION" << '__EMBED_EOF__'
-v1.1.0
+v1.8.0
 
 __EMBED_EOF__
 chmod 644 "$ETC/VERSION"
@@ -12615,11 +12822,11 @@ _log "cron installed"
 
 echo ""
 echo -e "${GREEN}══════════════════════════════════════════════════${RESET}"
-echo -e "${GREEN}  ✓ Install MyTunnel $(cat "$ETC/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0") selesai${RESET}"
+echo -e "${GREEN}  ✓ Install MyTunnel $(cat "$ETC/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.8.0") selesai${RESET}"
 echo -e "${GREEN}══════════════════════════════════════════════════${RESET}"
 DOMAIN=$(cat "$ETC/config/domain.txt" 2>/dev/null || echo "-")
 BRAND=$(cat "$ETC/config/brand.txt" 2>/dev/null || echo "SUNEK VPN")
-VER=$(cat "$ETC/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.1.0")
+VER=$(cat "$ETC/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.8.0")
 echo -e "  ${BOLD}Versi   :${RESET} $VER"
 echo -e "  ${BOLD}Domain  :${RESET} ${CYAN}$DOMAIN${RESET}"
 echo -e "  ${BOLD}Brand   :${RESET} $BRAND"

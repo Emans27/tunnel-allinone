@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## v1.8.0 — 2026-10-09 — IP publik salah baca (IPv6) + xray live-apply tanpa restart
+### Fixed
+- `get_ip_cached()` dan `ah_get_ip()` memakai `curl` tanpa `-4`, sehingga di host
+  dual-stack hasilnya bisa IPv6 (`2400:6180:...`) dan muncul di menu IP/client,
+  WARP, SlowDNS, dan notifikasi bot. Keduanya sekarang memaksa IPv4 (`curl -s4`)
+  dan mem-parse ulang hasilnya dengan regex IPv4; fallback `hostname -I` (yang
+  mengembalikan IPv6 lebih dulu) juga difilter.
+- `features/domain.sh`: `pub_ip` untuk pengecekan A-record ikut dipaksa IPv4 —
+  sebelumnya bisa membandingkan A-record IPv4 dengan IP publik IPv6 dan
+  melaporkan mismatch palsu.
+
+### Added
+- `_xray_live_apply()` di `lib/xray_helpers.sh`: add/del client dikirim ke instance
+  Xray yang sedang berjalan lewat Xray API (HandlerService, `xray api adu/rmu`),
+  lalu menulis flag `/run/mytunnel-live-apply` yang membuat `xray_reload()` melewati
+  restart. Klien baru langsung aktif tanpa memutus sesi lain.
+- `cron/bot_notify.sh` memuat `features_helpers.sh` (helper `fh_*` sebelumnya tidak
+  tersedia di konteks cron).
+
+### Verified (live, VPS 206.189.32.83)
+- IPv6 `2400:6180:0:d2:0:3:367f:8000` -> regex tolak (`[]`), IPv4 -> `206.189.32.83`.
+- `ah_get_ip` = `get_ip_cached` = `206.189.32.83`.
+- Repo <-> VPS: 70/70 file embedded identik (diff per-blok + tar pull ulang).
+- `bash -n` seluruh 70 blok + `install.sh` = 0 error.
+
 ## v1.7.1 — 2026-10-08 — Port 80 (SSH + enhanced mode) tidak pernah terpasang
 ### Fixed
 - `setup/httpmux.sh` ada di installer tapi **driver tidak pernah memanggilnya**, jadi

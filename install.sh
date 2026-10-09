@@ -1713,6 +1713,116 @@ bg_status() {
 }
 __EMBED_EOF__
 chmod 644 "$ETC/lib/brand_guard.sh" 2>/dev/null || true
+cat > "$ETC/lib/brand_guard.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel lib/brand_guard.sh - brand permanen (immutable + restore dari canon)
+# shellcheck disable=SC1091,SC1090,SC2154
+# Banner SSH tetap BEBAS diubah (menu 10). Yang dikunci hanya BRAND NAME.
+# Brand di-set saat instalasi (--brand "Nama"), lalu file-nya chattr +i supaya
+# tidak bisa diubah/dihapus/di-rename bahkan oleh root. Canon root-only dipakai
+# untuk memulihkan kalau atribut sempat dilepas.
+if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
+  ETC="$BASE"
+else
+  BASE="${MYTUNNEL_PREFIX:-}"
+  ETC="${BASE}/etc/mytunnel"
+fi
+BG_BRAND="$ETC/config/brand.txt"
+BG_CANON="$ETC/config/.brand.canon"
+BG_LOCK="$ETC/config/.brand.lock"
+BG_LOG="${BASE}/var/log/mytunnel.log"
+BG_DEFAULT="SUNEK VPN"
+
+bg_is_immutable() {
+  local f="$1" a
+  command -v lsattr >/dev/null 2>&1 || return 1
+  [ -e "$f" ] || return 1
+  a=$(lsattr -d "$f" 2>/dev/null | awk '{print $1}')
+  [ -n "$a" ] || return 1
+  case "$a" in *i*) return 0 ;; *) return 1 ;; esac
+}
+
+bg_lock_file() {
+  local f="$1"
+  [ -e "$f" ] || return 0
+  bg_is_immutable "$f" && return 0
+  chattr +i "$f" 2>/dev/null
+}
+
+bg_unlock_file() {
+  local f="$1"
+  [ -e "$f" ] || return 0
+  bg_is_immutable "$f" || return 0
+  chattr -i "$f" 2>/dev/null
+}
+
+# baca brand aktif (read tidak terpengaruh +i)
+bg_read() {
+  local v
+  if [ -f "$BG_BRAND" ]; then
+    v=$(head -1 "$BG_BRAND" 2>/dev/null | tr -d '\r\n')
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  fi
+  printf '%s' "$BG_DEFAULT"
+}
+
+bg_canon_read() {
+  local v
+  if [ -f "$BG_CANON" ]; then
+    v=$(head -1 "$BG_CANON" 2>/dev/null | tr -d '\r\n')
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  fi
+  printf ''
+}
+
+# dipakai installer: tulis brand + canon lalu kunci
+bg_set() {
+  local v="$1"
+  [ -z "$v" ] && v="$BG_DEFAULT"
+  bg_unlock_file "$BG_BRAND"
+  bg_unlock_file "$BG_CANON"
+  mkdir -p "$ETC/config" 2>/dev/null || true
+  printf '%s\n' "$v" > "$BG_BRAND" 2>/dev/null || return 1
+  printf '%s\n' "$v" > "$BG_CANON" 2>/dev/null || true
+  chmod 644 "$BG_BRAND" "$BG_CANON" 2>/dev/null || true
+  bg_lock_file "$BG_CANON"
+  bg_lock_file "$BG_BRAND"
+  return 0
+}
+
+# paksa: brand == canon, lalu kunci; dipanggil installer + cron
+bg_enforce() {
+  local canon cur rc=0 changed=0
+  canon=$(bg_canon_read)
+  [ -z "$canon" ] && canon="$BG_DEFAULT"
+  cur=$(bg_read)
+  if [ ! -f "$BG_CANON" ] || [ "$canon" != "$cur" ]; then
+    bg_unlock_file "$BG_CANON"
+    printf '%s\n' "$canon" > "$BG_CANON" 2>/dev/null || rc=1
+    chmod 644 "$BG_CANON" 2>/dev/null || true
+  fi
+  if [ "$cur" != "$canon" ]; then
+    bg_unlock_file "$BG_BRAND"
+    printf '%s\n' "$canon" > "$BG_BRAND" 2>/dev/null || rc=1
+    changed=1
+  fi
+  chmod 644 "$BG_BRAND" 2>/dev/null || true
+  bg_lock_file "$BG_CANON" || rc=1
+  bg_lock_file "$BG_BRAND" || rc=1
+  if [ "$changed" = "1" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] brand_guard: brand dikembalikan ke '$canon'" >> "$BG_LOG" 2>/dev/null || true
+  fi
+  return $rc
+}
+
+bg_status() {
+  local b s
+  b=$(bg_read)
+  if bg_is_immutable "$BG_BRAND"; then s="PERMANEN (terkunci)"; else s="TERBUKA (bisa diubah)"; fi
+  printf 'brand=%s | %s' "$b" "$s"
+}
+__EMBED_EOF__
+chmod 644 "$ETC/lib/brand_guard.sh" 2>/dev/null || true
 chmod 644 "$ETC/lib/banner_guard.sh" 2>/dev/null || true
 chmod 644 "$ETC/lib/features_helpers.sh"
 cat > "$ETC/lib/advanced_helpers.sh" << '__EMBED_EOF__'
@@ -9354,6 +9464,17 @@ for s in xray nginx dropbear mytunnel-sshws mytunnel-bot mytunnel-slowdns; do
 done
 
 __EMBED_EOF__
+cat > "$ETC/cron/brand_guard.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel cron/brand_guard.sh - enforce brand TETAP (immutable + restore dari canon)
+# shellcheck disable=SC1091,SC1090,SC2154
+BASE="${MYTUNNEL_PREFIX:-}"
+ETC="${BASE}/etc/mytunnel"
+if [ -f "$ETC/lib/brand_guard.sh" ]; then . "$ETC/lib/brand_guard.sh" 2>/dev/null || exit 0; else exit 0; fi
+bg_enforce >/dev/null 2>&1 || true
+exit 0
+__EMBED_EOF__
+chmod 755 "$ETC/cron/brand_guard.sh" 2>/dev/null || true
 chmod 755 "$ETC/cron/banner_guard.sh" 2>/dev/null || true
 chmod 755 "$ETC/cron/bot_notify.sh"
 cat > "$ETC/bot/bot.sh" << '__EMBED_EOF__'

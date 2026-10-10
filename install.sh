@@ -9552,10 +9552,10 @@ handle_update(){
   [ -z "$doc_size" ] && doc_size=0
   if [ -n "$doc_id" ]; then
     if [ "$chat_id" != "$ADMIN_ID" ] && [ "$from_id" != "$ADMIN_ID" ]; then return 0; fi
-    # hanya terima .tar.gz / .tgz / .gz (backup) - tolak file lain
+    # hanya terima .zip / .tar.gz / .tgz / .gz (backup) - tolak file lain
     case "$doc_name" in
-      *.tar.gz|*.tgz|*.tar|*.gz) ;;
-      *) send_msg "$ADMIN_ID" "Restore ditolak: kirim file backup .tar.gz (mytunnel-*.tar.gz)"; return 0;;
+      *.zip|*.tar.gz|*.tgz|*.tar|*.gz) ;;
+      *) send_msg "$ADMIN_ID" "Restore ditolak: kirim file backup .zip / .tar.gz (mytunnel-*.zip)"; return 0;;
     esac
     if [ "$doc_size" -gt 25000000 ] 2>/dev/null; then send_msg "$ADMIN_ID" "File terlalu besar (>25MB)"; return 0; fi
     local reply
@@ -9586,7 +9586,7 @@ Bot tidak bisa buat akun — buat/hapus lewat menu VPS.
 /status - info sistem
 /list - daftar akun (ringkas)
 /backup - kirim file backup terbaru
-Kirim file .tar.gz backup sebagai document untuk restore (hanya admin, max 25MB)."
+Kirim file backup .zip (atau .tar.gz lama) sebagai document untuk restore (hanya admin, max 25MB)."
       ;;
     /status)
       reply=$(bh_status_text 2>/dev/null || echo "status error")
@@ -9775,13 +9775,21 @@ bh_backup_send(){
   [ -f "$conf" ] || { echo "bot.conf tidak ada"; return 1; }
   # shellcheck disable=SC1090
   . "$conf" 2>/dev/null || true
-  local bk
-  bk=$(ls -1t "${BASE}/root/backup"/mytunnel-*.tar.gz 2>/dev/null | head -1)
-  [ -z "$bk" ] && bk=$(ls -1t /root/backup/mytunnel-*.tar.gz 2>/dev/null | head -1)
+  local bk ext
+  for ext in zip tar.gz; do
+    bk=$(ls -1t "${BASE}/root/backup"/mytunnel-*."$ext" 2>/dev/null | head -1)
+    [ -n "$bk" ] && break
+    bk=$(ls -1t /root/backup/mytunnel-*."$ext" 2>/dev/null | head -1)
+    [ -n "$bk" ] && break
+  done
   if [ -z "$bk" ] || [ ! -f "$bk" ]; then
     if [ -x "$ETC/features/backup.sh" ]; then bash "$ETC/features/backup.sh" 2>&1 | tail -n 10; fi
-    bk=$(ls -1t "${BASE}/root/backup"/mytunnel-*.tar.gz 2>/dev/null | head -1)
-    [ -z "$bk" ] && bk=$(ls -1t /root/backup/mytunnel-*.tar.gz 2>/dev/null | head -1)
+    for ext in zip tar.gz; do
+      bk=$(ls -1t "${BASE}/root/backup"/mytunnel-*."$ext" 2>/dev/null | head -1)
+      [ -n "$bk" ] && break
+      bk=$(ls -1t /root/backup/mytunnel-*."$ext" 2>/dev/null | head -1)
+      [ -n "$bk" ] && break
+    done
   fi
   [ -f "$bk" ] || { echo "Backup tidak ditemukan"; return 1; }
   echo "Mengirim backup $(basename "$bk")..."
@@ -9796,7 +9804,7 @@ bh_restore_from_telegram(){
   # shellcheck disable=SC1090
   . "$conf" 2>/dev/null || true
   [ -z "${BOT_TOKEN:-}" ] || [ -z "${ADMIN_ID:-}" ] && { echo "Token/admin kosong"; return 1; }
-  [[ "$file_name" == *.tar.gz || "$file_name" == *.tgz || "$file_name" == *.tar || "$file_name" == *.gz ]] || { echo "Nama file harus .tar.gz"; return 1; }
+  [[ "$file_name" == *.zip || "$file_name" == *.tar.gz || "$file_name" == *.tgz || "$file_name" == *.tar || "$file_name" == *.gz ]] || { echo "Nama file harus .zip atau .tar.gz"; return 1; }
   echo "Restore: ambil $file_name ..."
   local resp fpath
   resp=$(curl -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/getFile" -d "file_id=${file_id}" 2>&1 || true)
@@ -9805,32 +9813,97 @@ bh_restore_from_telegram(){
   [ -z "$fpath" ] && { echo "file_path kosong"; return 1; }
   local tmp_dir tmp_file
   tmp_dir=$(mktemp -d 2>/dev/null || echo "/tmp")
-  tmp_file="$tmp_dir/mytunnel-restore-$(date +%s 2>/dev/null).tar.gz"
+  tmp_file="$tmp_dir/mytunnel-restore-$(date +%s 2>/dev/null).${file_name##*.}"
   # download via file api (HTTPS only)
   if ! curl -fsS --proto '=https' --tlsv1.2 --max-time 60 "https://api.telegram.org/file/bot${BOT_TOKEN}/${fpath}" -o "$tmp_file" 2>&1; then echo "Download gagal"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
   chmod 600 "$tmp_file" 2>/dev/null || true
   local sz; sz=$(stat -c %s "$tmp_file" 2>/dev/null || stat -f %z "$tmp_file" 2>/dev/null || echo 0)
   if [ "$sz" -gt 25000000 ] 2>/dev/null; then echo "File >25MB ditolak"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
-  if ! tar tzf "$tmp_file" >/dev/null 2>&1 && ! tar tf "$tmp_file" >/dev/null 2>&1; then echo "Bukan arsip tar valid"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  # validasi isi arsip: .zip -> python3 zipfile, tar -> tar tf
+  local _has_etc=0
+  case "$tmp_file" in
+    *.zip)
+      command -v python3 >/dev/null 2>&1 || { echo "python3 tidak ada (butuh untuk .zip)"; rm -rf "$tmp_dir"; return 1; }
+      python3 -c '
+import sys, zipfile
+try:
+    n = zipfile.ZipFile(sys.argv[1]).namelist()
+except Exception:
+    sys.exit(2)
+sys.exit(0 if any(x.startswith(("etc/mytunnel/", "./etc/mytunnel/")) for x in n) else 1)' "$tmp_file" 2>/dev/null
+      case $? in
+        0) _has_etc=1 ;;
+        1) echo "Arsip tidak berisi etc/mytunnel — ditolak"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1 ;;
+        *) echo "Bukan arsip zip valid"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1 ;;
+      esac
+      ;;
+    *)
+      tar tzf "$tmp_file" >/dev/null 2>&1 || tar tf "$tmp_file" >/dev/null 2>&1 || { echo "Bukan arsip tar valid"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; }
+      tar tf "$tmp_file" 2>/dev/null | grep -q "etc/mytunnel" && _has_etc=1
+      ;;
+  esac
   # must contain etc/mytunnel (safety)
-  if ! tar tf "$tmp_file" 2>/dev/null | grep -q "etc/mytunnel" ; then echo "Arsip tidak berisi etc/mytunnel — ditolak"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
-  # backup current before restore
-  local pre_arch bk_dir
+  [ "$_has_etc" = "1" ] || { echo "Arsip tidak berisi etc/mytunnel — ditolak"; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; }
+  # backup current before restore (selaras do_backup: zip dulu, tar.gz fallback)
+  local pre_arch bk_dir pre_ok=1
   if [ -n "$BASE" ]; then bk_dir="${BASE}/root/backup"; else bk_dir="/root/backup"; fi
   mkdir -p "$bk_dir" 2>/dev/null || true
-  pre_arch="$bk_dir/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).tar.gz"
-  if [ -n "$BASE" ]; then tar -czf "$pre_arch" -C "$BASE" etc/mytunnel 2>/dev/null || true; else tar -czf "$pre_arch" -C / etc/mytunnel usr/local/etc/xray/config.json 2>/dev/null || true; fi
+  pre_arch="$bk_dir/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).zip"
+  if command -v python3 >/dev/null 2>&1; then
+    MTK_ROOT="${BASE:-/}" MTK_ITEMS="etc/mytunnel usr/local/etc/xray/config.json" python3 - "$pre_arch" <<'PYPY' 2>/dev/null || pre_ok=0
+import os, sys, zipfile
+root = os.environ["MTK_ROOT"]
+n = 0
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    for rel in os.environ["MTK_ITEMS"].split():
+        p = os.path.normpath(os.path.join(root, rel))
+        if not os.path.exists(p):
+            continue
+        if os.path.isdir(p):
+            for base, _dirs, fs in os.walk(p):
+                for f in fs:
+                    z.write(os.path.join(base, f), os.path.relpath(os.path.join(base, f), root))
+                    n += 1
+        else:
+            z.write(p, os.path.relpath(p, root))
+            n += 1
+sys.exit(0 if n else 1)
+PYPY
+  else
+    pre_ok=0
+  fi
+  if [ "$pre_ok" -ne 0 ]; then :; else
+    rm -f "$pre_arch" 2>/dev/null
+    pre_arch="$bk_dir/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).tar.gz"
+    if [ -n "$BASE" ]; then tar -czf "$pre_arch" -C "$BASE" etc/mytunnel 2>/dev/null || true; else tar -czf "$pre_arch" -C / etc/mytunnel usr/local/etc/xray/config.json 2>/dev/null || true; fi
+  fi
   chmod 600 "$pre_arch" 2>/dev/null || true
   [ -s "$pre_arch" ] || { rm -f "$pre_arch" 2>/dev/null || true; pre_arch=""; }
+  # Ekstrak arsip (.zip via python3, tar via tar) ke dest. Exit non-nul kalau gagal.
+  # Definisi lokal: skrip bot tak punya _do_extract dari features/backup.sh.
+  _extract_any() { # $1=arsip  $2=dest
+    case "$1" in
+      *.zip)
+        command -v python3 >/dev/null 2>&1 || return 1
+        python3 - "$1" "$2" <<'PYPY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    z.extractall(sys.argv[2])
+    sys.exit(0 if z.infolist() else 1)
+PYPY
+        ;;
+      *) tar -xzf "$1" -C "$2" 2>&1 | head -n 20 ;;
+    esac
+  }
   echo "Ekstrak $file_name ..."
-  local ok=1 tar_err
-  # brand.txt/.brand.canon bisa chattr +i -> tar gagal "File exists". Buka sementara.
+  local ok=1 tar_err _dest="${BASE:-/}"
+  # brand.txt/.brand.canon bisa chattr +i -> ekstrak gagal "File exists". Buka sementara.
   if [ -f "$ETC/lib/brand_guard.sh" ]; then . "$ETC/lib/brand_guard.sh" 2>/dev/null || true; fi
   if command -v bg_unlock_file >/dev/null 2>&1; then
     bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
     bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
   fi
-  tar_err=$(tar -xzf "$tmp_file" -C / 2>&1) || ok=0
+  tar_err=$(_extract_any "$tmp_file" "$_dest" 2>&1) || ok=0
   [ -n "$tar_err" ] && printf '%s\n' "$tar_err" | head -n 20
   command -v bg_enforce >/dev/null 2>&1 && bg_enforce >/dev/null 2>&1 || true
   if [ "$ok" -eq 0 ]; then
@@ -9840,7 +9913,7 @@ bh_restore_from_telegram(){
         bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
         bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
       fi
-      tar -xzf "$pre_arch" -C / 2>/dev/null || true
+      _extract_any "$pre_arch" "$_dest" >/dev/null 2>&1 || true
       command -v bg_enforce >/dev/null 2>&1 && bg_enforce >/dev/null 2>&1 || true
     fi
     rm -rf "$tmp_dir" 2>/dev/null || true; return 1
@@ -11204,50 +11277,71 @@ BOLD="${BOLD:-\033[1m}"; DIM="${DIM:-\033[2m}"
 
 pause() { [ -n "$MYTUNNEL_PREFIX" ] && return 0; [ ! -t 0 ] && return 0; echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 
+# Backup format: .zip (python3 zipfile stdlib). Fallback tar.gz kalau python3 absen.
+# Semua item adalah path RELATIF terhadap TAR_ROOT, dan nama entry di dalam arsip
+# juga relatif terhadap TAR_ROOT, supaya restore bisa langsung ke TAR_ROOT baik di
+# produksi (TAR_ROOT=/) maupun test mode (TAR_ROOT=$MYTUNNEL_PREFIX).
+_backup_items() {
+  BACKUP_ITEMS=()
+  [ -d "$ETC" ] && BACKUP_ITEMS+=("etc/mytunnel")
+  [ -f "$XRAY_CFG" ] && BACKUP_ITEMS+=("${XRAY_CFG#"$TAR_ROOT"}")
+  [ -d "$TAR_ROOT/etc/openvpn" ] && BACKUP_ITEMS+=("etc/openvpn")
+  [ -f "$TAR_ROOT/etc/nginx/conf.d/mytunnel.conf" ] && BACKUP_ITEMS+=("etc/nginx/conf.d/mytunnel.conf")
+  [ -d "$TAR_ROOT/etc/mytunnel/cert" ] && BACKUP_ITEMS+=("etc/mytunnel/cert")
+  [ ${#BACKUP_ITEMS[@]} -eq 0 ] && BACKUP_ITEMS+=("etc/mytunnel")
+}
+
+# $1 = file output ; sisa arg = path relatif terhadap TAR_ROOT
+_zip_create() {
+  local out="$1"; shift
+  MTK_ROOT="$TAR_ROOT" MTK_ITEMS="$*" python3 - "$out" <<'PYPY'
+import os, sys, zipfile
+out = sys.argv[1]
+root = os.environ["MTK_ROOT"]
+n = 0
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for rel in os.environ["MTK_ITEMS"].split():
+        p = os.path.normpath(os.path.join(root, rel))
+        if not os.path.exists(p):
+            continue
+        if os.path.isdir(p):
+            for base, _dirs, fs in os.walk(p):
+                for f in fs:
+                    fp = os.path.join(base, f)
+                    z.write(fp, os.path.relpath(fp, root))
+                    n += 1
+        else:
+            z.write(p, os.path.relpath(p, root))
+            n += 1
+sys.exit(0 if n else 1)
+PYPY
+}
+
 do_backup() {
   mkdir -p "$REAL_BACKUP_DIR" 2>/dev/null || true
   local ts arch
   ts=$(date +%Y%m%d-%H%M%S 2>/dev/null)
-  arch="$REAL_BACKUP_DIR/mytunnel-$ts.tar.gz"
   echo -e "${DIM}Membuat backup...${RESET}"
-  # tar: include ETC + xray config (if exists)
-  local tmp_list
-  tmp_list=$(mktemp)
-  # use relative paths via -C BASE
-  # base_dir was unused (tar uses -C BASE) - keep for docs
-  local _base_dir="${BASE:-/}"
-  # Build tar: round to existing files only
-  local files=()
-  [ -d "$ETC" ] && files+=("etc/mytunnel")
-  if [ -f "$XRAY_CFG" ]; then
-    # tar selalu dibuat relatif ke TAR_ROOT ("/" di produksi) supaya bisa di-restore
-    # dari /root/backup, bukan dari path BASE (=/etc/mytunnel) yang salah akar.
-    local rel="${XRAY_CFG#/}"
-    case "$rel" in etc/*|usr/*|var/*) files+=("$rel") ;; *) files+=("usr/local/etc/xray/config.json") ;; esac
+  _backup_items
+  arch="$REAL_BACKUP_DIR/mytunnel-$ts.zip"
+  if ! _zip_create "$arch" "${BACKUP_ITEMS[@]}" 2>/dev/null; then
+    # fallback kalau python3 gagal/absen: tetap rela pakai tar.gz (kompatibel restore)
+    rm -f "$arch" 2>/dev/null
+    arch="$REAL_BACKUP_DIR/mytunnel-$ts.tar.gz"
+    tar -czf "$arch" -C "$TAR_ROOT" "${BACKUP_ITEMS[@]}" 2>/dev/null || true
   fi
-  [ -d "${BASE}/etc/openvpn" ] && files+=("etc/openvpn")
-  # Also include cert/nginx conf if present
-  [ -f "${BASE}/etc/nginx/conf.d/mytunnel.conf" ] && files+=("etc/nginx/conf.d/mytunnel.conf")
-  [ -d "${BASE}/etc/mytunnel/cert" ] && files+=("etc/mytunnel/cert")
-  # Create tar relative to TAR_ROOT ("/" in production, $BASE in test mode)
-  if [ ${#files[@]} -gt 0 ]; then
-    tar -czf "$arch" -C "$TAR_ROOT" "${files[@]}" 2>&1 | head -n 10
-  else
-    tar -czf "$arch" -C "$TAR_ROOT" etc/mytunnel 2>/dev/null || true
-  fi
-  rm -f "$tmp_list" 2>/dev/null || true
-  if [ -f "$arch" ]; then
+  if [ -s "$arch" ]; then
     chmod 600 "$arch" 2>/dev/null || true
     echo -e "${GREEN}Backup dibuat: $arch${RESET}"
     ls -lh "$arch" 2>&1 | sed 's/^/  /'
     fh_log "backup $arch"; ah_notify_admin "Backup berhasil dibuat: $(basename "$arch")"
-    # keep 7 latest
+    # keep 7 terbaru (.zip + .tar.gz)
     local cnt
-    cnt=$(ls -1 "$REAL_BACKUP_DIR"/mytunnel-*.tar.gz 2>/dev/null | wc -l)
+    cnt=$(_backup_list | wc -l)
     if [ "$cnt" -gt 7 ]; then
       echo -e "${DIM}Hapus backup lama (simpan 7)...${RESET}"
       if fh_need_confirm " Hapus backup lama?"; then
-        ls -1t "$REAL_BACKUP_DIR"/mytunnel-*.tar.gz 2>/dev/null | tail -n +8 | while read -r f; do rm -f "$f" 2>/dev/null && echo "  hapus $f"; done
+        _backup_list | tail -n +8 | while read -r f; do rm -f "$f" 2>/dev/null && echo "  hapus $f"; done
       fi
     fi
   else
@@ -11256,14 +11350,37 @@ do_backup() {
   pause
 }
 
+# Daftar arsip backup (.zip + .tar.gz), diurut terbaru.
+_backup_list() { ls -1t "$REAL_BACKUP_DIR"/mytunnel-*.zip "$REAL_BACKUP_DIR"/mytunnel-*.tar.gz 2>/dev/null; }
+
+# Ekstrak arsip ke dest. zip -> python3 zipfile (stdlib blokir path traversal),
+# tar.gz -> tar. Exit non-nul kalau gagal atau arsip kosong.
+_do_extract() { # $1=arsip  $2=dest
+  local f="$1" dest="$2"
+  case "$f" in
+    *.zip)
+      command -v python3 >/dev/null 2>&1 || return 1
+      python3 - "$f" "$dest" <<'PYPY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    z.extractall(sys.argv[2])
+    sys.exit(0 if z.infolist() else 1)
+PYPY
+      ;;
+    *) tar -xzf "$f" -C "$dest" 2>&1 | head -n 20 ;;
+  esac
+}
+
 do_list_backup() {
+  local files
+  files=$(_backup_list)
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Daftar Backup"
   echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  if [ ! -d "$REAL_BACKUP_DIR" ] || [ -z "$(ls -1 "$REAL_BACKUP_DIR"/mytunnel-*.tar.gz 2>/dev/null)" ]; then
+  if [ ! -d "$REAL_BACKUP_DIR" ] || [ -z "$files" ]; then
     printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(belum ada backup)"
   else
-    ls -1t "$REAL_BACKUP_DIR"/mytunnel-*.tar.gz 2>/dev/null | head -n 20 | while read -r f; do
+    printf '%s\n' "$files" | head -n 20 | while read -r f; do
       local sz; sz=$(du -h "$f" 2>/dev/null | awk '{print $1}')
       printf "${BLUE}│${RESET} %-40s %6s              ${BLUE}│${RESET}\n" "$(basename "$f" | cut -c1-40)" "$sz"
     done
@@ -11274,7 +11391,7 @@ do_list_backup() {
 do_restore() {
   do_list_backup
   local files n sel target
-  files=$(ls -1t "$REAL_BACKUP_DIR"/mytunnel-*.tar.gz 2>/dev/null)
+  files=$(_backup_list)
   [ -z "$files" ] && { echo -e "${YELLOW}Tidak ada backup${RESET}"; pause; return; }
   n=$(echo "$files" | wc -l)
   echo -e " Pilih 1-$n atau kosongkan batal"
@@ -11287,27 +11404,27 @@ do_restore() {
   if ! fh_need_confirm " Lanjut restore $(basename "$target")?"; then echo "Batal"; pause; return; fi
   # backup current before restore: ikutkan xray + nginx conf (selaras dengan do_backup)
   local pre_arch
-  pre_arch="$REAL_BACKUP_DIR/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).tar.gz"
+  pre_arch="$REAL_BACKUP_DIR/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).zip"
   mkdir -p "$REAL_BACKUP_DIR" 2>/dev/null || true
-  local pre_files=()
-  [ -d "$ETC" ] && pre_files+=("etc/mytunnel")
-  [ -f "$XRAY_CFG" ] && pre_files+=("usr/local/etc/xray/config.json")
-  [ -f "${BASE}/etc/nginx/conf.d/mytunnel.conf" ] && pre_files+=("etc/nginx/conf.d/mytunnel.conf")
-  [ -d "${BASE}/etc/mytunnel/cert" ] && pre_files+=("etc/mytunnel/cert")
-  if [ ${#pre_files[@]} -gt 0 ]; then
-    tar -czf "$pre_arch" -C "$TAR_ROOT" "${pre_files[@]}" 2>/dev/null || true
-  else
-    tar -czf "$pre_arch" -C "$TAR_ROOT" etc/mytunnel 2>/dev/null || true
+  local pre_items=()
+  [ -d "$ETC" ] && pre_items+=("etc/mytunnel")
+  [ -f "$XRAY_CFG" ] && pre_items+=("${XRAY_CFG#"$TAR_ROOT"}")
+  [ -f "$TAR_ROOT/etc/nginx/conf.d/mytunnel.conf" ] && pre_items+=("etc/nginx/conf.d/mytunnel.conf")
+  [ ${#pre_items[@]} -eq 0 ] && pre_items+=("etc/mytunnel")
+  if ! _zip_create "$pre_arch" "${pre_items[@]}" 2>/dev/null; then
+    rm -f "$pre_arch" 2>/dev/null
+    pre_arch="$REAL_BACKUP_DIR/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).tar.gz"
+    tar -czf "$pre_arch" -C "$TAR_ROOT" "${pre_items[@]}" 2>/dev/null || true
   fi
   chmod 600 "$pre_arch" 2>/dev/null || true
   # Guard: tar ke TAR_ROOT bisa gagal kalau $ETC belum ada (mode test kosong).
   # Hapus artefak nol byte supaya tidak tampil sebagai backup valid.
   [ -s "$pre_arch" ] || { rm -f "$pre_arch" 2>/dev/null || true; pre_arch=""; }
   [ -n "$pre_arch" ] && echo -e "${DIM}Backup sebelum restore: $pre_arch${RESET}"
-  # extract — exit code tar harus ditangkap (jangan dibuang lewat pipe)
+  # extract — exit code harus ditangkap (jangan dibuang lewat pipe)
   echo -e "${DIM}Ekstrak $target...${RESET}"
   local ok=1 tar_err had_bg=0
-  # brand txt/canon bisa chattr +i (brand permanen) -> tar gagal "File exists".
+  # brand txt/canon bisa chattr +i (brand permanen) -> ekstrak gagal "File exists".
   # Buka kunci sementara lewat brand_guard kalau tersedia, kunci lagi setelahnya.
   if [ -f "$ETC/lib/brand_guard.sh" ]; then . "$ETC/lib/brand_guard.sh" 2>/dev/null || true; fi
   if command -v bg_unlock_file >/dev/null 2>&1; then
@@ -11315,7 +11432,7 @@ do_restore() {
     bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
     had_bg=1
   fi
-  tar_err=$(tar -xzf "$target" -C "$TAR_ROOT" 2>&1) || ok=0
+  tar_err=$(_do_extract "$target" "$TAR_ROOT" 2>&1) || ok=0
   [ -n "$tar_err" ] && printf '%s\n' "$tar_err" | head -n 20
   # brand sudah dibuka kuncinya di atas -> tutup lagi (biar tetap permanen)
   if [ "$had_bg" = "1" ] && command -v bg_enforce >/dev/null 2>&1; then bg_enforce >/dev/null 2>&1 || true; fi
@@ -11327,7 +11444,7 @@ do_restore() {
         bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
         bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
       fi
-      tar -xzf "$pre_arch" -C "$TAR_ROOT" 2>/dev/null || true
+      _do_extract "$pre_arch" "$TAR_ROOT" >/dev/null 2>&1 || true
       command -v bg_enforce >/dev/null 2>&1 && bg_enforce >/dev/null 2>&1 || true
     fi
     pause; return

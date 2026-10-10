@@ -427,6 +427,8 @@ _xray_live_apply() {
 
 xray_add_client() {
   local proto="$1" secret="$2" email="$3"
+  # email identitas: <user>-<proto>@tunnel (samakan dengan xray_del_client)
+  case "$email" in *@*) ;; *) email="$(_xray_email "$email" "$proto")" ;; esac
   local cfg
   cfg=$(_xray_cfg)
   [ -z "$proto" ] || [ -z "$secret" ] || [ -z "$email" ] && { echo -e "${RED}Usage: xray_add_client <vmess|vless|trojan> <uuid/pass> <email>${RESET}" >&2; return 2; }
@@ -509,7 +511,11 @@ xray_add_client() {
 }
 
 xray_del_client() {
-  local proto="$1" email="$2"
+  local proto="$1" arg="$2" email
+  # terima nama polos (trial0633) maupun email lengkap (trial0633-trojan@tunnel)
+  email="$arg"
+  case "$email" in *@*) ;; *) email="$(_xray_email "$email" "$proto")" ;; esac
+  # $arg disimpan apa adanya: akun warisan tersimpan tanpa suffix -<proto>@tunnel
   local cfg
   cfg=$(_xray_cfg)
   [ -z "$proto" ] || [ -z "$email" ] && { echo -e "${RED}Usage: xray_del_client <vmess|vless|trojan> <email>${RESET}" >&2; return 2; }
@@ -520,9 +526,9 @@ xray_del_client() {
   bak=$(_backup_cfg)
   tmp=$(mktemp)
   case "$proto" in
-    vmess) jq --arg email "$email" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
-    vless) jq --arg email "$email" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
-    trojan) jq --arg email "$email" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu") | .settings.clients) |= map(select(.email != $email))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    vmess) jq --arg email "$email" --arg bare "$arg" '(.inbounds[] | select(.tag=="vmess-ws" or .tag=="vmess-grpc" or .tag=="vmess-hu") | .settings.clients) |= map(select(.email != $email and .email != $bare))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    vless) jq --arg email "$email" --arg bare "$arg" '(.inbounds[] | select(.tag=="vless-ws" or .tag=="vless-grpc" or .tag=="vless-hu") | .settings.clients) |= map(select(.email != $email and .email != $bare))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
+    trojan) jq --arg email "$email" --arg bare "$arg" '(.inbounds[] | select(.tag=="trojan-ws" or .tag=="trojan-grpc" or .tag=="trojan-hu") | .settings.clients) |= map(select(.email != $email and .email != $bare))' "$cfg" > "$tmp" 2>&1 || { echo -e "${RED}Gagal edit jq${RESET}" >&2; cat "$tmp" | head -n 20 >&2; rm -f "$tmp"; return 1; } ;;
   esac
   cp -a "$tmp" "$cfg" 2>/dev/null || { echo -e "${RED}Gagal tulis $cfg${RESET}" >&2; rm -f "$tmp"; return 1; }
   chmod 644 "$cfg" 2>/dev/null || true
@@ -534,8 +540,9 @@ xray_del_client() {
     return 1
   fi
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray del $proto $email" >> "$LOG" 2>/dev/null || true
-  # hapus dari instance berjalan via API: sukses -> flag skip restart
+  # hapus dari instance berjalan via API: hapus kedua bentuk (suffix + warisan bare)
   _xray_live_apply del "$proto" "" "$email" 2>/dev/null || true
+  [ "$arg" != "$email" ] && _xray_live_apply del "$proto" "" "$arg" 2>/dev/null || true
   echo -e "${GREEN}Client $email dihapus dari $proto${RESET}"
 }
 
@@ -570,6 +577,86 @@ xray_reload() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray reload" >> "$LOG" 2>/dev/null || true
 }
 
+
+
+# Jumlah sesi online user via Xray Stats API (bukan access.log).
+# Format output `xray api statsonline` (terverifikasi live 2026-10-09):
+#   ONLINE : {"stat":{"name":"user>>>a-vless@tunnel>>>online","value":2}}
+#   OFFLINE: {"stat":{"name":"user>>>a-vless@tunnel>>>online"}}   <- tanpa "value" = 0
+#   UNKNOWN: stderr "NotFound ... not found." + exit 1
+# Email offline tetap terdaftar (tanpa value), jadi hanya "value" yang menentukan angka.
+_xray_online_cnt() {
+  local email="$1" out val port
+  [ -z "$email" ] && { echo 0; return; }
+  port=$(_xray_api_port_safe)
+  out=$(xray api statsonline -s "$port" -email "$email" 2>/dev/null)
+  if command -v jq >/dev/null 2>&1; then
+    val=$(printf '%s' "$out" | jq -r '.stat.value // 0' 2>/dev/null)
+  else
+    val=$(printf '%s' "$out" | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  fi
+  case "$val" in
+    ''|*[!0-9]*) echo 0 ;;
+    *) echo "$val" ;;
+  esac
+}
+
+# Email konvensi: <user>-<protokol>@tunnel  (harus sama dengan migrasi config xray)
+_xray_email() { echo "${1}-${2}@tunnel"; }
+
+
+# Kuota terpakai real-time (GB) dari Xray Stats API: uplink + downlink.
+# Output: "137GB" / "9.9GB" / "1024MB" (pilihannya mengikuti gaya script lama).
+
+
+# Jumlah baris koneksi user di access.log (bukan status online, hanya hitungan riwayat).
+# Hanya N baris terakhir yang dibaca (log besar tidak membuat menu lambat).
+
+# Port API Xray (config bisa tidak ter-load; deteksi langsung dari file config).
+_xray_api_port_safe() {
+  local cfg p
+  for cfg in "${XRAY_CFG:-}" "/usr/local/etc/xray/config.json" "/etc/xray/config.json" "${MYTUNNEL_PREFIX:-}/usr/local/etc/xray/config.json"; do
+    [ -f "$cfg" ] || continue
+    p=$(jq -r '.inbounds[]? | select(.tag=="api") | .port // empty' "$cfg" 2>/dev/null | head -1 | tr -d ' \n')
+    # kembalikan host:port lengkap (config hanya menyimpan port)
+    if [ -n "$p" ]; then case "$p" in *:*) echo "$p" ;; *) echo "127.0.0.1:$p" ;; esac; return 0; fi
+  done
+  echo "127.0.0.1:10085"
+}
+
+# Kuota terpakai real-time (GB) dari Xray Stats API: uplink + downlink.
+_xray_quota_used() {
+  local email="$1" up dn tot port out
+  [ -z "$email" ] && { echo "0"; return; }
+  port=$(_xray_api_port_safe)
+  out=$(xray api statsquery -s "$port" -pattern "user>>>${email}>>>traffic" 2>/dev/null)
+  if command -v jq >/dev/null 2>&1; then
+    up=$(printf '%s' "$out" | jq -r '[.stat[]? | select(.name | endswith("uplink")) | .value] | add // 0' 2>/dev/null)
+    dn=$(printf '%s' "$out" | jq -r '[.stat[]? | select(.name | endswith("downlink")) | .value] | add // 0' 2>/dev/null)
+  else
+    up=$(printf '%s' "$out" | grep uplink | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+    dn=$(printf '%s' "$out" | grep downlink | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  fi
+  [[ "$up" =~ ^[0-9]+$ ]] || up=0
+  [[ "$dn" =~ ^[0-9]+$ ]] || dn=0
+  tot=$((up + dn))
+  awk -v b="$tot" 'BEGIN{gb=b/1073741824; mb=b/1048576;
+    if (gb>=100) printf "%.0fGB",gb;
+    else if (gb>=1) printf "%.1fGB",gb;
+    else if (mb>=1) printf "%.1fMB",mb;
+    else printf "%.0fKB",b/1024}'
+}
+
+# Jumlah baris koneksi user di access.log (riwayat, bukan status online).
+_xray_log_count() {
+  local email="$1" log n
+  log="/var/log/xray/access.log"
+  [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
+  [ -f "$log" ] || { echo 0; return; }
+  n=$(tail -n 20000 "$log" 2>/dev/null | grep -Fc "email: $email" 2>/dev/null)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  echo "$n"
+}
 __EMBED_EOF__
 chmod 644 "$ETC/lib/xray_helpers.sh"
 cat > "$ETC/lib/ssh_helpers.sh" << '__EMBED_EOF__'
@@ -972,8 +1059,6 @@ _ssh_online_ips() {
     who 2>/dev/null | awk -v u="$u" '$1==u{print $5}' | tr -d '()' | sort -u | tr '\n' ' ' | sed 's/^ //;s/ $//'
   fi
 }
-
-
 __EMBED_EOF__
 chmod 644 "$ETC/lib/ssh_helpers.sh"
 cat > "$ETC/lib/proto_helpers.sh" << '__EMBED_EOF__'
@@ -1183,7 +1268,6 @@ proto_delete() {
   xray_reload 2>/dev/null || true
   echo -e "${GREEN}User $user dihapus ($proto)${RESET}"
 }
-
 proto_lock() {
   local proto="$1" user="$2"
   if ! proto_exists "$proto" "$user"; then echo -e "${RED}User tidak ada${RESET}" >&2; return 1; fi
@@ -1513,7 +1597,6 @@ print_account_info() {
       ;;
   esac
 }
-
 __EMBED_EOF__
 chmod 644 "$ETC/lib/proto_helpers.sh"
 cat > "$ETC/lib/features_helpers.sh" << '__EMBED_EOF__'
@@ -1599,116 +1682,6 @@ fh_backup_file() {
 # ponytail: single backup per op; upgrade to rotation when disk pressure arises
 
 __EMBED_EOF__
-cat > "$ETC/lib/brand_guard.sh" << '__EMBED_EOF__'
-#!/bin/bash
-# mytunnel lib/brand_guard.sh - brand permanen (immutable + restore dari canon)
-# shellcheck disable=SC1091,SC1090,SC2154
-# Banner SSH tetap BEBAS diubah (menu 10). Yang dikunci hanya BRAND NAME.
-# Brand di-set saat instalasi (--brand "Nama"), lalu file-nya chattr +i supaya
-# tidak bisa diubah/dihapus/di-rename bahkan oleh root. Canon root-only dipakai
-# untuk memulihkan kalau atribut sempat dilepas.
-if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
-  ETC="$BASE"
-else
-  BASE="${MYTUNNEL_PREFIX:-}"
-  ETC="${BASE}/etc/mytunnel"
-fi
-BG_BRAND="$ETC/config/brand.txt"
-BG_CANON="$ETC/config/.brand.canon"
-BG_LOCK="$ETC/config/.brand.lock"
-BG_LOG="${BASE}/var/log/mytunnel.log"
-BG_DEFAULT="SUNEK VPN"
-
-bg_is_immutable() {
-  local f="$1" a
-  command -v lsattr >/dev/null 2>&1 || return 1
-  [ -e "$f" ] || return 1
-  a=$(lsattr -d "$f" 2>/dev/null | awk '{print $1}')
-  [ -n "$a" ] || return 1
-  case "$a" in *i*) return 0 ;; *) return 1 ;; esac
-}
-
-bg_lock_file() {
-  local f="$1"
-  [ -e "$f" ] || return 0
-  bg_is_immutable "$f" && return 0
-  chattr +i "$f" 2>/dev/null
-}
-
-bg_unlock_file() {
-  local f="$1"
-  [ -e "$f" ] || return 0
-  bg_is_immutable "$f" || return 0
-  chattr -i "$f" 2>/dev/null
-}
-
-# baca brand aktif (read tidak terpengaruh +i)
-bg_read() {
-  local v
-  if [ -f "$BG_BRAND" ]; then
-    v=$(head -1 "$BG_BRAND" 2>/dev/null | tr -d '\r\n')
-    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
-  fi
-  printf '%s' "$BG_DEFAULT"
-}
-
-bg_canon_read() {
-  local v
-  if [ -f "$BG_CANON" ]; then
-    v=$(head -1 "$BG_CANON" 2>/dev/null | tr -d '\r\n')
-    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
-  fi
-  printf ''
-}
-
-# dipakai installer: tulis brand + canon lalu kunci
-bg_set() {
-  local v="$1"
-  [ -z "$v" ] && v="$BG_DEFAULT"
-  bg_unlock_file "$BG_BRAND"
-  bg_unlock_file "$BG_CANON"
-  mkdir -p "$ETC/config" 2>/dev/null || true
-  printf '%s\n' "$v" > "$BG_BRAND" 2>/dev/null || return 1
-  printf '%s\n' "$v" > "$BG_CANON" 2>/dev/null || true
-  chmod 644 "$BG_BRAND" "$BG_CANON" 2>/dev/null || true
-  bg_lock_file "$BG_CANON"
-  bg_lock_file "$BG_BRAND"
-  return 0
-}
-
-# paksa: brand == canon, lalu kunci; dipanggil installer + cron
-bg_enforce() {
-  local canon cur rc=0 changed=0
-  canon=$(bg_canon_read)
-  [ -z "$canon" ] && canon="$BG_DEFAULT"
-  cur=$(bg_read)
-  if [ ! -f "$BG_CANON" ] || [ "$canon" != "$cur" ]; then
-    bg_unlock_file "$BG_CANON"
-    printf '%s\n' "$canon" > "$BG_CANON" 2>/dev/null || rc=1
-    chmod 644 "$BG_CANON" 2>/dev/null || true
-  fi
-  if [ "$cur" != "$canon" ]; then
-    bg_unlock_file "$BG_BRAND"
-    printf '%s\n' "$canon" > "$BG_BRAND" 2>/dev/null || rc=1
-    changed=1
-  fi
-  chmod 644 "$BG_BRAND" 2>/dev/null || true
-  bg_lock_file "$BG_CANON" || rc=1
-  bg_lock_file "$BG_BRAND" || rc=1
-  if [ "$changed" = "1" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] brand_guard: brand dikembalikan ke '$canon'" >> "$BG_LOG" 2>/dev/null || true
-  fi
-  return $rc
-}
-
-bg_status() {
-  local b s
-  b=$(bg_read)
-  if bg_is_immutable "$BG_BRAND"; then s="PERMANEN (terkunci)"; else s="TERBUKA (bisa diubah)"; fi
-  printf 'brand=%s | %s' "$b" "$s"
-}
-__EMBED_EOF__
-chmod 644 "$ETC/lib/brand_guard.sh" 2>/dev/null || true
 cat > "$ETC/lib/brand_guard.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel lib/brand_guard.sh - brand permanen (immutable + restore dari canon)
@@ -2086,9 +2059,9 @@ set_brand_name() {
   read -r nb
   [ -z "$nb" ] && { echo "Batal."; pause; return; }
   f="$BASE/config/brand.txt"
-  if command -v bg_set_brand >/dev/null 2>&1; then bg_set_brand "$nb" 2>/dev/null || { echo -e "${RED}Gagal set brand${RESET}"; pause; return; }; echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; else if echo "$nb" > "$f" 2>/dev/null; then echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; bg_enforce 2>/dev/null || true; else echo -e "${RED}Gagal tulis $f${RESET}"; fi; fi
   if command -v bg_set_brand >/dev/null 2>&1; then bg_set_brand "$nb" 2>/dev/null || { echo -e "${RED}Gagal set brand${RESET}"; pause; return; }; echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; else backup_file "$f" >/dev/null 2>&1 || true; if echo "$nb" > "$f" 2>/dev/null; then echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; bg_enforce 2>/dev/null || true; else echo -e "${RED}Gagal tulis $f${RESET}"; fi; fi
   pause
+}
 
 check_services() {
   echo -e "${CYAN}=== CHECK SERVICES ===${RESET}"
@@ -2400,43 +2373,6 @@ do_chpass() {
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
-do_check_login() {
-  clear 2>/dev/null || printf '\033c'
-  local brand
-  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="SUNEK VPN"
-  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "SSH/DropBear User Login"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-20s %-15s %-15s${RESET} ${BLUE}│${RESET}\n" "Username" "Usage" "Total"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  _ensure_db
-  local total
-  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
-  [ -z "$total" ] && total=0
-  if [ "$total" -eq 0 ] 2>/dev/null; then
-    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
-  else
-    local user _pass _exp _limit _status
-    while IFS='|' read -r user _pass _exp _limit _status; do
-      [ -z "$user" ] && continue
-      local cnt usage_str total_str
-      cnt=$(_ssh_online_cnt "$user" 2>/dev/null); [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      if [ "$cnt" -eq 0 ]; then usage_str="No Usage"; else usage_str="$cnt"; fi
-      total_str="${_limit:-0}"; [ -z "$total_str" ] && total_str="0"
-      # align inside 56 inner: 20+1+15+1+15=51 + spaces = 56
-      printf "${BLUE}│${RESET} %-20s %-15s %-15s ${BLUE}│${RESET}\n" "$user" "$usage_str" "$total_str"
-    done < <(_list_users_raw)
-  fi
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total user login"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  echo ""
-  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
-}
-
-
 do_lock() {
   _show_user_list_numbered
   [ ! -s "$DB" ] && { echo -ne "${GREY}Enter...${RESET}"; read -r _; return 0; }
@@ -2617,6 +2553,56 @@ do_edit_limit_all() {
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
+do_check_login() {
+  clear 2>/dev/null || printf '\033c'
+  local brand
+  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
+  [ -z "$brand" ] && brand="SUNEK VPN"
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "SSH/DropBear User Login"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-20s %-15s %-15s${RESET} ${BLUE}│${RESET}\n" "Username" "Usage" "Total"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  _ensure_db
+  local total_online=0
+  if [ ! -s "$DB" ]; then
+    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
+  else
+    local user _pass _exp _limit _status
+    while IFS='|' read -r user _pass _exp _limit _status; do
+      [ -z "$user" ] && continue
+      user=$(echo "$user" | tr -d '\r')
+      local cnt usage_str total_str
+      # Jumlah proses sshd/dropbear milik user (bukan history, bukan systemd)
+      cnt=$(ps -u "$user" -o comm= 2>/dev/null | grep -Ec '^(sshd|dropbear)$')
+      [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      if [ "$cnt" -gt 0 ]; then
+        usage_str="Online"
+        total_str="${cnt} PID"
+        total_online=$((total_online + 1))
+      else
+        usage_str="No Usage"
+        total_str="0 PID"
+      fi
+      printf "${BLUE}│${RESET} %-20s %-15s %-15s ${BLUE}│${RESET}\n" "$user" "$usage_str" "$total_str"
+    done < <(_list_users_raw)
+  fi
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total_online user login"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
+}
+
+do_list() {
+  clear 2>/dev/null || printf '\033c'
+  _show_user_list_numbered
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
+}
+
+
 while true; do
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -2664,7 +2650,6 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
-
 __EMBED_EOF__
 chmod 755 "$ETC/menu/ssh.sh"
 cat > "$ETC/menu/vmess.sh" << '__EMBED_EOF__'
@@ -2974,52 +2959,6 @@ do_modify() {
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
-do_check_login() {
-  clear 2>/dev/null || printf '\033c'
-  local brand
-  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="SUNEK VPN"
-  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VMESS USER LOGIN"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %-10s %-14s${RESET} ${BLUE}│${RESET}\n" "USER" "USAGE" "TOTAL" "LOG"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  _ensure_db
-  local total
-  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
-  [ -z "$total" ] && total=0
-  if [ "$total" -eq 0 ] 2>/dev/null; then
-    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
-  else
-    local user _id _exp _limit _quota _used _status
-    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
-      [ -z "$user" ] && continue
-      local usage_h total_s log_c
-      if [ -n "$_used" ] && [ "$_used" -gt 0 ] 2>/dev/null; then
-        usage_h=$(awk -v b="$_used" 'BEGIN{gb=b/1024/1024/1024; if(gb>=10) printf "%.1fGB",gb; else if(gb>=1) printf "%.1fGB",gb; else if(gb>=0.01) printf "%.2fGB",gb; else printf "%.0fB",b}')
-        [ -z "$usage_h" ] && usage_h="0B"
-      else
-        usage_h="0GB"
-      fi
-      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_s="${_limit} IP"; else total_s="0"; fi
-      local _log="/var/log/xray/access.log"
-      [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-      log_c=0
-      if [ -f "$_log" ]; then
-        log_c=$(tail -n 20000 "$_log" 2>/dev/null | grep -F "email: $user" 2>/dev/null | wc -l 2>/dev/null | tr -d ' ')
-        [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
-      fi
-      printf "${BLUE}│${RESET} %-12s %-10s %-10s %-14s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_s" "$log_c"
-    done < <(_list_users_raw)
-  fi
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  echo ""
-  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
-}
-
 _xray_online_cnt() {
   local _u="$1" _log="/var/log/xray/access.log"
   [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
@@ -3190,6 +3129,48 @@ do_recovery() {
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+do_check_login() {
+  clear 2>/dev/null || printf '\033c'
+  local brand
+  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
+  [ -z "$brand" ] && brand="SUNEK VPN"
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VMESS User Login"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-16s %-12s %-7s %-7s %-8s${RESET} ${BLUE}│${RESET}\n" "Username" "Usage" "Total" "Online" "Log"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  _ensure_db
+  local total
+  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
+  [ -z "$total" ] && total=0
+  if [ "$total" -eq 0 ] 2>/dev/null; then
+    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
+  else
+    local user _id _exp _limit _quota _used _status
+    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
+      [ -z "$user" ] && continue
+      user=$(echo "$user" | tr -d '\r')
+      local email usage_h total_h online_h log_c
+      email=$(_xray_email "$user" "vmess")
+      usage_h=$(_xray_quota_used "$email" 2>/dev/null)
+      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_h="${_limit} IP"; else total_h="0 IP"; fi
+      online_h=$(_xray_online_cnt "$email" 2>/dev/null)
+      [[ "$online_h" =~ ^[0-9]+$ ]] || online_h=0
+      log_c=$(_xray_log_count "$email" 2>/dev/null)
+      [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
+      printf "${BLUE}│${RESET} %-16s %-12s %-7s %-7s %-8s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_h" "$online_h" "$log_c"
+    done < <(_list_users_raw)
+  fi
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -e "${GREY}Usage=quota · Total=limit IP · Online=sesi aktif sekarang · Log=baris access.log${RESET}"
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
+}
+
+
 while true; do
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -3235,7 +3216,6 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
-
 __EMBED_EOF__
 chmod 755 "$ETC/menu/vmess.sh"
 cat > "$ETC/menu/vless.sh" << '__EMBED_EOF__'
@@ -3545,52 +3525,6 @@ do_modify() {
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
-do_check_login() {
-  clear 2>/dev/null || printf '\033c'
-  local brand
-  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="SUNEK VPN"
-  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VLESS USER LOGIN"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %-10s %-14s${RESET} ${BLUE}│${RESET}\n" "USER" "USAGE" "TOTAL" "LOG"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  _ensure_db
-  local total
-  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
-  [ -z "$total" ] && total=0
-  if [ "$total" -eq 0 ] 2>/dev/null; then
-    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
-  else
-    local user _id _exp _limit _quota _used _status
-    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
-      [ -z "$user" ] && continue
-      local usage_h total_s log_c
-      if [ -n "$_used" ] && [ "$_used" -gt 0 ] 2>/dev/null; then
-        usage_h=$(awk -v b="$_used" 'BEGIN{gb=b/1024/1024/1024; if(gb>=10) printf "%.1fGB",gb; else if(gb>=1) printf "%.1fGB",gb; else if(gb>=0.01) printf "%.2fGB",gb; else printf "%.0fB",b}')
-        [ -z "$usage_h" ] && usage_h="0B"
-      else
-        usage_h="0GB"
-      fi
-      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_s="${_limit} IP"; else total_s="0"; fi
-      local _log="/var/log/xray/access.log"
-      [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-      log_c=0
-      if [ -f "$_log" ]; then
-        log_c=$(tail -n 20000 "$_log" 2>/dev/null | grep -F "email: $user" 2>/dev/null | wc -l 2>/dev/null | tr -d ' ')
-        [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
-      fi
-      printf "${BLUE}│${RESET} %-12s %-10s %-10s %-14s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_s" "$log_c"
-    done < <(_list_users_raw)
-  fi
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  echo ""
-  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
-}
-
 _xray_online_cnt() {
   local _u="$1" _log="/var/log/xray/access.log"
   [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
@@ -3761,6 +3695,48 @@ do_recovery() {
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+do_check_login() {
+  clear 2>/dev/null || printf '\033c'
+  local brand
+  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
+  [ -z "$brand" ] && brand="SUNEK VPN"
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "VLESS User Login"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-16s %-12s %-7s %-7s %-8s${RESET} ${BLUE}│${RESET}\n" "Username" "Usage" "Total" "Online" "Log"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  _ensure_db
+  local total
+  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
+  [ -z "$total" ] && total=0
+  if [ "$total" -eq 0 ] 2>/dev/null; then
+    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
+  else
+    local user _id _exp _limit _quota _used _status
+    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
+      [ -z "$user" ] && continue
+      user=$(echo "$user" | tr -d '\r')
+      local email usage_h total_h online_h log_c
+      email=$(_xray_email "$user" "vless")
+      usage_h=$(_xray_quota_used "$email" 2>/dev/null)
+      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_h="${_limit} IP"; else total_h="0 IP"; fi
+      online_h=$(_xray_online_cnt "$email" 2>/dev/null)
+      [[ "$online_h" =~ ^[0-9]+$ ]] || online_h=0
+      log_c=$(_xray_log_count "$email" 2>/dev/null)
+      [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
+      printf "${BLUE}│${RESET} %-16s %-12s %-7s %-7s %-8s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_h" "$online_h" "$log_c"
+    done < <(_list_users_raw)
+  fi
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -e "${GREY}Usage=quota · Total=limit IP · Online=sesi aktif sekarang · Log=baris access.log${RESET}"
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
+}
+
+
 while true; do
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -3806,7 +3782,6 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
-
 __EMBED_EOF__
 chmod 755 "$ETC/menu/vless.sh"
 cat > "$ETC/menu/trojan.sh" << '__EMBED_EOF__'
@@ -4115,52 +4090,6 @@ do_modify() {
   echo -ne "${GREY}Enter...${RESET}"; read -r _
 }
 
-do_check_login() {
-  clear 2>/dev/null || printf '\033c'
-  local brand
-  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
-  [ -z "$brand" ] && brand="SUNEK VPN"
-  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
-  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "TROJAN USER LOGIN"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} ${BOLD}%-12s %-10s %-10s %-14s${RESET} ${BLUE}│${RESET}\n" "USER" "USAGE" "TOTAL" "LOG"
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  _ensure_db
-  local total
-  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
-  [ -z "$total" ] && total=0
-  if [ "$total" -eq 0 ] 2>/dev/null; then
-    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
-  else
-    local user _id _exp _limit _quota _used _status
-    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
-      [ -z "$user" ] && continue
-      local usage_h total_s log_c
-      if [ -n "$_used" ] && [ "$_used" -gt 0 ] 2>/dev/null; then
-        usage_h=$(awk -v b="$_used" 'BEGIN{gb=b/1024/1024/1024; if(gb>=10) printf "%.1fGB",gb; else if(gb>=1) printf "%.1fGB",gb; else if(gb>=0.01) printf "%.2fGB",gb; else printf "%.0fB",b}')
-        [ -z "$usage_h" ] && usage_h="0B"
-      else
-        usage_h="0GB"
-      fi
-      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_s="${_limit} IP"; else total_s="0"; fi
-      local _log="/var/log/xray/access.log"
-      [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
-      log_c=0
-      if [ -f "$_log" ]; then
-        log_c=$(tail -n 20000 "$_log" 2>/dev/null | grep -F "email: $user" 2>/dev/null | wc -l 2>/dev/null | tr -d ' ')
-        [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
-      fi
-      printf "${BLUE}│${RESET} %-12s %-10s %-10s %-14s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_s" "$log_c"
-    done < <(_list_users_raw)
-  fi
-  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
-  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
-  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-  echo ""
-  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
-}
-
 _xray_online_cnt() {
   local _u="$1" _log="/var/log/xray/access.log"
   [ -n "${MYTUNNEL_PREFIX:-}" ] && [ -f "$MYTUNNEL_PREFIX/var/log/xray/access.log" ] && _log="$MYTUNNEL_PREFIX/var/log/xray/access.log"
@@ -4331,6 +4260,48 @@ do_recovery() {
   echo -ne "${GREY}Tekan Enter...${RESET}"; read -r _
 }
 
+do_check_login() {
+  clear 2>/dev/null || printf '\033c'
+  local brand
+  brand=$(cat "$BASE/config/brand.txt" 2>/dev/null | head -1 | tr -d '\n')
+  [ -z "$brand" ] && brand="SUNEK VPN"
+  if declare -f draw_box >/dev/null 2>&1; then draw_box "$brand" 60; else echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"; printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "$brand"; echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"; fi
+  echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "TROJAN User Login"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} ${BOLD}%-16s %-12s %-7s %-7s %-8s${RESET} ${BLUE}│${RESET}\n" "Username" "Usage" "Total" "Online" "Log"
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  _ensure_db
+  local total
+  total=$(grep -v '^\s*$' "$DB" 2>/dev/null | grep -v '^#' | wc -l | tr -d ' ')
+  [ -z "$total" ] && total=0
+  if [ "$total" -eq 0 ] 2>/dev/null; then
+    printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "(no account)"
+  else
+    local user _id _exp _limit _quota _used _status
+    while IFS='|' read -r user _id _exp _limit _quota _used _status; do
+      [ -z "$user" ] && continue
+      user=$(echo "$user" | tr -d '\r')
+      local email usage_h total_h online_h log_c
+      email=$(_xray_email "$user" "trojan")
+      usage_h=$(_xray_quota_used "$email" 2>/dev/null)
+      if [ -n "$_limit" ] && [ "$_limit" -gt 0 ] 2>/dev/null; then total_h="${_limit} IP"; else total_h="0 IP"; fi
+      online_h=$(_xray_online_cnt "$email" 2>/dev/null)
+      [[ "$online_h" =~ ^[0-9]+$ ]] || online_h=0
+      log_c=$(_xray_log_count "$email" 2>/dev/null)
+      [[ "$log_c" =~ ^[0-9]+$ ]] || log_c=0
+      printf "${BLUE}│${RESET} %-16s %-12s %-7s %-7s %-8s ${BLUE}│${RESET}\n" "$user" "$usage_h" "$total_h" "$online_h" "$log_c"
+    done < <(_list_users_raw)
+  fi
+  echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${RESET}"
+  printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "Total Account: $total users login"
+  echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
+  echo -e "${GREY}Usage=quota · Total=limit IP · Online=sesi aktif sekarang · Log=baris access.log${RESET}"
+  echo ""
+  echo -ne "${GREY}Press Enter for Back to Manage${RESET}"; read -r _
+}
+
+
 while true; do
   clear 2>/dev/null || printf '\033c'
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
@@ -4376,7 +4347,6 @@ while true; do
     *) echo -e "${YELLOW}Pilihan tidak valid${RESET}"; sleep 1 ;;
   esac
 done
-
 __EMBED_EOF__
 chmod 755 "$ETC/menu/trojan.sh"
 cat > "$ETC/menu/features.sh" << '__EMBED_EOF__'
@@ -8985,7 +8955,6 @@ main() {
   rm -f "$tmp" "$filtered" "$exp_tmp" 2>/dev/null || true
 }
 main "$@"
-
 __EMBED_EOF__
 chmod 755 "$ETC/cron/autoexpire.sh"
 cat > "$ETC/cron/limitip.sh" << '__EMBED_EOF__'
@@ -9109,7 +9078,6 @@ main() {
   done < "$DB"
 }
 main "$@"
-
 __EMBED_EOF__
 chmod 755 "$ETC/cron/limitip.sh"
 cat > "$ETC/cron/autoexpire_xray.sh" << '__EMBED_EOF__'
@@ -9150,6 +9118,8 @@ run_once() {
     # collect expired users first (avoid mutating while iterating)
     while IFS='|' read -r user _uuid exp _lip _quota _used _status 2>/dev/null; do
       [ -z "$user" ] && continue
+      # trial: hapus bersih, TIDAK masuk recovery (do_trial yang urus)
+      case "$user" in trial*) xray_del_client "$proto" "$user" 2>/dev/null || true; _db_expire_remove "$proto" "$user"; changed=1; continue ;; esac
       exp_s=$(_expiry_epoch "$exp")
       [ "$exp_s" -eq 0 ] && continue
       if [ "$exp_s" -lt "$today_s" ]; then
@@ -9187,9 +9157,72 @@ _db_expire_remove() {
 
 # allow direct run
 if [ "${1:-}" != "--sourced" ]; then run_once; fi
-
 __EMBED_EOF__
 chmod 755 "$ETC/cron/autoexpire_xray.sh"
+cat > "$ETC/cron/purge_orphan_xray.sh" << '__EMBED_EOF__'
+#!/bin/bash
+# mytunnel cron/purge_orphan_xray.sh - hapus client Xray yang tidak punya baris di DB.
+# Jalankan harian setelah autoexpire_xray.sh. Aman diulang (idempotent).
+# shellcheck disable=SC1090,SC1091,SC2155
+BASE="${MYTUNNEL_PREFIX:-}"
+ETC="${BASE}/etc/mytunnel"
+LOG="${BASE}/var/log/mytunnel.log"
+for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/xray_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+
+# Whitelist: akun kepunyaan admin/bawaan — jangan pernah dihapus walau tidak ada di DB.
+# Cocokkan pada nama dasar (email tanpa -<proto>@tunnel).
+_WHITELIST=" test tes-uuid tesof tessc tess tess2 11111111-2222-3333-4444-555555555555 sunek admin root "
+
+_is_whitelisted() {
+  case "$_WHITELIST" in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# pemakaian: purge_orphan_xray.sh [--dry-run]
+DRY=0
+[ "${1:-}" = "--dry-run" ] && DRY=1
+
+_xray_bin_bin=$(_xray_bin 2>/dev/null)
+[ -n "$_xray_bin_bin" ] || _xray_bin_bin="xray"
+CFG=$(_xray_cfg 2>/dev/null); [ -f "$CFG" ] || CFG="/usr/local/etc/xray/config.json"
+
+_total_purged=0
+for proto in vmess vless trojan; do
+  db="$ETC/db/${proto}.txt"
+  [ -f "$db" ] || continue
+  # nama user yang sah (kolom 1, di-trim \r)
+  _db_users=$(cut -d'|' -f1 "$db" 2>/dev/null | tr -d '\r' | sed '/^$/d' | sort -u)
+  # semua email di config untuk proto ini
+  _cfg_emails=$(jq -r ".inbounds[] | select(.protocol==\"$proto\") | .settings.clients[]?.email // empty" "$CFG" 2>/dev/null | sort -u)
+  [ -z "$_cfg_emails" ] && continue
+  for _email in $_cfg_emails; do
+    # nama dasar: buang suffix -<proto>@tunnel
+    _user=$(printf '%s' "$_email" | sed "s/-${proto}@tunnel\$//")
+    _is_whitelisted "$_user" && continue
+    if ! printf '%s\n' "$_db_users" | grep -qxF "$_user"; then
+      if [ "$DRY" -eq 1 ]; then
+        echo "[dry-run] purge $proto email=$_email user=$_user"
+      else
+        if xray_del_client "$proto" "$_user" 2>/dev/null; then
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] purge_orphan_xray $proto user=$_user email=$_email" >> "$LOG" 2>/dev/null || true
+          echo "purged $proto $email"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] purge_orphan_xray FAILED $proto user=$_user" >> "$LOG" 2>/dev/null || true
+        fi
+      fi
+      _total_purged=$((_total_purged + 1))
+    fi
+  done
+done
+
+if [ "$DRY" -eq 0 ] && [ "$_total_purged" -gt 0 ]; then
+  # satu reload untuk semua perubahan di atas
+  xray_reload 2>/dev/null || true
+fi
+echo "total_orphan=${_total_purged}"
+exit 0
+__EMBED_EOF__
+chmod 755 "$ETC/cron/purge_orphan_xray.sh"
 cat > "$ETC/cron/quota.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel cron/quota.sh - kumpulkan trafik Xray, lock jika melebihi kuota (tiap 1 menit)
@@ -9297,7 +9330,6 @@ run_once() {
 }
 
 if [ "${1:-}" != "--sourced" ]; then run_once; fi
-
 __EMBED_EOF__
 chmod 755 "$ETC/cron/quota.sh"
 cat > "$ETC/cron/limitip_xray.sh" << '__EMBED_EOF__'
@@ -9348,17 +9380,15 @@ _unlock_expired() {
               awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="active"}1' "$ETC/db/${proto}.txt" > /tmp/.li_tmp.$$ 2>/dev/null && cat /tmp/.li_tmp.$$ > "$ETC/db/${proto}.txt" 2>/dev/null
             ) 200>"$ETC/db/.${proto}.lock" 2>/dev/null || awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="active"}1' "$ETC/db/${proto}.txt" > /tmp/.li_tmp.$$ 2>/dev/null && cat /tmp/.li_tmp.$$ > "$ETC/db/${proto}.txt" 2>/dev/null
             chmod 600 "$ETC/db/${proto}.txt" 2>/dev/null || true
-cat > "$ETC/cron/brand_guard.sh" << '__EMBED_EOF__'
-#!/bin/bash
-# mytunnel cron/brand_guard.sh - enforce brand TETAP (immutable + restore dari canon)
-# shellcheck disable=SC1091,SC1090,SC2154
-BASE="${MYTUNNEL_PREFIX:-}"
-ETC="${BASE}/etc/mytunnel"
-if [ -f "$ETC/lib/brand_guard.sh" ]; then . "$ETC/lib/brand_guard.sh" 2>/dev/null || exit 0; else exit 0; fi
-bg_enforce >/dev/null 2>&1 || true
-exit 0
-__EMBED_EOF__
-chmod 755 "$ETC/cron/brand_guard.sh" 2>/dev/null || true
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] limitip auto-unlock $proto $user" >> "$LOG" 2>/dev/null || true
+          fi
+        fi
+      fi
+      rm -f "$f" 2>/dev/null || true
+    fi
+  done
+  rm -f /tmp/.li_tmp.$$ 2>/dev/null || true
+}
 
 run_once() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
@@ -9397,9 +9427,8 @@ run_once() {
 }
 
 if [ "${1:-}" != "--sourced" ]; then run_once; fi
-
 __EMBED_EOF__
-chmod 755 "$ETC/cron/limitip_xray.sh"
+chmod 755 "$ETC/cron/limitip_xray.sh" 2>/dev/null || true
 cat > "$ETC/cron/bot_notify.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel cron/bot_notify.sh - notifikasi H-3, lock, service down -> admin (quiet if no bot.conf)
@@ -11457,6 +11486,32 @@ main() {
 
   # semua service yang pegang cert di memori harus restart/reload, bukan cuma nginx
   if [ -z "$BASE" ]; then
+    local svc
+    for svc in stunnel4 xray; do
+      systemctl is-active --quiet "$svc" 2>/dev/null || continue
+      if systemctl restart "$svc" 2>/dev/null; then
+        echo -e "${GREEN}$svc restart OK (cert baru dipakai)${RESET}"
+      else
+        echo -e "${RED}Restart $svc gagal - cek: systemctl status $svc${RESET}"
+      fi
+    done
+    # stunnel belum aktif di test/skim, tetap pastikan jangan tertinggal
+    grep -q "stunnel.pem" /etc/stunnel/stunnel.conf 2>/dev/null && \
+      echo -e "${DIM}stunnel 443 pakai /etc/stunnel/stunnel.pem - sudah di-update cert.sh${RESET}"
+  fi
+
+  echo -e "${GREEN}Domain diganti: $new${RESET}"
+  echo -e "${YELLOW}Link lama perlu generate ulang (domain di link)${RESET}"
+  echo -e " menu 2/3/4 -> pilih ${CYAN}list${RESET} lalu export ulang link ${CYAN}$new${RESET}"
+  fh_log "domain -> $new (xray restarted)"
+  pause
+}
+
+if [ "${0##*/}" = "domain.sh" ] || [[ "$0" == *"domain.sh" ]]; then main "$@"; fi
+__EMBED_EOF__
+chmod 755 "$ETC/features/domain.sh" 2>/dev/null || true
+
+cat > "$ETC/features/banner.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel features/banner.sh - edit banner SSH & response halaman web (60 kolom) - FIX HTML multiline
 # shellcheck disable=SC1091,SC2154,SC1090,SC2034
@@ -11645,11 +11700,10 @@ main() {
 }
 
 if [ "${0##*/}" = "banner.sh" ] || [[ "$0" == *"banner.sh" ]]; then main "$@"; fi
+__EMBED_EOF__
+chmod 755 "$ETC/features/banner.sh" 2>/dev/null || true
 
-
-main() {
-  while true; do
-    clear 2>/dev/null || printf "\033c"
+cat > "$ETC/features/security.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel features/security.sh - hardening: SYN protection, UFW, fail2ban, SSH hardening, banner lock (60 kolom)
 # shellcheck disable=SC1091,SC1090,SC2154
@@ -11977,9 +12031,10 @@ main() {
 
 if [ "${0##*/}" = "security.sh" ] || [[ "$0" == *"security.sh" ]]; then main "$@"; fi
 
-port = 22
-maxretry = 5
-bantime = 600
+__EMBED_EOF__
+chmod 755 "$ETC/features/security.sh" 2>/dev/null || true
+
+cat > "$ETC/features/autoupdate.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel features/autoupdate.sh - cek VERSION repo + verifikasi SHA256 sebelum eksekusi (60 kolom)
 # shellcheck disable=SC1091,SC1090,SC2154
@@ -12126,35 +12181,8 @@ main() {
 }
 
 if [ "${0##*/}" = "autoupdate.sh" ] || [[ "$0" == *"autoupdate.sh" ]]; then main "$@"; fi
-
-  echo "$nr" > "$REPO_FILE" 2>/dev/null
-  chmod 644 "$REPO_FILE" 2>/dev/null || true
-  echo -e "${GREEN}Repo disimpan${RESET}"
-  fh_log "repo -> $nr"
-  pause
-}
-
-main() {
-  while true; do
-    clear 2>/dev/null || printf "\033c"
-    echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-    printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "Auto Update"
-    echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-    echo -e " Lokal: $(cat "$VERSION_FILE" 2>/dev/null | head -1 || echo v0.0.0)  Repo: $(cat "$REPO_FILE" 2>/dev/null | head -1 || echo default)"
-    echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
-    echo -e "${BLUE}│${RESET} 1.) Cek & update sekarang                         ${BLUE}│${RESET}"
-    echo -e "${BLUE}│${RESET} 2.) Atur URL repo                                 ${BLUE}│${RESET}"
-    echo -e "${BLUE}│${RESET} 3.) Kembali                                       ${BLUE}│${RESET}"
-    echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
-    read -rp " Pilih [1-3]: " c 2>/dev/null || c=3
-    case "$c" in 1) check_update ;; 2) set_repo ;; 3) break ;; *) echo -e "${RED}Tidak valid${RESET}"; sleep 1;; esac
-  done
-}
-
-if [ "${0##*/}" = "autoupdate.sh" ] || [[ "$0" == *"autoupdate.sh" ]]; then main "$@"; fi
-
 __EMBED_EOF__
-chmod 755 "$ETC/features/autoupdate.sh"
+chmod 755 "$ETC/features/autoupdate.sh" 2>/dev/null || true
 cat > "$ETC/features/sysinfo_page.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel features/sysinfo_page.sh - informasi sistem lengkap (60 kolom)
@@ -12229,8 +12257,8 @@ pause() { echo ""; read -rp " Tekan Enter..." _ 2>/dev/null || true; }
 main() {
   local cur
   cur=$(dropbear -V 2>&1 | head -1 | cut -c1-40 2>/dev/null || echo "-")
-https://raw.githubusercontent.com/Emans27/tunnel-allinone/main
-
+  if [ "${1:-}" = "list" ]; then
+    echo -e " Versi sekarang: ${CYAN}$cur${RESET}"
     [ -f "$VER_FILE" ] && { echo -e "${DIM}Daftar versi:${RESET}"; cat "$VER_FILE" 2>/dev/null | sed 's/^/  /'; } || echo -e "${DIM}(file versi kosong: $VER_FILE)${RESET}"
     return
   fi
@@ -13269,6 +13297,7 @@ _log "[13/13] cron xray"
 # Ensure previous content stays, append 3 lines idempotently
 if ! grep -q "autoexpire_xray.sh" "$CRON_FILE" 2>/dev/null; then echo "0 0 * * * root $ETC/cron/autoexpire_xray.sh 2>/dev/null" >> "$CRON_FILE" 2>/dev/null || true; fi
 if ! grep -q "quota.sh" "$CRON_FILE" 2>/dev/null; then echo "* * * * * root $ETC/cron/quota.sh 2>/dev/null" >> "$CRON_FILE" 2>/dev/null || true; fi
+if ! grep -q "purge_orphan_xray.sh" "$CRON_FILE" 2>/dev/null; then echo "30 0 * * * root $ETC/cron/purge_orphan_xray.sh 2>/dev/null" >> "$CRON_FILE" 2>/dev/null || true; fi
 if ! grep -q "limitip_xray.sh" "$CRON_FILE" 2>/dev/null; then echo "* * * * * root $ETC/cron/limitip_xray.sh 2>/dev/null" >> "$CRON_FILE" 2>/dev/null || true; fi
 if ! grep -q "bot_notify.sh" "$CRON_FILE" 2>/dev/null; then echo "*/5 * * * * root $ETC/cron/bot_notify.sh 2>/dev/null" >> "$CRON_FILE" 2>/dev/null || true; fi
 chmod 644 "$CRON_FILE" 2>/dev/null || true
@@ -13281,6 +13310,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 0 0 * * * root $ETC/cron/autoexpire.sh 2>/dev/null
 * * * * * root $ETC/cron/limitip.sh 2>/dev/null
 0 0 * * * root $ETC/cron/autoexpire_xray.sh 2>/dev/null
+30 0 * * * root $ETC/cron/purge_orphan_xray.sh 2>/dev/null
 * * * * * root $ETC/cron/quota.sh 2>/dev/null
 * * * * * root $ETC/cron/limitip_xray.sh 2>/dev/null
 */5 * * * * root $ETC/cron/bot_notify.sh 2>/dev/null

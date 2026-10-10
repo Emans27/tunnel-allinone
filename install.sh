@@ -1235,7 +1235,7 @@ proto_create() {
   [ -z "$proto" ] || [ -z "$user" ] || [ -z "$id" ] && { echo -e "${RED}Usage: proto_create proto user id days limit_ip quota_gb${RESET}" >&2; return 2; }
   case "$proto" in vmess|vless|trojan) ;; *) echo -e "${RED}proto invalid${RESET}" >&2; return 2;; esac
   if ! validate_proto_user "$user"; then echo -e "${RED}Username tidak valid (a-z0-9_ 3-16)${RESET}" >&2; return 2; fi
-  if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah dipakai di protokol lain: $user${RESET}" >&2; return 2; fi
+  if proto_exists "$proto" "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada di $proto${RESET}" >&2; return 2; fi
   case "$proto" in vmess|vless) if ! validate_uuid "$id"; then echo -e "${RED}UUID tidak valid${RESET}" >&2; return 2; fi;; esac
   [[ "$days" =~ ^[0-9]+$ ]] || days=30; [ "$days" -lt 1 ] && days=1; [ "$days" -gt 3650 ] && days=3650
   [[ "$limit_ip" =~ ^[0-9]+$ ]] || limit_ip=0
@@ -2747,7 +2747,7 @@ do_create() {
     if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then
       echo -e "${RED}Username hanya a-z0-9 3-16, tanpa spasi/simbol/huruf besar${RESET}"; continue
     fi
-    if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah dipakai di protokol lain: $user${RESET}"; continue; fi
+    if proto_exists "$PROTO" "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada di $PROTO${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid / system user${RESET}"; continue; fi
     break
   done
@@ -2806,7 +2806,7 @@ do_create_custom() {
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username kosong${RESET}"; continue; fi
     if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
-    if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada${RESET}"; continue; fi
+    if proto_exists "$PROTO" "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada di $PROTO${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid${RESET}"; continue; fi
     break
   done
@@ -2881,7 +2881,7 @@ do_trial() {
   user="trial${rnd}"
   user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   [ -z "$user" ] && user="trial123"
-  while proto_exists_any "$user" >/dev/null 2>&1; do
+  while proto_exists "$PROTO" "$user" >/dev/null 2>&1 || grep -q "^$user|" "$BASE/db/ssh.txt" 2>/dev/null; do
     rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4); user="trial${rnd}"; user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   done
   if [ "$PROTO" = "trojan" ]; then id=$(gen_password); else id=$(gen_uuid); fi
@@ -3313,7 +3313,7 @@ do_create() {
     if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then
       echo -e "${RED}Username hanya a-z0-9 3-16, tanpa spasi/simbol/huruf besar${RESET}"; continue
     fi
-    if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah dipakai di protokol lain: $user${RESET}"; continue; fi
+    if proto_exists "$PROTO" "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada di $PROTO${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid / system user${RESET}"; continue; fi
     break
   done
@@ -3372,7 +3372,7 @@ do_create_custom() {
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username kosong${RESET}"; continue; fi
     if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
-    if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada${RESET}"; continue; fi
+    if proto_exists "$PROTO" "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada di $PROTO${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid${RESET}"; continue; fi
     break
   done
@@ -3447,7 +3447,7 @@ do_trial() {
   user="trial${rnd}"
   user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   [ -z "$user" ] && user="trial123"
-  while proto_exists_any "$user" >/dev/null 2>&1; do
+  while proto_exists "$PROTO" "$user" >/dev/null 2>&1 || grep -q "^$user|" "$BASE/db/ssh.txt" 2>/dev/null; do
     rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4); user="trial${rnd}"; user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   done
   if [ "$PROTO" = "trojan" ]; then id=$(gen_password); else id=$(gen_uuid); fi
@@ -3879,7 +3879,7 @@ do_create() {
     if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then
       echo -e "${RED}Username hanya a-z0-9 3-16, tanpa spasi/simbol/huruf besar${RESET}"; continue
     fi
-    if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah dipakai di protokol lain: $user${RESET}"; continue; fi
+    if proto_exists "$PROTO" "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada di $PROTO${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid / system user${RESET}"; continue; fi
     break
   done
@@ -3938,7 +3938,7 @@ do_create_custom() {
     user=$(echo "$user" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
     if [ -z "$user" ]; then echo -e "${RED}Username kosong${RESET}"; continue; fi
     if ! grep -qE '^[a-z0-9_]{3,16}$' <<< "$user" 2>/dev/null; then echo -e "${RED}Username a-z0-9 3-16${RESET}"; continue; fi
-    if proto_exists_any "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada${RESET}"; continue; fi
+    if proto_exists "$PROTO" "$user" >/dev/null 2>&1; then echo -e "${RED}User sudah ada di $PROTO${RESET}"; continue; fi
     if ! validate_proto_user "$user" 2>/dev/null; then echo -e "${RED}Username tidak valid${RESET}"; continue; fi
     break
   done
@@ -4013,7 +4013,7 @@ do_trial() {
   user="trial${rnd}"
   user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   [ -z "$user" ] && user="trial123"
-  while proto_exists_any "$user" >/dev/null 2>&1; do
+  while proto_exists "$PROTO" "$user" >/dev/null 2>&1 || grep -q "^$user|" "$BASE/db/ssh.txt" 2>/dev/null; do
     rnd=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | head -c 4); user="trial${rnd}"; user=$(echo "$user" | tr -dc 'a-z0-9' | head -c 10)
   done
   if [ "$PROTO" = "trojan" ]; then id=$(gen_password); else id=$(gen_uuid); fi
@@ -9697,7 +9697,7 @@ bh_create_proto(){
   limit_ip="${limit_ip:-2}"; quota="${quota:-0}"
   [[ "$limit_ip" =~ ^[0-9]+$ ]] || limit_ip=2
   [[ "$quota" =~ ^[0-9]+$ ]] || quota=0
-  if proto_exists_any "$user" >/dev/null 2>&1; then echo "User $user sudah ada di proto lain"; return 1; fi
+  if proto_exists "$proto" "$user" >/dev/null 2>&1; then echo "User $user sudah ada di $proto"; return 1; fi
   local id
   if [ "$proto" = "trojan" ]; then id=$(gen_password); else id=$(gen_uuid); fi
   if [ "$proto" != "trojan" ]; then validate_uuid "$id" || { echo "UUID gagal"; return 1; }; fi

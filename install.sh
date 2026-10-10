@@ -11149,11 +11149,21 @@ cat > "$ETC/features/backup.sh" << '__EMBED_EOF__'
 # shellcheck disable=SC1091,SC1090,SC2154
 BASE="${MYTUNNEL_PREFIX:-}"
 ETC="${BASE}/etc/mytunnel"
-REAL_BACKUP_DIR="${BASE}/root/backup"
-[ -z "$BASE" ] && REAL_BACKUP_DIR="/root/backup"
+# NOTE: Jangan pakai BASE untuk ETC/REAL_BACKUP_DIR. Di menu, BASE ter-set ke
+# /etc/mytunnel (penuh) melewati variabel global, tapi backup.sh dieksekusi
+# sebagai proses bash terpisah (bash "$BASE/features/backup.sh" backup) sehingga
+# BASE yang sampai ke skrip ini tetap MYTUNNEL_PREFIX (=kosong di produksi).
+# Semua path data harus tetap absolut (/root/backup, /usr/local/etc/xray/...).
+[ -z "$BASE" ] && ETC="/etc/mytunnel"
+# Produksi: /root/backup (BASE kosong). Test mode: tetap di dalam $BASE.
+if [ -n "$BASE" ]; then REAL_BACKUP_DIR="$BASE/root/backup"; else REAL_BACKUP_DIR="/root/backup"; fi
 LOG="${BASE}/var/log/mytunnel.log"
-XRAY_CFG="${BASE}/usr/local/etc/xray/config.json"
-[ -n "$BASE" ] || XRAY_CFG="/usr/local/etc/xray/config.json"
+[ -z "$BASE" ] && LOG="/var/log/mytunnel.log"
+XRAY_CFG="/usr/local/etc/xray/config.json"
+[ -n "$BASE" ] && [ -f "$BASE/usr/local/etc/xray/config.json" ] && XRAY_CFG="$BASE/usr/local/etc/xray/config.json"
+# Root tar: arsip berisi path relatif ke / (etc/mytunnel, usr/local/etc/xray/...).
+# Di produksi BASE kosong -> TAR_ROOT="/"; di test mode -> $BASE.
+TAR_ROOT="${BASE:-/}"
 # tambahan manual: fh_log (features_helpers) + ah_notify_admin (advanced_helpers)
 for _f in "$ETC/lib/features_helpers.sh" "$ETC/lib/advanced_helpers.sh"; do [ -f "$_f" ] && . "$_f" 2>/dev/null || true; done
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/features_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
@@ -11178,20 +11188,21 @@ do_backup() {
   # Build tar: round to existing files only
   local files=()
   [ -d "$ETC" ] && files+=("etc/mytunnel")
-  [ -f "$XRAY_CFG" ] && {
-    local rel
-    if [ -n "$BASE" ]; then rel=${XRAY_CFG#$BASE/}; else rel=${XRAY_CFG#/}; fi
-    files+=("$rel")
-  }
+  if [ -f "$XRAY_CFG" ]; then
+    # tar selalu dibuat relatif ke TAR_ROOT ("/" di produksi) supaya bisa di-restore
+    # dari /root/backup, bukan dari path BASE (=/etc/mytunnel) yang salah akar.
+    local rel="${XRAY_CFG#/}"
+    case "$rel" in etc/*|usr/*|var/*) files+=("$rel") ;; *) files+=("usr/local/etc/xray/config.json") ;; esac
+  fi
   [ -d "${BASE}/etc/openvpn" ] && files+=("etc/openvpn")
   # Also include cert/nginx conf if present
   [ -f "${BASE}/etc/nginx/conf.d/mytunnel.conf" ] && files+=("etc/nginx/conf.d/mytunnel.conf")
   [ -d "${BASE}/etc/mytunnel/cert" ] && files+=("etc/mytunnel/cert")
-  # Create tar from BASE or /
-  if [ -n "$BASE" ]; then
-    tar -czf "$arch" -C "$BASE" "${files[@]}" 2>&1 | head -n 10
+  # Create tar relative to TAR_ROOT ("/" in production, $BASE in test mode)
+  if [ ${#files[@]} -gt 0 ]; then
+    tar -czf "$arch" -C "$TAR_ROOT" "${files[@]}" 2>&1 | head -n 10
   else
-    tar -czf "$arch" -C / "${files[@]}" 2>&1 | head -n 10
+    tar -czf "$arch" -C "$TAR_ROOT" etc/mytunnel 2>/dev/null || true
   fi
   rm -f "$tmp_list" 2>/dev/null || true
   if [ -f "$arch" ]; then
@@ -11243,38 +11254,41 @@ do_restore() {
   [ -z "$target" ] || [ ! -f "$target" ] && { echo -e "${RED}Tidak ditemukan${RESET}"; pause; return; }
   echo -e "${YELLOW}Restore akan menimpa config sekarang!${RESET}"
   if ! fh_need_confirm " Lanjut restore $(basename "$target")?"; then echo "Batal"; pause; return; fi
-  # backup current before restore
+  # backup current before restore: ikutkan xray + nginx conf (selaras dengan do_backup)
   local pre_arch
   pre_arch="$REAL_BACKUP_DIR/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).tar.gz"
   mkdir -p "$REAL_BACKUP_DIR" 2>/dev/null || true
-  if [ -n "$BASE" ]; then
-    tar -czf "$pre_arch" -C "$BASE" etc/mytunnel 2>/dev/null || true
+  local pre_files=()
+  [ -d "$ETC" ] && pre_files+=("etc/mytunnel")
+  [ -f "$XRAY_CFG" ] && pre_files+=("usr/local/etc/xray/config.json")
+  [ -f "${BASE}/etc/nginx/conf.d/mytunnel.conf" ] && pre_files+=("etc/nginx/conf.d/mytunnel.conf")
+  [ -d "${BASE}/etc/mytunnel/cert" ] && pre_files+=("etc/mytunnel/cert")
+  if [ ${#pre_files[@]} -gt 0 ]; then
+    tar -czf "$pre_arch" -C "$TAR_ROOT" "${pre_files[@]}" 2>/dev/null || true
   else
-    tar -czf "$pre_arch" -C / etc/mytunnel usr/local/etc/xray/config.json 2>/dev/null || true
+    tar -czf "$pre_arch" -C "$TAR_ROOT" etc/mytunnel 2>/dev/null || true
   fi
   chmod 600 "$pre_arch" 2>/dev/null || true
   echo -e "${DIM}Backup sebelum restore: $pre_arch${RESET}"
-  # extract
+  # extract — exit code tar harus ditangkap (jangan dibuang lewat pipe)
   echo -e "${DIM}Ekstrak $target...${RESET}"
-  local ok=1
-  if [ -n "$BASE" ]; then
-    tar -xzf "$target" -C "$BASE" 2>&1 | head -n 20 || ok=0
-  else
-    tar -xzf "$target" -C / 2>&1 | head -n 20 || ok=0
-  fi
+  local ok=1 tar_err
+  tar_err=$(tar -xzf "$target" -C "$TAR_ROOT" 2>&1) || ok=0
+  [ -n "$tar_err" ] && printf '%s\n' "$tar_err" | head -n 20
   if [ "$ok" -eq 0 ]; then
     echo -e "${RED}Gagal ekstrak, rollback...${RESET}"
     if [ -f "$pre_arch" ]; then
-      if [ -n "$BASE" ]; then tar -xzf "$pre_arch" -C "$BASE" 2>/dev/null || true; else tar -xzf "$pre_arch" -C / 2>/dev/null || true; fi
+      tar -xzf "$pre_arch" -C "$TAR_ROOT" 2>/dev/null || true
     fi
     pause; return
   fi
-  # validate
+  # validate — exit code ALIH teknologi ditangkap, jangan dibuang lewat pipe
   echo -e "${DIM}Validasi config...${RESET}"
-  local valid=1
+  local valid=1 _o
   if command -v xray >/dev/null 2>&1 || [ -x "${BASE}/usr/local/bin/xray" ]; then
     local bin="xray"; [ -x "${BASE}/usr/local/bin/xray" ] && bin="${BASE}/usr/local/bin/xray"
-    if ! "$bin" run -test -config "$XRAY_CFG" 2>&1 | head -n 20; then valid=0; fi
+    _o=$("$bin" run -test -config "$XRAY_CFG" 2>&1) || valid=0
+    printf '%s\n' "$_o" | head -n 20
   else
     if command -v jq >/dev/null 2>&1; then jq . "$XRAY_CFG" >/dev/null 2>&1 || valid=0; else python3 -m json.tool "$XRAY_CFG" >/dev/null 2>&1 || valid=0; fi
   fi
@@ -11282,12 +11296,13 @@ do_restore() {
     # also try nginx -t if test mode has nginx conf
     if [ -f "${BASE}/etc/nginx/nginx.conf" ] && command -v nginx >/dev/null 2>&1; then nginx -t -c "${BASE}/etc/nginx/nginx.conf" 2>&1 | head -n 10 || true; fi
   else
-    nginx -t 2>&1 | head -n 10 || valid=0
+    _o=$(nginx -t 2>&1) || valid=0
+    printf '%s\n' "$_o" | head -n 10
   fi
   if [ "$valid" -eq 0 ]; then
     echo -e "${RED}Validasi gagal, rollback...${RESET}"
     if [ -f "$pre_arch" ]; then
-      if [ -n "$BASE" ]; then tar -xzf "$pre_arch" -C "$BASE" 2>/dev/null || true; else tar -xzf "$pre_arch" -C / 2>/dev/null || true; fi
+      tar -xzf "$pre_arch" -C "$TAR_ROOT" 2>/dev/null || true
     fi
     pause; return
   fi

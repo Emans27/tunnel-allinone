@@ -9337,82 +9337,92 @@ __EMBED_EOF__
 chmod 755 "$ETC/cron/quota.sh"
 cat > "$ETC/cron/limitip_xray.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel cron/limitip_xray.sh - hitung IP unik per akun dari access.log, lock 15m jika over limit (tiap 1 menit)
+# mytunnel cron/limitip_xray.sh - hitung IP client unik per akun via join nginx<->xray access.log, lock 15m (tiap 1 menit)
 # shellcheck disable=SC1091,SC1090
-# Batasan: Xray tidak punya limit IP bawaan; metode baca access.log tidak 100% akurat (log rotate, NAT, delay).
-BASE="${MYTUNNEL_PREFIX:-}"
-ETC="${BASE}/etc/mytunnel"
-LOG="${BASE}/var/log/mytunnel.log"
-STATE_DIR="${BASE}/var/lib/mytunnel/state"
-XRAY_LOG="${BASE}/var/log/xray/access.log"
-# fallback prod log
+# Kenapa join: xray listen 127.0.0.1, semua trafik masuk lewat nginx, jadi "from <ip>" di
+# xray access.log selalu 127.0.0.1 dan IP client asli hilang. Sumber IP client = nginx access.log
+# ($remote_addr + timestamp + path), di-join ke xray access.log (email user + timestamp).
+# Batasan jujur: join berbasis waktu, bisa salah atribusi jika beberapa user konek pada detik
+# yang sama. Grace limit+1 + LOCK_MIN menekan false positive.
+# cukup untuk di-join dengan xray access.log (email user + timestamp).
+#
+# Metode per user: ambil window timestamp N detik dari xray log, lalu cari baris
+# nginx pada window itu dengan path sesuai protokol; IP unik dari baris ngez itu.
+#
+# Batasan jujur: join berbasis waktu, jadi bisa salah atribusi jika beberapa user
+# konek pada detik yang sama. Nilai limit+1 grace + LOCK_MIN menekan false positive.
+set -u
+MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
+ETC="${MYTUNNEL_PREFIX}/etc/mytunnel"
+[ -d "$ETC" ] || ETC="/etc/mytunnel"
+LOG_FILE="${MYTUNNEL_PREFIX}/var/log/mytunnel.log"
+[ -f "$LOG_FILE" ] || LOG_FILE="/var/log/mytunnel.log"
+STATE_DIR="${MYTUNNEL_PREFIX}/var/lib/mytunnel/state"
+[ -d "$(dirname "$STATE_DIR")" ] || STATE_DIR="/var/lib/mytunnel/state"
+XRAY_LOG="${MYTUNNEL_PREFIX}/var/log/xray/access.log"
 [ -f "$XRAY_LOG" ] || XRAY_LOG="/var/log/xray/access.log"
-for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/xray_helpers.sh" "$ETC/lib/proto_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
+NGINX_LOG="${MYTUNNEL_PREFIX}/var/log/nginx/access.log"
+[ -f "$NGINX_LOG" ] || NGINX_LOG="/var/log/nginx/access.log"
+
+for f in colors helpers sysinfo xray_helpers proto_helpers; do
+  [ -f "$ETC/lib/$f.sh" ] && . "$ETC/lib/$f.sh" 2>/dev/null
+done
 
 LOCK_MIN=15
-[ -f "$ETC/config/lock_time.conf" ] && . "$ETC/config/lock_time.conf" 2>/dev/null || true
-LOCK_MIN="${LOCK_MIN:-15}"; [[ "$LOCK_MIN" =~ ^[0-9]+$ ]] || LOCK_MIN=15
+[ -f "$ETC/config/lock_time.conf" ] && . "$ETC/config/lock_time.conf" 2>/dev/null
+LOCK_MIN="${LOCK_MIN:-15}"
+[[ "$LOCK_MIN" =~ ^[0-9]+$ ]] || LOCK_MIN=15
 
-_state_file() { echo "$STATE_DIR/limitip_${1}_${2}.lock"; }
+WIN_SEC=60          # window join nginx<->xray (detik)
+NGINX_TAIL=4000     # baris nginx terakhir yang discan
+XRAY_TAIL=4000      # baris xray terakhir yang discan
 
-_unlock_expired() {
-  local f now_m
-  now_m=$(date +%s 2>/dev/null)
-  mkdir -p "$STATE_DIR" 2>/dev/null || true
-  for f in "$STATE_DIR"/limitip_*.lock; do
-    [ -f "$f" ] || continue
-    local exp_s
-    exp_s=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
-    # mtime + LOCK_MIN*60
-    if [ $((now_m - exp_s)) -ge $((LOCK_MIN*60)) ]; then
-      # filename: limitip_PROTO_USER.lock
-      local base proto user
-      base=$(basename "$f" 2>/dev/null)
-      # shellcheck disable=SC2001
-      proto=$(echo "$base" | sed 's/^limitip_//' | cut -d'_' -f1)
-      user=$(echo "$base" | sed "s/^limitip_${proto}_//" | sed 's/\.lock$//')
-      if [ -n "$proto" ] && [ -n "$user" ]; then
-        local st; st=$(awk -F'|' -v u="$user" '$1==u{print $7}' "$ETC/db/${proto}.txt" 2>/dev/null | head -1)
-        if [ "$st" = "locked" ]; then
-          # cek apakah lock karena limitip (file state ada) -> unlock
-          local id; id=$(awk -F'|' -v u="$user" '$1==u{print $2}' "$ETC/db/${proto}.txt" 2>/dev/null | head -1)
-          if [ -n "$id" ]; then
-            xray_add_client "$proto" "$id" "$user" 2>/dev/null || true
-            (
-              flock -x 200
-              awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="active"}1' "$ETC/db/${proto}.txt" > /tmp/.li_tmp.$$ 2>/dev/null && cat /tmp/.li_tmp.$$ > "$ETC/db/${proto}.txt" 2>/dev/null
-            ) 200>"$ETC/db/.${proto}.lock" 2>/dev/null || awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="active"}1' "$ETC/db/${proto}.txt" > /tmp/.li_tmp.$$ 2>/dev/null && cat /tmp/.li_tmp.$$ > "$ETC/db/${proto}.txt" 2>/dev/null
-            chmod 600 "$ETC/db/${proto}.txt" 2>/dev/null || true
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] limitip auto-unlock $proto $user" >> "$LOG" 2>/dev/null || true
-          fi
-        fi
-      fi
-      rm -f "$f" 2>/dev/null || true
-    fi
-  done
-  rm -f /tmp/.li_tmp.$$ 2>/dev/null || true
-}
+_ts_nginx() { date -d "$1" +%s 2>/dev/null || echo 0; }   # "[10/Oct/2026:12:09:50"
+_ts_xray()  { date -d "$1" +%s 2>/dev/null || echo 0; }   # "2026/10/10 12:09:50"
 
 run_once() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
   _unlock_expired
-  [ -f "$XRAY_LOG" ] || return 0
-  # ambil 2 menit terakhir access.log (format xray: ... email: user ... remote: ip:port)
-  # fallback: grep email/user
-  local changed=0 proto db user limit cnt ips
+  [ -f "$XRAY_LOG" ] && [ -f "$NGINX_LOG" ] || return 0
+
+  local changed=0 proto db user limit cnt
   for proto in vmess vless trojan; do
     db="$ETC/db/${proto}.txt"
     [ -f "$db" ] || continue
-    while IFS='|' read -r user _id _exp limit _quota _used status 2>/dev/null; do
+    while IFS='|' read -r user _id _exp limit _quota _used status; do
       [ -z "$user" ] && continue
       [[ "$limit" =~ ^[0-9]+$ ]] || limit=0
       [ "$limit" -eq 0 ] && continue
       [ "$status" = "locked" ] && continue
-      # hitung IP unik untuk user dalam 2 menit window (1000 baris terakhir cukup ringan)
-      ips=$(tail -n 5000 "$XRAY_LOG" 2>/dev/null | grep -F "$user" 2>/dev/null | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' 2>/dev/null | sort -u 2>/dev/null | wc -l 2>/dev/null)
-      cnt=$(echo "$ips" | tr -d ' \n')
+
+      # 1) window timestamp user ini dari xray log
+      local win_start win_end
+      win_start=$(tail -n "$XRAY_TAIL" "$XRAY_LOG" 2>/dev/null \
+        | grep -F "email: ${user}-${proto}@tunnel" 2>/dev/null \
+        | tail -1 | awk '{print $1" "$2}' | cut -d. -f1)
+      [ -z "$win_start" ] && continue
+      win_start=$(_ts_xray "$win_start")
+      [ "$win_start" = "0" ] && continue
+      win_end=$((win_start + WIN_SEC))
+
+      # 2) IP unik dari nginx log di window itu, path sesuai protokol
+      local ips cnt
+      ips=$(tail -n "$NGINX_TAIL" "$NGINX_LOG" 2>/dev/null | awk -v s="$win_start" -v e="$win_end" -v p="/${proto}" '
+        {
+          # [10/Oct/2026:12:09:50 +0000] -> $4 adalah "10/Oct/2026:12:09:50"
+          ts = substr($4, 2)
+          cmd = "date -u -d \"" ts "\" +%s 2>/dev/null"
+          cmd | getline epoch
+          close(cmd)
+          if (epoch == "" ) next
+          epoch = epoch + 0
+          if (epoch >= s && epoch <= e && $7 == p) print $1
+        }' | sort -u)
+      cnt=$(printf '%s\n' "$ips" | grep -c '^[0-9]')
+
       [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
-      if [ "$cnt" -gt "$limit" ]; then
+      local eff=$((limit + 1))
+      if [ "$cnt" -gt "$eff" ]; then
         xray_del_client "$proto" "$user" 2>/dev/null || true
         (
           flock -x 200
@@ -9420,16 +9430,47 @@ run_once() {
         ) 200>"$db.lock" 2>/dev/null || awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="locked"}1' "$db" > /tmp/.li2.$$ 2>/dev/null && cat /tmp/.li2.$$ > "$db" 2>/dev/null
         chmod 600 "$db" 2>/dev/null || true
         touch "$STATE_DIR/limitip_${proto}_${user}.lock" 2>/dev/null || true
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] limitip lock $proto $user ips=$cnt limit=$limit" >> "$LOG" 2>/dev/null || true
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] limitip lock $proto $user ips=$cnt limit=$limit (nginx-join)" >> "$LOG_FILE" 2>/dev/null || true
         changed=1
       fi
-    done < "$db" 2>/dev/null
+    done < "$db"
   done
-  if [ "$changed" -eq 1 ]; then xray_reload 2>/dev/null || true; fi
+  [ "$changed" -eq 1 ] && xray_reload 2>/dev/null || true
   rm -f /tmp/.li2.$$ 2>/dev/null || true
 }
 
-if [ "${1:-}" != "--sourced" ]; then run_once; fi
+_unlock_expired() {
+  local f now_m
+  now_m=$(date +%s)
+  for f in "$STATE_DIR"/limitip_*.lock; do
+    [ -f "$f" ] || continue
+    local exp_s base proto user
+    exp_s=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+    if [ $((now_m - exp_s)) -ge $((LOCK_MIN*60)) ]; then
+      base=$(basename "$f")
+      proto=$(echo "$base" | sed 's/^limitip_//' | cut -d'_' -f1)
+      user=$(echo "$base" | sed "s/^limitip_${proto}_//" | sed 's/\.lock$//')
+      [ -n "$proto" ] && [ -n "$user" ] || continue
+      local st id
+      st=$(awk -F'|' -v u="$user" '$1==u{print $7}' "$ETC/db/${proto}.txt" 2>/dev/null | head -1)
+      [ "$st" = "locked" ] || continue
+      id=$(awk -F'|' -v u="$user" '$1==u{print $2}' "$ETC/db/${proto}.txt" 2>/dev/null | head -1)
+      if [ -n "$id" ]; then
+        xray_add_client "$proto" "$id" "$user" 2>/dev/null || true
+        (
+          flock -x 200
+          awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="active"}1' "$ETC/db/${proto}.txt" > /tmp/.li_tmp.$$ 2>/dev/null && cat /tmp/.li_tmp.$$ > "$ETC/db/${proto}.txt" 2>/dev/null
+        ) 200>"$ETC/db/.${proto}.lock" 2>/dev/null || awk -F'|' -v OFS='|' -v u="$user" '$1==u{$7="active"}1' "$ETC/db/${proto}.txt" > /tmp/.li_tmp.$$ 2>/dev/null && cat /tmp/.li_tmp.$$ > "$ETC/db/${proto}.txt" 2>/dev/null
+        chmod 600 "$ETC/db/${proto}.txt" 2>/dev/null || true
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] limitip auto-unlock $proto $user (nginx-join)" >> "$LOG_FILE" 2>/dev/null || true
+        rm -f "$f"
+      fi
+    fi
+  done
+  rm -f /tmp/.li_tmp.$$ 2>/dev/null || true
+}
+
+[ "${1:-}" != "--sourced" ] && run_once
 __EMBED_EOF__
 chmod 755 "$ETC/cron/limitip_xray.sh" 2>/dev/null || true
 cat > "$ETC/cron/bot_notify.sh" << '__EMBED_EOF__'

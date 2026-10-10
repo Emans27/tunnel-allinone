@@ -1948,6 +1948,9 @@ else
   . /etc/mytunnel/lib/colors.sh 2>/dev/null || true
   . /etc/mytunnel/lib/helpers.sh 2>/dev/null || true
   . /etc/mytunnel/lib/sysinfo.sh 2>/dev/null || true
+  # brand permanen: brand_guard tidak di-load by default -> load + alias bg_set_brand (nama asli: bg_set)
+  [ -f /etc/mytunnel/lib/brand_guard.sh ] && . /etc/mytunnel/lib/brand_guard.sh 2>/dev/null || true
+  command -v bg_set_brand >/dev/null 2>&1 || bg_set_brand() { bg_set "$@"; }
 fi
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"
 YELLOW="${YELLOW:-\033[1;33m}"; CYAN="${CYAN:-\033[0;36m}"
@@ -11151,6 +11154,8 @@ REAL_BACKUP_DIR="${BASE}/root/backup"
 LOG="${BASE}/var/log/mytunnel.log"
 XRAY_CFG="${BASE}/usr/local/etc/xray/config.json"
 [ -n "$BASE" ] || XRAY_CFG="/usr/local/etc/xray/config.json"
+# tambahan manual: fh_log (features_helpers) + ah_notify_admin (advanced_helpers)
+for _f in "$ETC/lib/features_helpers.sh" "$ETC/lib/advanced_helpers.sh"; do [ -f "$_f" ] && . "$_f" 2>/dev/null || true; done
 for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/features_helpers.sh"; do [ -f "$f" ] && . "$f" 2>/dev/null || true; done
 RED="${RED:-\033[0;31m}"; GREEN="${GREEN:-\033[0;32m}"; YELLOW="${YELLOW:-\033[1;33m}"
 CYAN="${CYAN:-\033[0;36m}"; BLUE="${BLUE:-\033[0;34m}"; RESET="${RESET:-\033[0m}"
@@ -11193,7 +11198,7 @@ do_backup() {
     chmod 600 "$arch" 2>/dev/null || true
     echo -e "${GREEN}Backup dibuat: $arch${RESET}"
     ls -lh "$arch" 2>&1 | sed 's/^/  /'
-    fh_log "backup $arch"
+    fh_log "backup $arch"; ah_notify_admin "Backup berhasil dibuat: $(basename "$arch")"
     # keep 7 latest
     local cnt
     cnt=$(ls -1 "$REAL_BACKUP_DIR"/mytunnel-*.tar.gz 2>/dev/null | wc -l)

@@ -9337,13 +9337,18 @@ __EMBED_EOF__
 chmod 755 "$ETC/cron/quota.sh"
 cat > "$ETC/cron/limitip_xray.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel cron/limitip_xray.sh - hitung IP client unik per akun via join nginx<->xray access.log, lock 15m (tiap 1 menit)
+# mytunnel cron/limitip_xray.sh - hitung IP client unik per akun via join nginx<->xray access.log, lock sesuai LOCK_MIN (tiap 1 menit)
 # shellcheck disable=SC1091,SC1090
-# Kenapa join: xray listen 127.0.0.1, semua trafik masuk lewat nginx, jadi "from <ip>" di
+# Kenapa join: xray listen 127.0.0.1 dan semua trafik masuk lewat nginx, jadi "from <ip>" di
 # xray access.log selalu 127.0.0.1 dan IP client asli hilang. Sumber IP client = nginx access.log
-# ($remote_addr + timestamp + path), di-join ke xray access.log (email user + timestamp).
-# Batasan jujur: join berbasis waktu, bisa salah atribusi jika beberapa user konek pada detik
-# yang sama. Grace limit+1 + LOCK_MIN menekan false positive.
+# ($remote_addr + timestamp + path), di-join dengan xray access.log pada window SEKARANG-WIN_SEC.
+# Window harus relatif sekarang, BUKAN baris xray terakhir user: kalau pakai baris basi,
+# user yang baru auto-unlock akan langsung ter-lock lagi (relock loop -> terkunci selamanya).
+# LOCK_MIN dibaca dari config/lock_time.conf, diatur lewat Menu 7.) SET REDUCE/TIME.
+#
+# Kenapa: xray listen 127.0.0.1, semua trafik masuk lewat nginx, jadi "from <ip>" di
+# xray access.log selalu 127.0.0.1 dan IP client asli hilang. nginx access.log
+# ($remote_addr, combined format) menyimpan IP client asli + timestamp + path,
 # cukup untuk di-join dengan xray access.log (email user + timestamp).
 #
 # Metode per user: ambil window timestamp N detik dari xray log, lalu cari baris
@@ -9373,12 +9378,9 @@ LOCK_MIN=15
 LOCK_MIN="${LOCK_MIN:-15}"
 [[ "$LOCK_MIN" =~ ^[0-9]+$ ]] || LOCK_MIN=15
 
-WIN_SEC=60          # window join nginx<->xray (detik)
+WIN_SEC=180         # window join nginx<->xray (detik); 180s menahan reconnect/NAT
 NGINX_TAIL=4000     # baris nginx terakhir yang discan
 XRAY_TAIL=4000      # baris xray terakhir yang discan
-
-_ts_nginx() { date -d "$1" +%s 2>/dev/null || echo 0; }   # "[10/Oct/2026:12:09:50"
-_ts_xray()  { date -d "$1" +%s 2>/dev/null || echo 0; }   # "2026/10/10 12:09:50"
 
 run_once() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
@@ -9395,32 +9397,35 @@ run_once() {
       [ "$limit" -eq 0 ] && continue
       [ "$status" = "locked" ] && continue
 
-      # 1) window timestamp user ini dari xray log
+      # 1) window = SEKARANG mundur WIN_SEC, bukan baris xray terakhir user.
+      #    Kalau acuannya baris terakhir yang basi, user yang sudah auto-unlock akan
+      #    langsung ter-lock lagi di detik yang sama (relock loop -> terkunci selamanya).
       local win_start win_end
-      win_start=$(tail -n "$XRAY_TAIL" "$XRAY_LOG" 2>/dev/null \
-        | grep -F "email: ${user}-${proto}@tunnel" 2>/dev/null \
-        | tail -1 | awk '{print $1" "$2}' | cut -d. -f1)
-      [ -z "$win_start" ] && continue
-      win_start=$(_ts_xray "$win_start")
-      [ "$win_start" = "0" ] && continue
-      win_end=$((win_start + WIN_SEC))
+      win_start=$(( $(date -u +%s) - WIN_SEC ))
+      win_end=$(date -u +%s)
+      # hemat CPU: skip kalau user tak punya aktivitas sama sekali
+      grep -qF "email: ${user}-${proto}@tunnel" <(tail -n "$XRAY_TAIL" "$XRAY_LOG" 2>/dev/null) || continue
 
       # 2) IP unik dari nginx log di window itu, path sesuai protokol
       local ips cnt
       ips=$(tail -n "$NGINX_TAIL" "$NGINX_LOG" 2>/dev/null | awk -v s="$win_start" -v e="$win_end" -v p="/${proto}" '
+        BEGIN {
+          m["Jan"]=1;m["Feb"]=2;m["Mar"]=3;m["Apr"]=4;m["May"]=5;m["Jun"]=6
+          m["Jul"]=7;m["Aug"]=8;m["Sep"]=9;m["Oct"]=10;m["Nov"]=11;m["Dec"]=12
+        }
         {
-          # [10/Oct/2026:12:09:50 +0000] -> $4 adalah "10/Oct/2026:12:09:50"
-          ts = substr($4, 2)
-          cmd = "date -u -d \"" ts "\" +%s 2>/dev/null"
-          cmd | getline epoch
-          close(cmd)
-          if (epoch == "" ) next
-          epoch = epoch + 0
+          ts = $4; sub(/^\[/, "", ts)          # "10/Oct/2026:12:09:50"
+          n = split(ts, a, /[\/:]/)
+          if (n < 6 || !(a[2] in m)) next
+          epoch = mktime(a[3]" "m[a[2]]" "a[1]" "a[4]" "a[5]" "a[6]" 0")
+          if (epoch == "" || epoch < 0) next
           if (epoch >= s && epoch <= e && $7 == p) print $1
         }' | sort -u)
       cnt=$(printf '%s\n' "$ips" | grep -c '^[0-9]')
 
       [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+      # grace hanya +1 IP di atas limit (limit=1 -> lock saat 2 IP unik).
+      # Reconnect paksa IP baru sudah tercakup karena window 180s + penggabungan IP unik.
       local eff=$((limit + 1))
       if [ "$cnt" -gt "$eff" ]; then
         xray_del_client "$proto" "$user" 2>/dev/null || true

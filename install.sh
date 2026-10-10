@@ -9819,12 +9819,32 @@ bh_restore_from_telegram(){
   if [ -n "$BASE" ]; then bk_dir="${BASE}/root/backup"; else bk_dir="/root/backup"; fi
   mkdir -p "$bk_dir" 2>/dev/null || true
   pre_arch="$bk_dir/mytunnel-pre-restore-$(date +%Y%m%d-%H%M%S 2>/dev/null).tar.gz"
-  if [ -n "$BASE" ]; then tar -czf "$pre_arch" -C "$BASE" etc/mytunnel 2>/dev/null || true; else tar -czf "$pre_arch" -C / etc/mytunnel 2>/dev/null || true; fi
+  if [ -n "$BASE" ]; then tar -czf "$pre_arch" -C "$BASE" etc/mytunnel 2>/dev/null || true; else tar -czf "$pre_arch" -C / etc/mytunnel usr/local/etc/xray/config.json 2>/dev/null || true; fi
   chmod 600 "$pre_arch" 2>/dev/null || true
+  [ -s "$pre_arch" ] || { rm -f "$pre_arch" 2>/dev/null || true; pre_arch=""; }
   echo "Ekstrak $file_name ..."
-  local ok=1
-  if [ -n "$BASE" ]; then tar -xzf "$tmp_file" -C "$BASE" 2>&1 | head -n 20 || ok=0; else tar -xzf "$tmp_file" -C / 2>&1 | head -n 20 || ok=0; fi
-  if [ "$ok" -eq 0 ]; then echo "Gagal ekstrak, rollback"; [ -f "$pre_arch" ] && { if [ -n "$BASE" ]; then tar -xzf "$pre_arch" -C "$BASE" 2>/dev/null || true; else tar -xzf "$pre_arch" -C / 2>/dev/null || true; fi; }; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  local ok=1 tar_err
+  # brand.txt/.brand.canon bisa chattr +i -> tar gagal "File exists". Buka sementara.
+  if [ -f "$ETC/lib/brand_guard.sh" ]; then . "$ETC/lib/brand_guard.sh" 2>/dev/null || true; fi
+  if command -v bg_unlock_file >/dev/null 2>&1; then
+    bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
+    bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
+  fi
+  tar_err=$(tar -xzf "$tmp_file" -C / 2>&1) || ok=0
+  [ -n "$tar_err" ] && printf '%s\n' "$tar_err" | head -n 20
+  command -v bg_enforce >/dev/null 2>&1 && bg_enforce >/dev/null 2>&1 || true
+  if [ "$ok" -eq 0 ]; then
+    echo "Gagal ekstrak, rollback"
+    if [ -s "$pre_arch" ]; then
+      if command -v bg_unlock_file >/dev/null 2>&1; then
+        bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
+        bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
+      fi
+      tar -xzf "$pre_arch" -C / 2>/dev/null || true
+      command -v bg_enforce >/dev/null 2>&1 && bg_enforce >/dev/null 2>&1 || true
+    fi
+    rm -rf "$tmp_dir" 2>/dev/null || true; return 1
+  fi
   # perms
   chmod 600 "$ETC/db/"*.txt 2>/dev/null || true
   chmod 600 "$ETC/db/".*.lock 2>/dev/null || true
@@ -9838,7 +9858,18 @@ bh_restore_from_telegram(){
       "$bin" run -test -config "$xcfg" >/dev/null 2>&1 || valid=0
     fi
   fi
-  if [ "$valid" -eq 0 ]; then echo "Validasi gagal, rollback"; [ -f "$pre_arch" ] && { if [ -n "$BASE" ]; then tar -xzf "$pre_arch" -C "$BASE" 2>/dev/null || true; else tar -xzf "$pre_arch" -C / 2>/dev/null || true; fi; }; rm -rf "$tmp_dir" 2>/dev/null || true; return 1; fi
+  if [ "$valid" -eq 0 ]; then
+    echo "Validasi gagal, rollback"
+    if [ -s "$pre_arch" ]; then
+      if command -v bg_unlock_file >/dev/null 2>&1; then
+        bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
+        bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
+      fi
+      tar -xzf "$pre_arch" -C / 2>/dev/null || true
+      command -v bg_enforce >/dev/null 2>&1 && bg_enforce >/dev/null 2>&1 || true
+    fi
+    rm -rf "$tmp_dir" 2>/dev/null || true; return 1
+  fi
   if [ -z "$BASE" ]; then
     systemctl restart xray 2>/dev/null || true; systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true; systemctl restart cron 2>/dev/null || service cron restart 2>/dev/null || true
   fi
@@ -11269,16 +11300,35 @@ do_restore() {
     tar -czf "$pre_arch" -C "$TAR_ROOT" etc/mytunnel 2>/dev/null || true
   fi
   chmod 600 "$pre_arch" 2>/dev/null || true
-  echo -e "${DIM}Backup sebelum restore: $pre_arch${RESET}"
+  # Guard: tar ke TAR_ROOT bisa gagal kalau $ETC belum ada (mode test kosong).
+  # Hapus artefak nol byte supaya tidak tampil sebagai backup valid.
+  [ -s "$pre_arch" ] || { rm -f "$pre_arch" 2>/dev/null || true; pre_arch=""; }
+  [ -n "$pre_arch" ] && echo -e "${DIM}Backup sebelum restore: $pre_arch${RESET}"
   # extract — exit code tar harus ditangkap (jangan dibuang lewat pipe)
   echo -e "${DIM}Ekstrak $target...${RESET}"
-  local ok=1 tar_err
+  local ok=1 tar_err had_bg=0
+  # brand txt/canon bisa chattr +i (brand permanen) -> tar gagal "File exists".
+  # Buka kunci sementara lewat brand_guard kalau tersedia, kunci lagi setelahnya.
+  if [ -f "$ETC/lib/brand_guard.sh" ]; then . "$ETC/lib/brand_guard.sh" 2>/dev/null || true; fi
+  if command -v bg_unlock_file >/dev/null 2>&1; then
+    bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
+    bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
+    had_bg=1
+  fi
   tar_err=$(tar -xzf "$target" -C "$TAR_ROOT" 2>&1) || ok=0
   [ -n "$tar_err" ] && printf '%s\n' "$tar_err" | head -n 20
+  # brand sudah dibuka kuncinya di atas -> tutup lagi (biar tetap permanen)
+  if [ "$had_bg" = "1" ] && command -v bg_enforce >/dev/null 2>&1; then bg_enforce >/dev/null 2>&1 || true; fi
   if [ "$ok" -eq 0 ]; then
     echo -e "${RED}Gagal ekstrak, rollback...${RESET}"
-    if [ -f "$pre_arch" ]; then
+    if [ -s "$pre_arch" ]; then
+      # unlock lagi: rollback juga menimpa brand.txt yang chattr +i
+      if command -v bg_unlock_file >/dev/null 2>&1; then
+        bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
+        bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
+      fi
       tar -xzf "$pre_arch" -C "$TAR_ROOT" 2>/dev/null || true
+      command -v bg_enforce >/dev/null 2>&1 && bg_enforce >/dev/null 2>&1 || true
     fi
     pause; return
   fi
@@ -11301,8 +11351,14 @@ do_restore() {
   fi
   if [ "$valid" -eq 0 ]; then
     echo -e "${RED}Validasi gagal, rollback...${RESET}"
-    if [ -f "$pre_arch" ]; then
+    if [ -s "$pre_arch" ]; then
+      # brand mungkin sudah dikunci lagi bg_enforce -> buka dulu sebelum menimpa
+      if command -v bg_unlock_file >/dev/null 2>&1; then
+        bg_unlock_file "$ETC/config/brand.txt" 2>/dev/null || true
+        bg_unlock_file "$ETC/config/.brand.canon" 2>/dev/null || true
+      fi
       tar -xzf "$pre_arch" -C "$TAR_ROOT" 2>/dev/null || true
+      command -v bg_enforce >/dev/null 2>&1 && bg_enforce >/dev/null 2>&1 || true
     fi
     pause; return
   fi

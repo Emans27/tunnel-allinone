@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --brand=*) MYTUNNEL_BRAND="${1#*=}"; shift;;
     --yes|-y) AUTO_YES=1; MYTUNNEL_YES=1; shift;;
     --no-deps) NO_DEPS=1; shift;;
-    --help|-h) echo "Usage: bash install.sh [--domain example.com] [--brand \"My Brand\"] [--yes] [--no-deps]"; echo " Env: MYTUNNEL_DOMAIN, MYTUNNEL_BRAND, MYTUNNEL_EXPIRY=2099-12-31, MYTUNNEL_YES=1, MYTUNNEL_PREFIX=/tmp/test (test mode)"; echo " Copy-paste (non-interaktif): bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh)\" --domain example.com --brand \"My Brand\" --yes"; echo " Interaktif: curl -fsSL -o install.sh https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh && chmod +x install.sh && bash install.sh"; exit 0;;
+    --help|-h) echo "Usage: bash install.sh [--domain example.com] [--brand \"My Brand\"] [--yes] [--no-deps]"; echo " Env: MYTUNNEL_DOMAIN, MYTUNNEL_BRAND, MYTUNNEL_EXPIRY=2099-12-31, MYTUNNEL_YES=1, MYTUNNEL_PREFIX=/tmp/test (test mode)"; echo " Copy-paste (non-interaktif): bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Emans27/tunnel-allinone/main/install.sh)\" --domain example.com --brand \"My Brand\" --yes"; echo " Interaktif: curl -fsSL -o install.sh https://raw.githubusercontent.com/Emans27/tunnel-allinone/main/install.sh && chmod +x install.sh && bash install.sh"; exit 0;;
     *) echo -e "${YELLOW}Arg tidak dikenal: $1${RESET}" >&2; shift;;
   esac
 done
@@ -13719,8 +13719,7 @@ v1.8.0
 __EMBED_EOF__
 chmod 644 "$ETC/config/version.txt"
 cat > "$ETC/config/repo.txt" << '__EMBED_EOF__'
-https://raw.githubusercontent.com/Emans27/mytunnel-installer/main
-
+https://raw.githubusercontent.com/Emans27/tunnel-allinone/main
 __EMBED_EOF__
 chmod 644 "$ETC/config/repo.txt"
 cat > "$ETC/CHANGELOG.md" << '__EMBED_EOF__'
@@ -14565,9 +14564,9 @@ echo -e "    ${CYAN}menu${RESET}  (atau ${CYAN}/usr/local/bin/menu${RESET}, ${CY
 echo -e "  ${BOLD}Update:${RESET}  ${CYAN}menu -> FEATURES -> Auto Update${RESET}  atau  ${CYAN}bash $ETC/features/autoupdate.sh${RESET}"
 echo -e "  ${BOLD}Uninstall:${RESET} ${CYAN}bash ${BASE}/uninstall.sh${RESET}  (ketik ${BOLD}hapus${RESET})"
 echo -e "  ${BOLD}Copy-paste ke VPS baru (satu baris):${RESET}"
-echo -e "    ${CYAN}bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh)\" --domain <domain> --brand \"<Brand>\" --yes${RESET}"
+echo -e "    ${CYAN}bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Emans27/tunnel-allinone/main/install.sh)\" --domain <domain> --brand \"<Brand>\" --yes${RESET}"
 echo -e "    ${DIM}Interaktif (tanya domain/brand sendiri):${RESET}"
-echo -e "    ${CYAN}curl -fsSL -o install.sh https://raw.githubusercontent.com/Emans27/mytunnel-installer/main/install.sh && chmod +x install.sh && bash install.sh${RESET}"
+echo -e "    ${CYAN}curl -fsSL -o install.sh https://raw.githubusercontent.com/Emans27/tunnel-allinone/main/install.sh && chmod +x install.sh && bash install.sh${RESET}"
 echo -e "    ${DIM}Override expiry: MYTUNNEL_EXPIRY=2099-12-31 bash install.sh${RESET}"
 echo -e "    ${DIM}MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh  # non-interaktif${RESET}"
 echo ""

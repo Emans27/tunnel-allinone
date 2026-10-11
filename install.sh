@@ -9821,7 +9821,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi
 # TIDAK pakai exit di sini — file ini sering di-source oleh menu & test
 :
 __EMBED_EOF__
-chmod 644 "$LR_DIR/lib/core.sh"
+chmod 755 "$LR_DIR/lib/core.sh"
 
 cat > "$LR_DIR/config.conf" <<'__EMBED_EOF__'
 # login-report — konfigurasi (600, root-only)
@@ -10106,7 +10106,7 @@ install -d -m 755 /opt/login-report/lib 2>/dev/null || true
 install -d -m 700 /etc/login-report 2>/dev/null || true
 install -m 644 "$LR_DIR/lib/common.sh"    /opt/login-report/lib/common.sh    2>/dev/null || true
 install -m 644 "$LR_DIR/lib/collector.sh" /opt/login-report/lib/collector.sh 2>/dev/null || true
-install -m 644 "$LR_DIR/lib/core.sh"      /opt/login-report/lib/core.sh      2>/dev/null || true
+install -m 755 "$LR_DIR/lib/core.sh"      /opt/login-report/lib/core.sh      2>/dev/null || true
 install -m 755 "$LR_DIR/menu.sh"          /opt/login-report/menu.sh          2>/dev/null || true
 install -m 755 "$LR_DIR/uninstall.sh"     /opt/login-report/uninstall.sh     2>/dev/null || true
 ln -sf /opt/login-report/menu.sh /usr/local/bin/lreport 2>/dev/null || true

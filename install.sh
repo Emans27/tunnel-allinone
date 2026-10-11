@@ -10163,7 +10163,7 @@ p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
 
 menu_old = '  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" " 5.) SETUP BOT             x.) EXIT"'
-menu_new = '  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" " 5.) SETUP BOT             x.) EXIT"\n  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" "10.) LOGIN REPORT (timer + laporan user aktif)"'
+menu_new = '  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" " 5.) SETUP BOT             x.) EXIT"\n  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" "10.) LOGIN REPORT"'
 disp_old = '    9) check_services;;'
 disp_new = '    9) check_services;;\n    10) if [ -x /opt/login-report/menu.sh ]; then bash /opt/login-report/menu.sh 2>/dev/null || { echo -e "${YELLOW}menu login-report error${RESET}"; pause; }; else echo -e "${YELLOW}login-report belum terpasang${RESET}"; pause; fi;;'
 prompt_old = '  echo -ne "${BOLD}Select From Options [1-9 or x] : ${RESET}"'

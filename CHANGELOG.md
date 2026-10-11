@@ -29,9 +29,9 @@
 - `cron/bot_notify.sh` memuat `features_helpers.sh` (helper `fh_*` sebelumnya tidak
   tersedia di konteks cron).
 
-### Verified (live, VPS 206.189.32.83)
-- IPv6 `2400:6180:0:d2:0:3:367f:8000` -> regex tolak (`[]`), IPv4 -> `206.189.32.83`.
-- `ah_get_ip` = `get_ip_cached` = `206.189.32.83`.
+### Verified (live, VPS <VPS-IP>)
+- IPv6 `<VPS-IPv6>` -> regex tolak (`[]`), IPv4 -> `<VPS-IP>`.
+- `ah_get_ip` = `get_ip_cached` = `<VPS-IP>`.
 - Repo <-> VPS: 70/70 file embedded identik (diff per-blok + tar pull ulang).
 - `bash -n` seluruh 70 blok + `install.sh` = 0 error.
 
@@ -54,7 +54,7 @@
 - Peringatan "masih ada listener di :80" tidak lagi muncul saat httpmux sendiri yang
   memegang port itu.
 
-### Verified (live, VPS 206.189.32.83, dari host luar)
+### Verified (live, VPS <VPS-IP>, dari host luar)
 - `mytunnel-httpmux` active, listener `0.0.0.0:80`; `/etc/nginx/sites-enabled/` kosong.
 - HTTP biasa :80 -> 204 (diteruskan ke nginx :8080).
 - Raw SSH :80 -> banner `SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.17` + key exchange;
@@ -83,7 +83,7 @@
   kehilangan kurung kurawal.
 - `_mt_port_active`: kenali `udp-custom` di samping `mytunnel-udp-custom`.
 
-### Verified (live, VPS 206.189.32.83)
+### Verified (live, VPS <VPS-IP>)
 - `udp-custom` active, listen UDP :36712; 22 DNAT rule (1-65535 minus exclude).
 - SHA256 binary cocok dengan yang dipin.
 - Paket uji dari luar ke port acak dalam rentang: DNAT + INPUT ACCEPT naik,
@@ -127,7 +127,7 @@
 - Service, port, config VPS: tidak diubah (hanya file di `/etc/mytunnel`).
 - `main` tidak disentuh; kerja ini di branch `final-443-stream`.
 
-### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
+### Verified (live, VPS <VPS-IP> / <DOMAIN>)
 - Blok persis sesuai spec: dash 36, label rata kolom 16, dua spasi di baris ringkas.
 - Telegram API balas `"ok":true`; payload `<code>...</code>` per baris.
 - `ssh_create` dgn username yang sudah ada -> pesan error + exit 2, DB tidak bertambah.
@@ -146,8 +146,8 @@
   Contoh: `` `host:443@user:pass & host:80@user:pass` ``
 
 ### Verified
-- Harness: baris ringkas = `tesc.sunekvip.cc.cd:443@emon:emon & tesc.sunekvip.cc.cd:80@emon:emon`;
-  notif Telegram = `` `tesc.sunekvip.cc.cd:443@emon:emon & tesc.sunekvip.cc.cd:80@emon:emon` ``;
+- Harness: baris ringkas = `<DOMAIN>:443@<user>:<pass> & <DOMAIN>:80@<user>:<pass>`;
+  notif Telegram = `` `<DOMAIN>:443@<user>:<pass> & <DOMAIN>:80@<user>:<pass>` ``;
   blok terminal tetap tampil + baris ringkas di akhir. `bash -n`/shellcheck -S error 0.
 
 ## v1.4.0 — 2026-10-08 — Perbaikan stunnel/tlsmux + guard listen 443 + label vless
@@ -171,13 +171,13 @@
   `VLESS WS TLS`, `VLESS WS NO TLS`, `VLESS GRPC`, `VLESS Upgrade TLS`, `VLESS Upgrade NO TLS`.
   Baris label XHTTP yang tersisa (dead, tanpa link pasangannya) dihapus.
 
-### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
+### Verified (live, VPS <VPS-IP> / <DOMAIN>)
 - stunnel dihapus (apt remove) -> `tlsmux.sh` memasangnya kembali; unit tlsmux+stunnel active,
   listen 127.0.0.1:1443 dan 127.0.0.1:4443.
 - tlsmux routing: banner SSH -> sshd (`SSH-2.0-OpenSSH_8.9p1`), HTTP -> nginx 8080 (204).
 - Regresi listen 443: `configure-final-443.sh` menghapus 443, `nginx -t` lulus, nginx active.
 - Idempoten: run kedua -> "sistem sudah memakai konfigurasi final — tidak ada yang diubah".
-- Transport: WS 443, gRPC 443 pass (exit IP 206.189.32.83); ALPN h2 -> 9443; no-ALPN -> stunnel 4443.
+- Transport: WS 443, gRPC 443 pass (exit IP <VPS-IP>); ALPN h2 -> 9443; no-ALPN -> stunnel 4443.
 
 ## v1.3.0 — 2026-10-08 — Hapus XHTTP (tidak kompatibel)
 ### Removed
@@ -194,8 +194,8 @@ sementara config memakai path statis `/xvmess`. Hasil uji live: handshake selalu
 dari Xray (nginx routing sudah benar, terbukti via debug log `test location`).
 Tidak memperbaiki tanpa menyelaraskan versi klien/server, jadi XHTTP dihapus.
 
-### Verified (live, VPS 206.189.32.83 / tesc.sunekvip.cc.cd)
-- WS 443, WS 8443, gRPC 443, HTTPUpgrade 443: exit IP 206.189.32.83 (PASS)
+### Verified (live, VPS <VPS-IP> / <DOMAIN>)
+- WS 443, WS 8443, gRPC 443, HTTPUpgrade 443: exit IP <VPS-IP> (PASS)
 - ALPN `h2`/`http/1.1` -> nginx 9443; tanpa ALPN -> stunnel 4443 (PASS)
 - `bash -n` exit 0, shellcheck -S error exit 0, test-mode install PASS
 
@@ -208,7 +208,7 @@ Tidak memperbaiki tanpa menyelaraskan versi klien/server, jadi XHTTP dihapus.
 - Timestamped backups, `--dry-run`, `--rollback`, automatic rollback on failed `nginx -t`.
 
 ### Fixed
-- Traffic iface auto-detect (`_traffic_iface`, `ip route` default) — replaces hardcoded `enp3s0` that broke on `eth0`/`ens3`/`ens18` VPS.
+- Traffic iface auto-detect (`_traffic_iface`, `ip route` default) — replaces hardcoded `<iface>` that broke on `eth0`/`<iface>`/`ens18` VPS.
 - WIB day bucket single source of truth (`_traffic_day_idx`) — `get_traffic_day`, `get_traffic_rx_tx`, and fallback now read the same `day[]` index (previously inconsistent `-1` vs `-2`).
 - `get_traffic_*` use `vnstat --json` + `jq` (robust field mapping vs `--oneline | awk -F';'`); `jq` guard added to fallback.
 - `curl -4` on all Telegram API calls (avoids IPv6 failure path).

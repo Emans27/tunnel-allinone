@@ -8,3 +8,6 @@ root/backup/
 *.conf.local
 .env
 
+install.sh.bak-*
+embed_login_report.py
+patch_menu10.py

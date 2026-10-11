@@ -180,6 +180,20 @@ if [ -n "$BASE" ]; then
 else
   rm -rf /etc/mytunnel 2>/dev/null || true
   rm -f /usr/local/bin/menu /usr/local/bin/mytunnel-doctor 2>/dev/null || true
+  # --- login-report (tool mandiri) ---
+  if [ -f /opt/login-report/uninstall.sh ]; then
+    echo "  hapus login-report via uninstall.sh miliknya"
+    bash /opt/login-report/uninstall.sh --yes 2>/dev/null || true
+  else
+    systemctl stop    login-report.timer  2>/dev/null || true
+    systemctl disable login-report.timer  2>/dev/null || true
+    systemctl stop    login-report.service 2>/dev/null || true
+    rm -f /etc/systemd/system/login-report.timer /etc/systemd/system/login-report.service 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+    rm -rf /opt/login-report /etc/login-report 2>/dev/null || true
+    rm -f /usr/local/bin/lreport /var/log/login-report.log 2>/dev/null || true
+  fi
+  echo "  hapus login-report (unit, /opt, /etc, log)"
   rm -f /etc/nginx/conf.d/mytunnel.conf 2>/dev/null || true
   # restore nginx default if we backed up
   if ls /etc/nginx/conf.d/mytunnel.conf.bak-* >/dev/null 2>&1; then

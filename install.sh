@@ -9226,6 +9226,965 @@ echo "total_orphan=${_total_purged}"
 exit 0
 __EMBED_EOF__
 chmod 755 "$ETC/cron/purge_orphan_xray.sh"
+# ── BEGIN login-report (tool mandiri) ──
+# Tool login-report — mandiri, READ-ONLY terhadap db mytunnel.
+LR_DIR="$ETC/login-report"   # sumber embed di /etc/mytunnel/login-report
+mkdir -p "$LR_DIR/lib" 2>/dev/null || true
+
+cat > "$LR_DIR/lib/common.sh" <<'__EMBED_EOF__'
+#!/bin/bash
+# login-report — helper umum (config, log, warna, validasi)
+# shellcheck disable=SC2034,SC1091
+LR_VERSION="1.0.0"
+
+# ── warna ───────────────────────────────────────────────────
+if [ -t 1 ] && [ "${NO_COLOR:-}" != "1" ]; then
+  R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; B=$'\e[34m'; C=$'\e[36m'; N=$'\e[0m'; BOLD=$'\e[1m'
+else R=""; G=""; Y=""; B=""; C=""; N=""; BOLD=""; fi
+
+lr_die(){ printf '%s[!]%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
+lr_ok(){  printf '%s[+]%s %s\n' "$G" "$N" "$*"; }
+lr_warn(){ printf '%s[!]%s %s\n' "$Y" "$N" "$*"; }
+lr_head(){ printf '\n%s%s%s\n' "$BOLD$C" "$*" "$N"; }
+lr_line(){ printf '%s\n' "--------------------------------------------"; }
+
+# ── konfigurasi ─────────────────────────────────────────────
+LR_CONF=/etc/login-report/config.conf
+lr_load_conf(){
+  [ -r "$LR_CONF" ] || { printf '[!] config tidak ada: %s\n' "$LR_CONF" >&2; return 1; }
+  local line key val
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    key=${line%%=*}; val=${line#*=}
+    key=$(printf '%s' "$key" | tr -d ' ' | tr -c 'A-Za-z0-9_' '_')
+    case "$key" in
+      BOT_TOKEN|CHAT_ID|ENABLED|INTERVAL_MIN|DAILY_AT|SEND_SSH|SEND_VMESS|SEND_VLESS|SEND_TROJAN|XRAY_LOG_MINUTES|DOMAIN|INFO_COLUMNS|XRAY_ACCESS_LOG|XRAY_CONFIG|XRAY_API_ADDR|CURL_RETRY|CURL_TIMEOUT)
+        # buang kutip pembungkus ("..." atau '...')
+        val=${val%\"}; val=${val#\"}; val=${val%\'}; val=${val#\'}
+        eval "$key=\$val" ;;
+    esac
+  done < "$LR_CONF"
+  return 0
+}
+
+# tulis nilai ke config (preserve komentar & urutan, tanpa sed -i pada file asli)
+lr_set_conf(){
+  local key="$1" val="$2" tmp
+  [ -r "$LR_CONF" ] || return 1
+  [ -w "$LR_CONF" ] || return 1
+  val=$(printf '%s' "$val" | tr -d '\n\r')
+  tmp=$(mktemp)
+  awk -v k="$key" -v v="$val" '
+    BEGIN{ done=0; FS="="; OFS="=" }
+    /^[A-Za-z_][A-Za-z0-9_]*=/ {
+      key=$1
+      if (key==k && !done) { $0=k"="v; done=1 }
+    }
+    { print }
+    END{ if(!done) print k"="v }
+  ' "$LR_CONF" > "$tmp"
+  chmod --reference="$LR_CONF" "$tmp" 2>/dev/null || chmod 600 "$tmp"
+  mv -f "$tmp" "$LR_CONF"
+  # sinkronkan variabel di memori supaya pemanggil (menu/timer) langsung pakai nilai baru
+  eval "$key=\$val"
+}
+
+# ── logging (token TIDAK pernah masuk log) ──────────────────
+LR_LOG=/var/log/login-report.log
+lr_log(){ printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LR_LOG" 2>/dev/null || true; }
+
+# ── validasi ────────────────────────────────────────────────
+lr_valid_interval(){ case "$1" in 5|10|15|30|60|180|360|720|1440) return 0 ;; *) return 1 ;; esac; }
+lr_valid_hhmm(){ [[ "$1" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; }
+
+# ── mask token: tampilkan prefix, sisanya **** ──────────────
+lr_mask_token(){
+  local t="${1:-}"
+  [ -z "$t" ] && { echo "-"; return; }
+  case "$t" in
+    *:*) printf '%s:%s****' "${t%%:*}" "$(printf '%s' "${t#*:}" | cut -c1-3)" ;;
+    *)   printf '%s****' "$(printf '%s' "$t" | cut -c1-4)" ;;
+  esac
+}
+
+lr_valid_chat_id(){ [[ "${1:-}" =~ ^-?[0-9]+$ ]]; }
+__EMBED_EOF__
+chmod 644 "$LR_DIR/lib/common.sh"
+
+cat > "$LR_DIR/lib/collector.sh" <<'__EMBED_EOF__'
+#!/bin/bash
+# login-report — collector (READ-ONLY terhadap milik tunneling lama)
+# Format access.log Xray: "<ts> from <client_ip>:<port> accepted tcp:<dst> [<inboundTag> >> <outbound>] email: <email>"
+# shellcheck disable=SC2034,SC2154,SC2317,SC2312
+
+# ── identitas VPS ───────────────────────────────────────────
+lr_public_ip(){
+  local ip c="/tmp/.lr_pubip" age
+  if [ -r "$c" ]; then age=$(( $(date +%s) - $(stat -c %Y "$c" 2>/dev/null || echo 0) ))
+    [ "$age" -lt 300 ] && { cat "$c"; return; }; fi
+  ip=$(curl -4 -fsS --max-time 6 https://api.ipify.org 2>/dev/null)
+  [ -z "$ip" ] && ip=$(curl -4 -fsS --max-time 6 https://ifconfig.me 2>/dev/null)
+  [ -z "$ip" ] && ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+  [ -z "$ip" ] && ip="unknown"
+  echo "$ip" > "$c" 2>/dev/null || true
+  echo "$ip"
+}
+
+lr_domain(){
+  local d f
+  if [ "${DOMAIN:-auto}" != "auto" ] && [ -n "${DOMAIN:-}" ]; then echo "$DOMAIN"; return; fi
+  for f in /etc/mytunnel/config/domain.txt /etc/xray/domain.txt; do
+    [ -r "$f" ] || continue
+    d=$(head -1c40 "$f" 2>/dev/null | tr -d '[:space:]')
+    [ -n "$d" ] && { echo "$d"; return; }
+  done
+  for f in /root/.acme.sh/*.conf /etc/letsencrypt/renewal/*.conf; do
+    [ -r "$f" ] || continue
+    d=$(grep -m1 -E "^(Le_Domain|domains.?=)" "$f" 2>/dev/null | cut -d"'" -f2 | head -1 | tr -d '[:space:]')
+    [ -z "$d" ] && d=$(grep -m1 -E "^(Le_Domain|aliases)" "$f" 2>/dev/null | tr -d '" ' | cut -d= -f2 | tr ',' '\n' | grep -v '^$' | head -1)
+    [ -n "$d" ] && { echo "$d"; return; }
+  done
+  for f in /etc/mytunnel/cert/fullchain.crt /etc/letsencrypt/live/*/fullchain.pem; do
+    [ -r "$f" ] || continue
+    d=$(openssl x509 -in "$f" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *//p' | tr -d '[:space:]')
+    [ -n "$d" ] && { echo "$d"; return; }
+  done
+  echo "unknown"
+}
+
+lr_isp(){
+  local ip="$1" c="/tmp/.lr_isp_$ip" age out
+  if [ -r "$c" ]; then age=$(( $(date +%s) - $(stat -c %Y "$c" 2>/dev/null || echo 0) ))
+    [ "$age" -lt 21600 ] && { cat "$c"; return; }; fi
+  out=$(curl -4 -fsS --max-time 8 "http://ip-api.com/json/$ip?fields=isp,org,as" 2>/dev/null \
+        | jq -r '.isp // .org // .as // empty' 2>/dev/null | head -1)
+  [ -z "$out" ] && out="unknown"
+  printf '%s' "$out" > "$c" 2>/dev/null || true
+  echo "$out"
+}
+
+# ── SSH / Dropbear ──────────────────────────────────────────
+# Hitung SESI (bukan proses): sshd "sshd: <user> [priv]" = 1 sesi (parent root),
+# anak "sshd: <user>" (EUID=<user>) = 1 sesi juga. Dropbear: 1 proses = 1 sesi.
+# Keluaran baris: "<user> <sesi>"
+lr_ssh_rows(){
+  local minuid sysusers line u
+  minuid=$(awk '/^UID_MIN/{print $2}' /etc/login.defs 2>/dev/null); [ -z "$minuid" ] && minuid=1000
+  # hanya akun yang terdaftar di db mytunnel → root@notty / user sistem tidak ikut
+  # format ssh.txt: user|pass|expiry|limit_ip|status
+  ps -eo user:32,args --no-headers 2>/dev/null | awk -v db="/etc/mytunnel/db/ssh.txt" '
+    BEGIN{
+      while((getline line < db)>0){
+        if(line=="" || line ~ /^#/) continue
+        n=split(line, f, "|")
+        # status = kolom status terakhir (ssh.txt: user|pass|expiry|limit_ip|status)
+        st = (n>=5 ? f[n] : "")
+        if(f[1]=="" || st !~ /active/) continue
+        known[f[1]]=1
+      }
+      close(db)
+    }
+    /sshd: / {
+      u=""; priv=0
+      for(i=1;i<=NF;i++) if($i=="sshd:"){ u=$(i+1); if($(i+2)=="[priv]") priv=1; break }
+      if(!priv && u!="" && u!="root" && u!~/^\/usr\/sbin\/sshd$/ && (u in known)) cnt[u]++
+      next
+    }
+    $0 ~ /dropbear/ { u=$1; if(u!="" && u!="root" && (u in known)) cnt[u]++ }
+    END{ for(u in cnt) print u, cnt[u] }
+  ' | sort -k1,1
+}
+
+lr_ssh_block(){
+  local rows out="" total=0
+  rows=$(lr_ssh_rows)
+  out+=$'Users Login SSH/Dropbear\n'
+  if [ -z "$rows" ]; then
+    out+=$'(tidak ada user aktif)\n'
+  else
+    while read -r u c; do
+      out+="$(printf '%s %s PID' "$u" "$c")"$'\n'
+      total=$((total + c))
+    done <<< "$rows"
+  fi
+  out+=$(printf 'Total : %s\n' "$total")
+  printf '<pre>%s</pre>' "${out%$'\n'}"
+}
+
+# ── Xray: user per protokol dari config.json (READ-ONLY) ────
+# keluarkan: "<PROTO>|<email>|<tag>|<id>"
+lr_xray_config_rows(){
+  [ -r "$XRAY_CONFIG" ] || return 0
+  jq -r '
+    .inbounds[]?
+    | select(.settings.clients != null)
+    | . as $ib
+    | ($ib.protocol // "" | ascii_upcase) as $proto
+    | $ib.settings.clients[]
+    | select(.email != null and .email != "")
+    | "\($proto)|\(.email)|\($ib.tag)|\(.id // "-")"
+  ' "$XRAY_CONFIG" 2>/dev/null
+}
+
+# ── Xray: log dalam window N menit ──────────────────────────
+# keluarkan baris normal: "<ts> <client_ip> <proto> <email> <tag>"
+lr_xray_log_rows(){
+  local minutes="${1:-15}" root="${XRAY_ACCESS_LOG}"
+  [ -r "$root" ] || return 0
+  # cutoff epoch dihitung sekali di bash; awk bandingkan angka, tanpa fork date per baris
+  local cutoff
+  cutoff=$(date +%s); cutoff=$(( cutoff - minutes*60 ))
+
+  local files=("$root")
+  [ -r "${root}.1" ] && files+=("${root}.1")
+  [ -r "${root}.2.gz" ] && files+=("${root}.2.gz")
+
+  # log Xray pakai waktu LOKAL (TZ VPS); mktime() GNU awk mengembalikan epoch UTC dari
+  # waktu lokal sehingga langsung bisa dibandingkan dengan cutoff `date +%s` (UTC).
+  cat "${files[@]}" 2>/dev/null | awk -v cut="$cutoff" '
+    /accepted/ && /email:/ {
+      if (match($1, /^[0-9]{4}\/[0-9]{2}\/[0-9]{2}$/) && match($2, /^[0-9]{2}:[0-9]{2}:[0-9]{2}/)) {
+        split($1, A, "/"); split($2, B, ":")
+        sec = mktime(A[1]" "A[2]" "A[3]" "B[1]" "B[2]" "int(B[3]))
+        if (sec>0 && sec<cut) next
+      }
+      ip="?"; for(i=1;i<=NF;i++){ if($i=="from"){ split($(i+1),b,":"); ip=b[1]; break } }
+      email=""; for(i=1;i<=NF;i++){ if($i=="email:"){ email=$(i+1); break } }
+      tag="?"; for(i=1;i<=NF;i++){ if($i ~ /^\[/) { tag=$i; gsub(/^\[|\]$/,"",tag); sub(/ *>>.*/,"",tag); break } }
+      proto="?"; if(tag ~ /^vlnui|^vless/) proto="VLESS"
+      split(tag,t,"-"); p=t[1]
+      if (p=="vmess") proto="VMESS"; else if (p=="vless") proto="VLESS"; else if (p=="trojan") proto="TROJAN"
+      print ip, proto, email, tag
+    }'
+}
+
+# ── Xray: Stats API (per-inbound, karena stats per-user ─────
+# Butuh policy.system.statsInboundUplink/Downlink = true (cek, jangan ubah)
+lr_xray_stats_ready(){
+  command -v xray >/dev/null 2>&1 || return 1
+  command -v jq  >/dev/null 2>&1 || return 1
+  [ -r "$XRAY_CONFIG" ] || return 1
+  local up
+  up=$(jq -r '.policy.system.statsInboundUplink // false' "$XRAY_CONFIG" 2>/dev/null)
+  [ "$up" = "true" ] || return 1
+  return 0
+}
+
+lr_stat_bytes(){
+  local name="$1" bin out
+  bin=$(command -v xray)
+  out=$(timeout 8 "$bin" api statsquery --server="$XRAY_API_ADDR" -pattern="inbound>>>$name" 2>/dev/null \
+        | jq -r --arg k "inbound>>>$name" '.stat[]? | select(.name==$k) | .value // empty' 2>/dev/null | head -1)
+  echo "${out:-0}"
+}
+
+# total bytes (rx+tx) sebuah inbound tag
+lr_inbound_bytes(){
+  local tag="$1" rx tx
+  rx=$(lr_stat_bytes "$tag>>>traffic>>>downlink")
+  tx=$(lr_stat_bytes "$tag>>>traffic>>>uplink")
+  echo $(( ${rx:-0} + ${tx:-0} ))
+}
+
+lr_fmt_gb(){
+  awk -v b="${1:-0}" 'BEGIN{ if(b<=0){print "-"; exit} printf "%.2f", b/1073741824 }'
+}
+# usage bulat integer gaya bot lama: 30GB
+lr_fmt_gb_int(){
+  awk -v b="${1:-0}" 'BEGIN{ if(b<=0){print "0"; exit} printf "%d", (b/1073741824)+0.5 }'
+}
+
+# ── db mytunnel (READ-ONLY): user|id|expiry|limit_ip|quota|used_bytes|status
+# db memakai nama bebas ("sunek"); email Xray = "<nama>-<proto>@tunnel" → normalkan suffix
+lr_db_file(){ printf '/etc/mytunnel/db/%s.txt' "$(printf '%s' "${1,,}")"; }
+lr_db_norm_user(){
+  # buang "-vless/-trojan/-vmess" dan "@domain" supaya cocok dengan key db
+  local u="${1%%@*}"
+  printf '%s' "$u" | sed -E 's/-?(vmess|vless|trojan)$//'
+}
+lr_db_used_bytes(){
+  local f v u; f=$(lr_db_file "$1"); [ -r "$f" ] || { echo 0; return; }
+  u=$(lr_db_norm_user "$2")
+  v=$(awk -F'|' -v u="$u" '$1==u{print $6}' "$f" 2>/dev/null | head -1 | tr -dc '0-9')
+  case "$v" in "") echo 0;; *) echo "$v";; esac
+}
+lr_db_quota(){
+  local f v u; f=$(lr_db_file "$1"); [ -r "$f" ] || { echo "-"; return; }
+  u=$(lr_db_norm_user "$2")
+  v=$(awk -F'|' -v u="$u" '$1==u{print $5}' "$f" 2>/dev/null | head -1 | tr -dc '0-9')
+  case "$v" in ""|0) echo "Unlimited";; *) echo "${v}GB";; esac
+}
+lr_db_limit_ip(){
+  local f v u; f=$(lr_db_file "$1"); [ -r "$f" ] || { echo "-"; return; }
+  u=$(lr_db_norm_user "$2")
+  v=$(awk -F'|' -v u="$u" '$1==u{print $4}' "$f" 2>/dev/null | head -1 | tr -dc '0-9')
+  case "$v" in ""|0) echo "-";; *) echo "$v";; esac
+}
+
+# ── Xray: blok per protokol ─────────────────────────────────
+# keluarkan <pre> blok untuk satu protokol (VMESS|VLESS|TROJAN)
+lr_xray_block(){
+  local proto="$1"
+  local total=0 body email tag idx active_ips line sorted out_html=""
+  local logrows
+  logrows=$(lr_xray_log_rows "$XRAY_LOG_MINUTES")
+
+  # daftar user & tag dari config Xray (dipakai untuk memetakan email → tag inbound)
+  local -A cfg=()
+  while IFS='|' read -r p e t i; do
+    [ "$p" = "$proto" ] && [ -n "$e" ] && cfg["$e"]="$t|$i"
+  done < <(lr_xray_config_rows)
+
+  # gabung email dari log — HANYA user yang aktif dalam window (sesuai spesifikasi:
+  # "hanya tampilkan user yang aktif saat ini") DAN terdaftar di db mytunnel
+  local -A all=() tagof=()
+  local e pfx udb
+  pfx="/etc/mytunnel/db/${proto,,}.txt"
+  udb=$(awk -F'|' '!/^#/ && NF>=7 && $7 ~ /active/ {print $1}' "$pfx" 2>/dev/null | sort -u)
+  local -A known=()
+  while read -r k; do [ -n "$k" ] && known["$k"]=1; done <<< "$udb"
+
+  while read -r ip p e t; do
+    [ "$p" = "$proto" ] || continue
+    [ -n "$e" ] && e="${e%%@*}"  # buang domain @tunnel
+    [ -z "$e" ] && continue
+    # cocokkan ke db: "sunek-vless" atau "sunek"
+    [ -z "${known[$e]+x}" ] && [ -z "${known[$(lr_db_norm_user "$e")]+x}" ] && continue
+    [ -z "${all[$e]+x}" ] && { all[$e]=1; tagof[$e]="${t:-?}|-"; }
+  done <<< "$logrows"
+
+  # hitung IP unik per email (filter sama: hanya user db mytunnel yang aktif)
+  local -A uniqip=()
+  while read -r ip p e t; do
+    [ "$p" = "$proto" ] || continue
+    [ -n "$e" ] && e="${e%%@*}"
+    [ -z "$e" ] && continue
+    [ -z "${all[$e]+x}" ] && continue
+    [ "$ip" != "?" ] && [ -n "$ip" ] && uniqip["$e"]+="$ip "
+  done <<< "$logrows"
+
+  # urut abjad
+  sorted=$(printf '%s\n' "${!all[@]}" | sort -f)
+  body+=$'Users Login '"$proto"$'\n'
+  if [ -z "$sorted" ]; then
+    body+=$'(tidak ada user aktif)\n'
+  else
+    while read -r e; do
+      [ -z "$e" ] && continue
+      IFS='|' read -r tag idx <<< "${tagof[$e]:-?|-}"
+      # tampil: nama saja (buang "-vless/-trojan/-vmess" dan "@domain")
+      local disp usage cnt info base
+      disp=$(printf '%s' "$e" | cut -d@ -f1 | sed -E 's/-?(vmess|vless|trojan)$//')
+      # usage dari db mytunnel (sumber kebenaran yang dipakai script lama)
+      local used_b; used_b=$(lr_db_used_bytes "$proto" "$e")
+      usage="${used_b}GB"
+      [ "$used_b" = "0" ] && usage="0GB"
+      cnt=$(printf '%s' "$logrows" | awk -v P="$proto" -v E="$e" '$2==P && $3 ~ E' | wc -l)
+      [ "$cnt" -eq 0 ] && cnt=1
+      # IP unik
+      local ips; ips=$(printf '%s' "${uniqip[$e]:-}" | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l)
+      [ "$ips" -eq 0 ] && ips=1
+      # kolom info opsional (port|id|quota) setelah "|"
+      base="${ips}IP | ${cnt}"
+      local extra; extra=$(lr_extra_info "$tag" "$e")
+      [ -n "$extra" ] && base="$base | $extra"
+      body+="$(printf '%s %s %s' "$disp" "$usage" "$base")"$'\n'
+      total=$((total+1))
+    done <<< "$sorted"
+  fi
+  body+=$(printf 'Total : %s\n' "$total")
+  printf '<pre>%s</pre>' "${body%$'\n'}"
+}
+
+# kolom info opsional: port | id | quota
+lr_extra_info(){
+  local tag="$1" email="$2" parts=() p IFS=','
+  [ -z "${INFO_COLUMNS:-}" ] && return 0
+  for p in $INFO_COLUMNS; do
+    p=$(echo "$p" | tr -d ' ')
+    case "$p" in
+      port) parts+=("port $(lr_inbound_port "$tag")") ;;
+      id)   parts+=("$(lr_user_id "$email")") ;;
+      quota) parts+=("kuota $(lr_user_quota "$email")") ;;
+    esac
+  done
+  [ "${#parts[@]}" -gt 0 ] && echo "${parts[*]}"
+}
+
+lr_inbound_port(){
+  jq -r --arg t "$1" '.inbounds[]? | select(.tag==$t) | .port // "-"' "$XRAY_CONFIG" 2>/dev/null | head -1
+}
+lr_user_id(){
+  jq -r --arg e "$1" '.inbounds[]? | select(.settings.clients) | .settings.clients[] | select(.email==$e) | .id // "-"' \
+    "$XRAY_CONFIG" 2>/dev/null | head -1
+}
+lr_user_quota(){
+  local e="$1" f v
+  for f in /etc/mytunnel/db/quota.db /etc/mytunnel/db/xray_quota.db /etc/mytunnel/xray/quota.txt; do
+    [ -r "$f" ] || continue
+    v=$(grep -m1 -F "$e" "$f" 2>/dev/null | awk -F'[:=]' '{print $2}' | tr -d ' ')
+    [ -n "$v" ] && { echo "$v"; return; }
+  done
+  echo "-"
+}
+__EMBED_EOF__
+chmod 644 "$LR_DIR/lib/collector.sh"
+
+cat > "$LR_DIR/lib/core.sh" <<'__EMBED_EOF__'
+#!/bin/bash
+# login-report — core: kirim laporan ke Telegram + kelola schedule
+# Dipanggil oleh: lreport (menu), login-report.service (systemd)
+# shellcheck disable=SC2034,SC2154,SC1091
+set -uo pipefail
+
+LR_BASE=/opt/login-report
+. "$LR_BASE/lib/common.sh"
+. "$LR_BASE/lib/collector.sh"
+
+# ── kirim ke Telegram (retry 2x, HTML, split >4000 char) ────
+lr_tg_send(){
+  local chat="$1" msg="$2" resp code desc i
+  [ -z "${BOT_TOKEN:-}" ] && { lr_log "gagal: BOT_TOKEN kosong"; return 3; }
+  [ -z "$chat" ] && { lr_log "gagal: CHAT_ID kosong"; return 3; }
+
+  local i=0
+  while [ "$i" -le "${CURL_RETRY:-2}" ]; do
+    resp=$(curl -4 -sS --max-time "${CURL_TIMEOUT:-20}" \
+      "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+      -d "chat_id=${chat}" \
+      --data-urlencode "text=${msg}" \
+      -d "parse_mode=HTML" \
+      -d "disable_web_page_preview=true" 2>/dev/null || true)
+    code=$(printf '%s' "$resp" | jq -r '.ok // false' 2>/dev/null)
+    if [ "$code" = "true" ]; then return 0; fi
+    desc=$(printf '%s' "$resp" | jq -r '.description // empty' 2>/dev/null)
+    [ -n "$desc" ] && lr_log "telegram error: $desc"
+    i=$((i+1)); sleep 1
+  done
+  lr_log "gagal kirim setelah $((CURL_RETRY+1)) percobaan (chat=$chat)"
+  return 1
+}
+
+# kirim laporan: satu pesan per protokol
+lr_send_report(){
+  local chat="${CHAT_ID:-}"
+  [ -z "$chat" ] && { lr_warn "CHAT_ID belum diatur"; return 2; }
+
+  local -a msgs=()
+  lr_build_messages msgs
+  [ "${#msgs[@]}" -eq 0 ] && { lr_log "tidak ada blok yang aktif"; return 1; }
+
+  # bila satu pesan terlalu panjang, pecah lagi di batas <pre>
+  local parts=() cur="" chunk m
+  for m in "${msgs[@]}"; do
+    if [ "${#m}" -le 3900 ]; then parts+=("$m"); continue; fi
+    cur=""
+    while IFS= read -r chunk; do
+      [ -z "$chunk" ] && continue
+      if [ $(( ${#cur} + ${#chunk} + 1 )) -gt 3800 ]; then
+        parts+=("$cur"); cur="$chunk"
+      else
+        cur+="$chunk"
+      fi
+    done < <(lr_split_pre "$m")
+    [ -n "$cur" ] && parts+=("$cur")
+  done
+
+  local n=0 failed=0 sent=0 w
+  for w in "${parts[@]}"; do
+    n=$((n+1))
+    if lr_tg_send "$chat" "$w"; then sent=$((sent+1))
+    else failed=1; fi
+    # jeda antar pesan supaya tidak kena rate limit Telegram
+    [ "$n" -lt "${#parts[@]}" ] && sleep "${SEND_DELAY:-1.5}"
+  done
+  if [ "$failed" -eq 1 ]; then
+    lr_log "laporan GAGAL terkirim ($sent/$n pesan, chat $chat) — lihat error di atas"
+    return 1
+  fi
+  lr_log "laporan terkirim ($n pesan, chat $chat)"
+  return 0
+}
+
+# split html jadi potongan utuh per <pre>
+lr_split_pre(){
+  awk '
+    /^<\/pre>$/ { buf=buf $0 ORS; print buf; buf=""; next }
+    { buf=buf $0 ORS }
+    END{ if(buf!="") print buf }
+  '
+}
+
+# ── susun laporan ─────────────────────────────────────────
+# Output: satu PESAN per protokol (SSH|VMESS|VLESS|TROJAN), setiap pesan = header + 1 blok.
+# Header identitas hanya di pesan pertama.
+# Kegunaan: lr_build_messages mengisi array MMGS[] (pass by name), dan
+# lr_build_messages_print() mencetak semua pesan untuk CLI/preview.
+lr_build_messages(){
+  local ip dom isp header="" first=1 spec block out
+  ip=$(lr_public_ip); dom=$(lr_domain); isp=$(lr_isp "$ip")
+  header=$(printf '<pre>IP     : %s\nDOMAIN : %s\nISP    : %s\n</pre>' "$ip" "$dom" "$isp")
+
+  # $1 = nama array output
+  local __out="${1:-LR_MSGS}"
+  eval "$__out=()"
+
+  local specs=()
+  [ "${SEND_SSH:-on}"    = "on" ] && specs+=("SSH")
+  [ "${SEND_VMESS:-on}"  = "on" ] && specs+=("VMESS")
+  [ "${SEND_VLESS:-on}"  = "on" ] && specs+=("VLESS")
+  [ "${SEND_TROJAN:-on}" = "on" ] && specs+=("TROJAN")
+
+  for spec in "${specs[@]}"; do
+    case "$spec" in
+      SSH) block=$(lr_ssh_block) ;;
+      *)   block=$(lr_xray_block "$spec") ;;
+    esac
+    [ -z "$block" ] && continue
+    out=""
+    if [ "$first" = "1" ]; then out+="$header"$'\n'; first=0; fi
+    out+="$block"
+    eval "$__out+=(\"\$out\")"
+  done
+}
+
+lr_build_messages_print(){
+  local -a _m=()
+  lr_build_messages _m
+  local i
+  for i in "${!_m[@]}"; do
+    echo "########## PESAN $((i+1)) ##########"
+    printf '%s\n' "${_m[$i]}"
+  done
+}
+
+# kompatibilitas: satu string (dipakai menu/preview)
+lr_build_html(){
+  local -a _m=()
+  lr_build_messages _m
+  # preview gabungan (menu); pemisah antar pesan
+  local out="" i
+  for i in "${!_m[@]}"; do out+="${_m[$i]}"$'\n'; done
+  printf '%s' "${out%$'\n'}"
+}
+
+# ── schedule systemd timer ──────────────────────────────────
+lr_timer_apply(){
+  # on-calendar based; dipanggil setiap INTERVAL_MIN/DAILY_AT berubah
+  # Tulis unit lebih dulu supaya OnCalendar selalu sinkron walau laporan OFF
+  local unit=/etc/systemd/system/login-report.timer oc="" m="${INTERVAL_MIN:-30}"
+  if [ -n "${DAILY_AT:-}" ]; then
+    oc="*-*-* ${DAILY_AT}:00"
+  elif [ "$m" -ge 1440 ] 2>/dev/null; then
+    # 24 jam sekali → tengah malam, bukan *:00/1440 yang tak valid
+    oc="*-*-* 00:00:00"
+  else
+    oc="*-*-* *:00/${m}"
+  fi
+  cat > "$unit" <<EOF
+[Unit]
+Description=login-report schedule (auto-generated)
+Documentation=man:systemd.timer(5)
+
+[Timer]
+OnCalendar=${oc}
+Persistent=true
+AccuracySec=1min
+Unit=login-report.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+
+  if [ "${ENABLED:-off}" != "on" ]; then
+    systemctl stop    login-report.timer 2>/dev/null || true
+    systemctl disable login-report.timer 2>/dev/null || true
+    return 0
+  fi
+  systemctl enable  login-report.timer >/dev/null 2>&1 || true
+  systemctl restart login-report.timer >/dev/null 2>&1 || true
+  return 0
+}
+
+# ── entry point CLI (dipakai systemd service) ───────────────
+main(){
+  lr_load_conf || exit 1
+  if lr_send_report; then exit 0
+  else
+    lr_warn "pengiriman gagal — cek: lreport → 6 (status)"
+    exit 1
+  fi
+}
+# hanya jalan kalau dieksekusi langsung, bukan di-source (menu butuh fungsi ini)
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi
+# TIDAK pakai exit di sini — file ini sering di-source oleh menu & test
+:
+__EMBED_EOF__
+chmod 644 "$LR_DIR/lib/core.sh"
+
+cat > "$LR_DIR/config.conf" <<'__EMBED_EOF__'
+# login-report — konfigurasi (600, root-only)
+# Diisi/diubah lewat menu: lreport
+
+# ─── Telegram ──────────────────────────────────────────────
+BOT_TOKEN=""
+CHAT_ID=""
+
+# ─── Laporan ───────────────────────────────────────────────
+# on/off — aktifkan pengiriman terjadwal
+ENABLED=off
+# 5 | 10 | 15 | 30 | 60 | 180 | 360 | 720 | 1440 (menit)
+INTERVAL_MIN=30
+# jam tertentu harian (format 24 jam, jam:menit) — kosongkan kalau pakai interval
+DAILY_AT=""
+# SSH | VMESS | VLESS | TROJAN (on/off masing-masing)
+SEND_SSH=on
+SEND_VMESS=on
+SEND_VLESS=on
+SEND_TROJAN=on
+
+# ─── Sumber data ───────────────────────────────────────────
+# window log Xray (menit) untuk hitung user aktif
+XRAY_LOG_MINUTES=15
+# path — RELATIVE read-only, tidak pernah diubah tool ini
+XRAY_ACCESS_LOG=/var/log/xray/access.log
+XRAY_CONFIG=/usr/local/etc/xray/config.json
+XRAY_API_ADDR=127.0.0.1:10085
+# domain: auto | atau isi manual (misal my.domain.com)
+DOMAIN=auto
+# kolom info setelah "|" — comma separated dari: port,id,quota  (kosong = mati)
+INFO_COLUMNS=""
+# gpg/curl retry
+CURL_RETRY=2
+CURL_TIMEOUT=20
+__EMBED_EOF__
+chmod 600 "$LR_DIR/config.conf"
+
+cat > "$LR_DIR/menu.sh" <<'__EMBED_EOF__'
+#!/bin/bash
+# login-report — menu "lreport"
+# shellcheck disable=SC2034,SC2154,SC1091
+set -uo pipefail
+LR_BASE=/opt/login-report
+. "$LR_BASE/lib/common.sh"
+. "$LR_BASE/lib/core.sh"
+
+# jangan jalan sebagai service (menu butuh terminal)
+if [ "${1:-}" = "--service" ]; then main; exit $?; fi
+
+pause(){ echo; read -r -p "  Enter untuk lanjut..." _ || true; }
+
+# ── tampilan status ringkas ─────────────────────────────────
+lr_show_status(){
+  lr_load_conf
+  local timer_enabled
+  timer_enabled=$(systemctl is-enabled login-report.timer 2>/dev/null || echo disabled)
+  printf '  Status          : %s\n' "$([ "${ENABLED:-off}" = on ] && echo "${G}ON${N}" || echo "${Y}OFF${N}")"
+  printf '  Timer enabled   : %s\n' "$timer_enabled"
+  if [ -n "${DAILY_AT:-}" ]; then printf '  Jadwal berikut  : harian %s\n' "$DAILY_AT"
+  else printf '  Jadwal berikut  : tiap %s menit\n' "${INTERVAL_MIN:-30}"; fi
+  printf '  Interval        : %s menit%s\n' "${INTERVAL_MIN:-30}" \
+    "$([ "${INTERVAL_MIN:-30}" -ge 1440 ] 2>/dev/null && echo ' (harian 00:00)')"
+  [ -n "${DAILY_AT:-}" ] && printf '  Jam harian      : %s\n' "$DAILY_AT"
+  printf '  Token           : %s\n' "$(lr_mask_token "${BOT_TOKEN:-}")"
+  printf '  Chat ID         : %s\n' "${CHAT_ID:--}"
+  printf '  Protokol        : SSH=%s VMESS=%s VLESS=%s TROJAN=%s\n' \
+    "${SEND_SSH:-on}" "${SEND_VMESS:-on}" "${SEND_VLESS:-on}" "${SEND_TROJAN:-on}"
+  printf '  Window log      : %s menit\n' "${XRAY_LOG_MINUTES:-15}"
+  printf '  Stats API       : %s\n' "$(lr_xray_stats_ready && echo 'READY (per-inbound)' || echo "${Y}TIDAK — per-user butuh loglevel detail${N}")"
+  printf '  Log file        : %s\n' "$LR_LOG"
+}
+
+# ── menu utama ──────────────────────────────────────────────
+while true; do
+  clear 2>/dev/null || true
+  printf '%s\n' "+--------------------------------------------------+"
+  printf '%s\n' "|   LOGIN REPORT v$LR_VERSION   by SUNEK VPN   |"
+  printf '%s\n' "+--------------------------------------------------+"
+  echo
+  lr_show_status
+  echo
+  printf '%s\n' "  1) Set Bot Token & Chat ID"
+  printf '%s\n' "  2) Atur interval / jam laporan"
+  printf '%s\n' "  3) Aktifkan / matikan laporan"
+  printf '%s\n' "  4) Pilih protokol yang dikirim"
+  printf '%s\n' "  5) Kirim laporan test sekarang"
+  printf '%s\n' "  6) Lihat status detail"
+  printf '%s\n' "  7) Uninstall"
+  printf '%s\n' "  0) Keluar"
+  echo
+  printf '  Pilih: '
+  read -r c || exit 0
+  case "$c" in
+    1) # ── token & chat ────────────────────────────────────
+      lr_load_conf
+      echo
+      echo "  Masukkan Bot Token dari @BotFather"
+      printf '  Token (kosongkan utk batal): '; read -r t
+      [ -z "$t" ] && continue
+      t=$(lr_sanitize "$t")
+      lr_set_conf BOT_TOKEN "$t"; lr_log "BOT_TOKEN diperbarui (redacted)"
+      printf '  Chat ID (mis. 1732345678): '; read -r cid
+      cid=$(echo "$cid" | tr -d ' ')
+      if lr_valid_chat_id "$cid"; then
+        lr_set_conf CHAT_ID "$cid"; lr_log "CHAT_ID diperbarui"
+      else lr_warn "Chat ID tidak valid"; fi
+      # verifikasi token
+      local_ok=$(curl -4 -sS --max-time 10 "https://api.telegram.org/bot${t}/getMe" 2>/dev/null | jq -r '.ok // false' 2>/dev/null)
+      [ "$local_ok" = "true" ] && lr_ok "Token valid" || lr_warn "Token tidak diverifikasi (cek jaringan/token)"
+      lr_set_conf XRAY_ACCESS_LOG "$XRAY_ACCESS_LOG"; ;;
+    2) # ── interval ────────────────────────────────────────
+      lr_load_conf; echo
+      printf '%s\n' "  1) 5 menit     2) 10 menit    3) 15 menit   4) 30 menit"
+      printf '%s\n' "  5) 1 jam      6) 3 jam       7) 6 jam       8) 12 jam"
+      printf '%s\n' "  9) 24 jam    10) jam tertentu harian  11) manual (menit)"
+      printf '  Pilih: '; read -r k
+      case "$k" in
+        1) m=5;;   2) m=10;;  3) m=15;;  4) m=30;;
+        5) m=60;;  6) m=180;; 7) m=360;; 8) m=720;;
+        9) m=1440;;
+        10) printf '  Jam (HH:MM, 24 jam): '; read -r h
+            if lr_valid_hhmm "$h"; then
+              lr_set_conf DAILY_AT "$h"; lr_set_conf INTERVAL_MIN "${INTERVAL_MIN:-30}"
+              lr_timer_apply; lr_ok "Jadwal harian $h diterapkan"; pause; continue
+            else lr_warn "Format jam salah"; pause; continue; fi ;;
+        11) printf '  Menit (1-1440): '; read -r m
+            if ! [[ "$m" =~ ^[0-9]+$ ]] || [ "$m" -lt 1 ] || [ "$m" -gt 1440 ]; then
+              lr_warn "Interval tidak valid (harus 1-1440 menit)"; pause; continue
+            fi ;;
+        *) continue ;;
+      esac
+      [ "$m" = "1440" ] && m=1440
+      lr_set_conf INTERVAL_MIN "$m"; lr_set_conf DAILY_AT ""
+      lr_timer_apply; lr_ok "Interval ${m} menit diterapkan"; pause ;;
+    3) # ── on/off ──────────────────────────────────────────
+      lr_load_conf
+      if [ "${ENABLED:-off}" = "on" ]; then
+        lr_set_conf ENABLED off; lr_timer_apply; lr_ok "Laporan dimatikan"
+      else
+        if [ -z "${BOT_TOKEN:-}" ] || [ -z "${CHAT_ID:-}" ]; then
+          lr_warn "Token/Chat belum lengkap"; pause; continue
+        fi
+        lr_set_conf ENABLED on; lr_timer_apply; lr_ok "Laporan diaktifkan"
+      fi
+      pause ;;
+    4) # ── protokol ────────────────────────────────────────
+      lr_load_conf; echo
+      printf '%s\n' "  Toggle masing-masing dengan y/n:"
+      for p in SSH VMESS VLESS TROJAN; do
+        var="SEND_$p"; cur="${!var:-on}"
+        printf '  %s [%s] (y/n): ' "$p" "$cur"; read -r a
+        case "$a" in y|Y) lr_set_conf "$var" on;; n|N) lr_set_conf "$var" off;; esac
+      done
+      lr_ok "Protokol diperbarui"; pause ;;
+    5) # ── test kirim ──────────────────────────────────────
+      lr_load_conf
+      if [ -z "${BOT_TOKEN:-}" ] || [ -z "${CHAT_ID:-}" ]; then
+        lr_warn "Token/Chat belum lengkap (menu 1)"; pause; continue
+      fi
+      echo "  Kirim test ke chat ${CHAT_ID} ..."
+      if lr_send_report; then lr_ok "Terkirim — cek Telegram"; else lr_warn "Gagal kirim (cek log: $LR_LOG)"; fi
+      pause ;;
+    6) # ── status detail ───────────────────────────────────
+      lr_load_conf; echo; lr_show_status; echo
+      [ -s "$LR_LOG" ] && { echo "  20 baris log terakhir:"; tail -20 "$LR_LOG" | sed "s/\(BOT_TOKEN[^ ]*\).*/\1**REDACTED**/;s/\(bot[0-9]*:\)[A-Za-z0-9_-]*/\1REDACTED/g;s/[0-9]\{9,\}:[A-Za-z0-9_-]\{30,\}/TOKEN_REDACTED/g; s/^/    /"; }
+      echo
+      pause ;;
+    7) # ── uninstall ───────────────────────────────────────
+      echo; lr_warn "Ini akan menghapus SELURUH milik login-report"
+      printf '  Ketik "uninstall" untuk lanjut: '; read -r u
+      if [ "$u" = "uninstall" ]; then
+        systemctl stop login-report.timer 2>/dev/null || true
+        systemctl disable login-report.timer 2>/dev/null || true
+        systemctl stop login-report.service 2>/dev/null || true
+        systemctl disable login-report.service 2>/dev/null || true
+        systemctl daemon-reload
+        rm -f /etc/systemd/system/login-report.service /etc/systemd/system/login-report.timer
+        rm -f /usr/local/bin/lreport
+        rm -rf /opt/login-report /etc/login-report
+        rm -f /var/log/login-report.log
+        lr_ok "Uninstall selesai — tunneling lama tidak disentuh"
+        exit 0
+      else lr_warn "Dibatalkan"; fi
+      pause ;;
+    0) exit 0 ;;
+    *) : ;;
+  esac
+done
+__EMBED_EOF__
+chmod 755 "$LR_DIR/menu.sh"
+
+cat > "$LR_DIR/uninstall.sh" <<'__EMBED_EOF__'
+#!/bin/bash
+# login-report uninstaller — hapus semua milik tool login-report
+# TIDAK menyentuh script/menu tunneling lain.
+# shellcheck disable=SC2035,SC2046
+set -euo pipefail
+
+VERSION="1.0.0"
+BIN=/usr/local/bin/lreport
+ETC=/etc/login-report
+LOG=/var/log/login-report.log
+
+say(){ printf '%s\n' "$*"; }
+hr(){ printf '%s\n' "════════════════════════════════════════"; }
+
+if [ "$(id -u)" -ne 0 ]; then
+  say "ERROR: harus root (sudo -i / su -)"
+  exit 1
+fi
+
+hr
+say "  login-report uninstaller v$VERSION"
+hr
+
+# ── konfirmasi ─────────────────────────────────────────────
+# --yes untuk pemanggilan otomatis (mis. dari uninstall.sh mytunnel)
+ASSUME_YES=0
+for a in "$@"; do [ "$a" = "--yes" ] || [ "$a" = "-y" ] && ASSUME_YES=1; done
+
+if [ "$ASSUME_YES" = "0" ] && [ -t 0 ]; then
+  read -r -p "Hapus login-report beserta config, timer, dan log? [y/N] " ans
+  case "$ans" in
+    y|Y|yes|YES) ;;
+    *) say "Dibatalkan."; exit 0 ;;
+  esac
+fi
+
+# ── hentikan timer & service ───────────────────────────────
+say "▸ Stop timer & service..."
+systemctl stop login-report.timer 2>/dev/null || true
+systemctl disable login-report.timer 2>/dev/null || true
+systemctl stop login-report.service 2>/dev/null || true
+systemctl disable login-report.service 2>/dev/null || true
+systemctl daemon-reload 2>/dev/null || true
+say "  OK"
+
+# ── hapus unit systemd ─────────────────────────────────────
+say "▸ Hapus unit systemd..."
+rm -f /etc/systemd/system/login-report.service
+rm -f /etc/systemd/system/login-report.timer
+say "  OK"
+
+# ── hapus binary & config ──────────────────────────────────
+say "▸ Hapus binary & config..."
+rm -f "$BIN"
+rm -rf "$ETC"
+say "  OK"
+
+# ── hapus log ──────────────────────────────────────────────
+say "▸ Hapus log..."
+rm -f "$LOG"
+say "  OK"
+
+# ── verifikasi tidak ada sisa ──────────────────────────────
+say ""
+hr
+LEFT=0
+for p in "$BIN" "$ETC" "$LOG" \
+         /etc/systemd/system/login-report.service \
+         /etc/systemd/system/login-report.timer; do
+  if [ -e "$p" ]; then say "  SISA: $p"; LEFT=$((LEFT+1)); fi
+done
+
+if [ "$LEFT" -eq 0 ]; then
+  say "  ✓ Uninstall bersih — tidak ada sisa."
+else
+  say "  ! $LEFT path masih ada, cek manual."
+fi
+hr
+say "  Catatan: script/menu tunneling lama (menu, features/*) TIDAK disentuh."
+hr
+exit 0
+__EMBED_EOF__
+chmod 755 "$LR_DIR/uninstall.sh"
+
+# ── BEGIN login-report (tool mandiri) ──
+# systemd unit login-report (jadwal = timer, laporan = oneshot)
+install -d -m 755 /opt/login-report/lib 2>/dev/null || true
+install -d -m 700 /etc/login-report 2>/dev/null || true
+install -m 644 "$LR_DIR/lib/common.sh"    /opt/login-report/lib/common.sh    2>/dev/null || true
+install -m 644 "$LR_DIR/lib/collector.sh" /opt/login-report/lib/collector.sh 2>/dev/null || true
+install -m 644 "$LR_DIR/lib/core.sh"      /opt/login-report/lib/core.sh      2>/dev/null || true
+install -m 755 "$LR_DIR/menu.sh"          /opt/login-report/menu.sh          2>/dev/null || true
+install -m 755 "$LR_DIR/uninstall.sh"     /opt/login-report/uninstall.sh     2>/dev/null || true
+ln -sf /opt/login-report/menu.sh /usr/local/bin/lreport 2>/dev/null || true
+# config hanya sekali; JANGAN timpa config yang sudah ada (isi token user)
+if [ -d /etc/login-report ] && [ ! -f /etc/login-report/config.conf ] && [ -r "$ETC/login-report/config.conf" ]; then
+  sed -e "s#^XRAY_CONFIG=.*#XRAY_CONFIG=/usr/local/etc/xray/config.json#"       "$ETC/login-report/config.conf" > /etc/login-report/config.conf.new 2>/dev/null || true
+  [ -s /etc/login-report/config.conf.new ] && mv -f /etc/login-report/config.conf.new /etc/login-report/config.conf
+  chmod 600 /etc/login-report/config.conf 2>/dev/null || true
+fi
+# laporan default nonaktif; user aktifkan dari menu (10) atau lreport
+if [ -d /etc/login-report ] && [ -w /etc/login-report ]; then
+  grep -q '^ENABLED=' /etc/login-report/config.conf 2>/dev/null ||     echo 'ENABLED="off"' >> /etc/login-report/config.conf
+fi
+
+cat > /etc/systemd/system/login-report.service << '__EMBED_EOF__'
+[Unit]
+Description=login-report — kirim laporan login ke Telegram
+After=network-online.target xray.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/login-report/lib/core.sh
+WorkingDirectory=/opt/login-report
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target
+__EMBED_EOF__
+
+cat > /etc/systemd/system/login-report.timer << '__EMBED_EOF__'
+[Unit]
+Description=login-report schedule (otomatis ditulis oleh menu lreport)
+
+[Timer]
+OnCalendar=*-*-* *:00/30
+Persistent=true
+AccuracySec=1min
+Unit=login-report.service
+
+[Install]
+WantedBy=timers.target
+__EMBED_EOF__
+
+systemctl daemon-reload 2>/dev/null || true
+# ── END login-report ──
+
+
+# ── BEGIN login-report (tool mandiri) ──
+# --- menu 10: LOGIN REPORT ---
+python3 - "$ETC/menu/main.sh" << '__EMBED_EOF__'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+
+menu_old = '  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" " 5.) SETUP BOT             x.) EXIT"'
+menu_new = '  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" " 5.) SETUP BOT             x.) EXIT"\n  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" "10.) LOGIN REPORT (timer + laporan user aktif)"'
+disp_old = '    9) check_services;;'
+disp_new = '    9) check_services;;\n    10) if [ -x /opt/login-report/menu.sh ]; then bash /opt/login-report/menu.sh 2>/dev/null || { echo -e "${YELLOW}menu login-report error${RESET}"; pause; }; else echo -e "${YELLOW}login-report belum terpasang${RESET}"; pause; fi;;'
+prompt_old = '  echo -ne "${BOLD}Select From Options [1-9 or x] : ${RESET}"'
+prompt_new = '  echo -ne "${BOLD}Select From Options [1-10 or x] : ${RESET}"'
+
+changed = []
+if menu_new not in s:
+    if s.count(menu_old) == 1:
+        s = s.replace(menu_old, menu_new, 1); changed.append("menu")
+if disp_new not in s:
+    if s.count(disp_old) == 1:
+        s = s.replace(disp_old, disp_new, 1); changed.append("dispatch")
+if prompt_new not in s:
+    if s.count(prompt_old) == 1:
+        s = s.replace(prompt_old, prompt_new, 1); changed.append("prompt")
+if changed:
+    open(p, "w", encoding="utf-8").write(s)
+print("menu/main.sh patched:", ",".join(changed) or "sudah")
+__EMBED_EOF__
+# ── END login-report ──
+
 cat > "$ETC/cron/quota.sh" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel cron/quota.sh - kumpulkan trafik Xray, lock jika melebihi kuota (tiap 1 menit)

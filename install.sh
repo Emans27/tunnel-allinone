@@ -1684,12 +1684,13 @@ fh_backup_file() {
 __EMBED_EOF__
 cat > "$ETC/lib/brand_guard.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel lib/brand_guard.sh - brand permanen (immutable + restore dari canon)
+# mytunnel lib/brand_guard.sh - brand PERMANEN total (immutable + restore dari canon)
 # shellcheck disable=SC1091,SC1090,SC2154
-# Banner SSH tetap BEBAS diubah (menu 10). Yang dikunci hanya BRAND NAME.
-# Brand di-set saat instalasi (--brand "Nama"), lalu file-nya chattr +i supaya
-# tidak bisa diubah/dihapus/di-rename bahkan oleh root. Canon root-only dipakai
-# untuk memulihkan kalau atribut sempat dilepas.
+# Banner SSH tetap BEBAS diubah. BRAND NAME dikunci 3 lapis:
+#   1) chattr +i  -> tak bisa diubah/dihapus/rename walau oleh root
+#   2) canon file 600 root-only -> sumber kebenaran, tidak bisa ditulis user lain
+#   3) cron tiap menit -> brand.txt selalu dipaksa kembali ke canon
+# Menu SET BRAND NAME (8) hanya menampilkan status, tidak bisa mengubah.
 if [[ "${BASE:-}" == *"/etc/mytunnel"* ]]; then
   ETC="$BASE"
 else
@@ -1744,16 +1745,22 @@ bg_canon_read() {
   printf ''
 }
 
-# dipakai installer: tulis brand + canon lalu kunci
+# dipakai installer: tulis brand + canon lalu kunci.
+# $2 = "force" untuk melepas kunci (dipakai installer & menu dengan konfirmasi).
 bg_set() {
-  local v="$1"
+  local v="$1" force="${2:-}"
   [ -z "$v" ] && v="$BG_DEFAULT"
+  # kalau sudah terkunci dan tidak dipaksa: tolak (tidak ada yang bisa diubah seenaknya)
+  if [ -z "$force" ] && bg_is_immutable "$BG_CANON"; then
+    return 2
+  fi
   bg_unlock_file "$BG_BRAND"
   bg_unlock_file "$BG_CANON"
   mkdir -p "$ETC/config" 2>/dev/null || true
   printf '%s\n' "$v" > "$BG_BRAND" 2>/dev/null || return 1
   printf '%s\n' "$v" > "$BG_CANON" 2>/dev/null || true
-  chmod 644 "$BG_BRAND" "$BG_CANON" 2>/dev/null || true
+  chmod 644 "$BG_BRAND" 2>/dev/null || true
+  chmod 600 "$BG_CANON" 2>/dev/null || true
   bg_lock_file "$BG_CANON"
   bg_lock_file "$BG_BRAND"
   return 0
@@ -1768,8 +1775,9 @@ bg_enforce() {
   if [ ! -f "$BG_CANON" ] || [ "$canon" != "$cur" ]; then
     bg_unlock_file "$BG_CANON"
     printf '%s\n' "$canon" > "$BG_CANON" 2>/dev/null || rc=1
-    chmod 644 "$BG_CANON" 2>/dev/null || true
   fi
+  # canon = sumber kebenaran, root-only supaya tak bisa ditulis user non-root
+  chmod 600 "$BG_CANON" 2>/dev/null || true
   if [ "$cur" != "$canon" ]; then
     bg_unlock_file "$BG_BRAND"
     printf '%s\n' "$canon" > "$BG_BRAND" 2>/dev/null || rc=1
@@ -2054,15 +2062,32 @@ show_menu() {
 }
 
 set_brand_name() {
-  echo -e "${CYAN}=== SET BRAND NAME ===${RESET}"
-  local cur nb f
+  echo -e "${CYAN}=== SET BRAND NAME (PERMANEN) ===${RESET}"
+  local cur nb canon
   cur=$(get_brand 2>/dev/null || echo "SUNEK VPN")
-  echo -e "Brand saat ini: ${BOLD}$cur${RESET}"
+  echo -e "Brand aktif : ${BOLD}$cur${RESET}"
+  if command -v bg_status >/dev/null 2>&1; then
+    echo -e "Status     : ${GREEN}$(bg_status)${RESET}"
+  fi
+  echo -e "${DIM}Brand dikunci permanen (immutable + canon + cron).${RESET}"
+  echo -e "${DIM}Ganti brand = reset total: chattr -i, tulis, kunci lagi.${RESET}"
+  echo -e ""
+  echo -ne "Ketik ${BOLD}FORCE${RESET} untuk mengubah brand: "
+  read -r nb
+  [ "$nb" != "FORCE" ] && { echo -e "${DIM}Tidak diubah.${RESET}"; pause; return; }
   echo -ne "Brand baru (kosongkan batal): "
   read -r nb
-  [ -z "$nb" ] && { echo "Batal."; pause; return; }
-  f="$BASE/config/brand.txt"
-  if command -v bg_set_brand >/dev/null 2>&1; then bg_set_brand "$nb" 2>/dev/null || { echo -e "${RED}Gagal set brand${RESET}"; pause; return; }; echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; else backup_file "$f" >/dev/null 2>&1 || true; if echo "$nb" > "$f" 2>/dev/null; then echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"; log "brand -> $nb"; bg_enforce 2>/dev/null || true; else echo -e "${RED}Gagal tulis $f${RESET}"; fi; fi
+  [ -z "$nb" ] && { echo -e "${DIM}Batal.${RESET}"; pause; return; }
+  # kanon lama = backup; lalu set ulang + kunci
+  canon=$(get_brand 2>/dev/null)
+  if command -v bg_set >/dev/null 2>&1; then
+    bg_set "$nb" force 2>/dev/null || { echo -e "${RED}Gagal set brand${RESET}"; pause; return; }
+  else
+    command -v bg_set_brand >/dev/null 2>&1 && bg_set_brand "$nb" force 2>/dev/null
+  fi
+  bg_enforce 2>/dev/null || true
+  echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"
+  log "brand force-changed: $canon -> $nb"
   pause
 }
 
@@ -13714,8 +13739,7 @@ cat > "$ETC/config/dropbear_versions.txt" << '__EMBED_EOF__'
 __EMBED_EOF__
 chmod 644 "$ETC/config/dropbear_versions.txt"
 cat > "$ETC/config/version.txt" << '__EMBED_EOF__'
-v1.8.0
-
+v1.8.1
 __EMBED_EOF__
 chmod 644 "$ETC/config/version.txt"
 cat > "$ETC/config/repo.txt" << '__EMBED_EOF__'
@@ -13724,6 +13748,16 @@ __EMBED_EOF__
 chmod 644 "$ETC/config/repo.txt"
 cat > "$ETC/CHANGELOG.md" << '__EMBED_EOF__'
 # CHANGELOG
+
+## v1.8.1 — 2026-10-11 — brand permanen total + login-report menu 10
+### Fixed
+- brand_guard: brand.txt dipaksa kembali ke canon tiap menit, canon jadi 600 root-only
+- brand_guard: bg_set menolak kalau sudah terkunci (return 2) — tak bisa diubah tanpa FORCE
+- menu SET BRAND NAME (8) jadi read-only; perlu ketik FORCE eksplisit untuk mengubah
+- config/repo.txt default disamakan ke tunnel-allinone (bukan mytunnel-installer)
+### Added
+- login-report: menu 10 (laporan user aktif ke Telegram via systemd timer)
+- login-report: core.sh dipasang 755 (fix systemd 203/EXEC)
 
 ## v1.8.0 — 2026-10-09 — IP publik salah baca (IPv6) + xray live-apply tanpa restart
 ### Fixed
@@ -13962,8 +13996,7 @@ Tidak memperbaiki tanpa menyelaraskan versi klien/server, jadi XHTTP dihapus.
 __EMBED_EOF__
 chmod 644 "$ETC/CHANGELOG.md"
 cat > "$ETC/VERSION" << '__EMBED_EOF__'
-v1.8.0
-
+v1.8.1
 __EMBED_EOF__
 chmod 644 "$ETC/VERSION"
 cat > "$ETC/menu/doctor.sh" << '__EMBED_EOF__'

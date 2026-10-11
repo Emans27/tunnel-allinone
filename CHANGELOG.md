@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## v1.8.1 — 2026-10-11 — brand permanen total + login-report menu 10
+### Fixed
+- brand_guard: brand.txt dipaksa kembali ke canon tiap menit, canon jadi 600 root-only
+- brand_guard: bg_set menolak kalau sudah terkunci (return 2) — tak bisa diubah tanpa FORCE
+- menu SET BRAND NAME (8) jadi read-only; perlu ketik FORCE eksplisit untuk mengubah
+- config/repo.txt default disamakan ke tunnel-allinone (bukan mytunnel-installer)
+### Added
+- login-report: menu 10 (laporan user aktif ke Telegram via systemd timer)
+- login-report: core.sh dipasang 755 (fix systemd 203/EXEC)
+
 ## v1.8.0 — 2026-10-09 — IP publik salah baca (IPv6) + xray live-apply tanpa restart
 ### Fixed
 - `get_ip_cached()` dan `ah_get_ip()` memakai `curl` tanpa `-4`, sehingga di host

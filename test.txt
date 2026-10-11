@@ -1,2 +1,1 @@
-BOT_TOKEN="<BOT_TOKEN>"
-# contoh: 123456789:AAH****
+echo hello world

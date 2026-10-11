@@ -1,1 +1,3 @@
-echo hello world
+-----BEGIN OPENSSH PRIVATE KEY-----
+abc
+-----END OPENSSH PRIVATE KEY-----

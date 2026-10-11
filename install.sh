@@ -9174,7 +9174,7 @@ for f in "$ETC/lib/colors.sh" "$ETC/lib/helpers.sh" "$ETC/lib/xray_helpers.sh"; 
 
 # Whitelist: akun kepunyaan admin/bawaan — jangan pernah dihapus walau tidak ada di DB.
 # Cocokkan pada nama dasar (email tanpa -<proto>@tunnel).
-_WHITELIST=" test tes-uuid tesof tessc tess tess2 11111111-2222-3333-4444-555555555555 sunek admin root "
+_WHITELIST=" sunek admin root "
 
 _is_whitelisted() {
   case "$_WHITELIST" in *" $1 "*) return 0 ;; esac

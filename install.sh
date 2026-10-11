@@ -1,5 +1,5 @@
 #!/bin/bash
-# mytunnel install.sh - SUNEK VPN v1.8.0 (TAHAP 1+2+3+4+5+6+8)
+# mytunnel install.sh - SUNEK VPN v1.9.0 (TAHAP 1+2+3+4+5+6+8)
 # Debian 11/12, Ubuntu 18/20/22/24 - disarankan Debian 12 / Ubuntu 22.04
 # Idempotent, testable via MYTUNNEL_PREFIX=... MYTUNNEL_DOMAIN=example.com bash install.sh --no-deps
 # Aman: wget -qO install.sh https://raw.githubusercontent.com/USER/REPO/main/install.sh && less install.sh && bash install.sh
@@ -89,7 +89,16 @@ chmod 644 "${BASE}/var/log/xray/"*.log 2>/dev/null || true
 echo -e "${CYAN}[3/13] Tulis config, lib, menu, setup, cron...${RESET}"
 [ -f "$ETC/config/brand.txt" ] || echo "SUNEK VPN" > "$ETC/config/brand.txt"
 # BAGIAN D-3: brand dari env/arg (non-interaktif) timpa jika ada
-if [ -n "$MYTUNNEL_BRAND" ]; then echo "$MYTUNNEL_BRAND" > "$ETC/config/brand.txt" 2>/dev/null || true; chmod 644 "$ETC/config/brand.txt" 2>/dev/null || true; fi
+# brand.txt yang sudah immutable (chattr +i) = permanen; --brand diabaikan.
+_bg_locked=0; lsattr "$ETC/config/brand.txt" 2>/dev/null | grep -q "i" && _bg_locked=1
+if [ -n "$MYTUNNEL_BRAND" ]; then
+  if [ "$_bg_locked" = "1" ]; then
+    echo -e "${YELLOW}Brand terkunci permanen — --brand diabaikan${RESET}" 2>/dev/null || true
+  else
+    echo "$MYTUNNEL_BRAND" > "$ETC/config/brand.txt" 2>/dev/null || true
+    chmod 644 "$ETC/config/brand.txt" 2>/dev/null || true
+  fi
+fi
 [ -f "$ETC/config/domain.txt" ] || echo "-" > "$ETC/config/domain.txt"
 [ -f "$ETC/config/expiry.txt" ] || echo "-" > "$ETC/config/expiry.txt"
 [ -f "$ETC/config/banner.txt" ] || echo " | SUNEK VPN - No hacking, use legally |" > "$ETC/config/banner.txt"
@@ -1748,10 +1757,11 @@ bg_canon_read() {
 # dipakai installer: tulis brand + canon lalu kunci.
 # $2 = "force" untuk melepas kunci (dipakai installer & menu dengan konfirmasi).
 bg_set() {
-  local v="$1" force="${2:-}"
+  local v="$1"
   [ -z "$v" ] && v="$BG_DEFAULT"
-  # kalau sudah terkunci dan tidak dipaksa: tolak (tidak ada yang bisa diubah seenaknya)
-  if [ -z "$force" ] && bg_is_immutable "$BG_CANON"; then
+  # brand permanen: sekali dikunci, tidak bisa diubah lewat jalur mana pun
+  # (menu, --brand, env, atau pemanggilan fungsi langsung). return 2 = ditolak.
+  if bg_is_immutable "$BG_CANON"; then
     return 2
   fi
   bg_unlock_file "$BG_BRAND"
@@ -2071,25 +2081,11 @@ set_brand_name() {
     echo -e "Status     : ${GREEN}$(bg_status)${RESET}"
   fi
   echo -e "${DIM}Brand dikunci permanen (immutable + canon + cron).${RESET}"
-  echo -e "${DIM}Ganti brand = reset total: chattr -i, tulis, kunci lagi.${RESET}"
+  echo -e "${DIM}Tidak bisa diubah dari menu ini.${RESET}"
+  echo -e "${DIM}Ganti brand: uninstall total lalu install ulang.${RESET}"
   echo -e ""
-  echo -ne "Ketik ${BOLD}FORCE${RESET} untuk mengubah brand: "
-  read -r nb
-  [ "$nb" != "FORCE" ] && { echo -e "${DIM}Tidak diubah.${RESET}"; pause; return; }
-  echo -ne "Brand baru (kosongkan batal): "
-  read -r nb
-  [ -z "$nb" ] && { echo -e "${DIM}Batal.${RESET}"; pause; return; }
-  # kanon lama = backup; lalu set ulang + kunci
-  canon=$(get_brand 2>/dev/null)
-  if command -v bg_set >/dev/null 2>&1; then
-    bg_set "$nb" force 2>/dev/null || { echo -e "${RED}Gagal set brand${RESET}"; pause; return; }
-  else
-    command -v bg_set_brand >/dev/null 2>&1 && bg_set_brand "$nb" force 2>/dev/null
-  fi
-  bg_enforce 2>/dev/null || true
-  echo -e "${GREEN}✓ Brand diubah ke: $nb${RESET}"
-  log "brand force-changed: $canon -> $nb"
   pause
+  return
 }
 
 check_services() {
@@ -11929,7 +11925,7 @@ __EMBED_EOF__
 chmod 755 "$ETC/advanced/ssh_extra.sh"
 cat > "$ETC/features/lock_time.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel features/lock_time.sh - SET REDUCE/TIME / Time Banned (Tunneling 1:1)
+# mytunnel features/lock_time.sh - SET REDUCE/TIME / Time Banned 
 # shellcheck disable=SC1091,SC1090
 MYTUNNEL_PREFIX="${MYTUNNEL_PREFIX:-}"
 if [ -n "$MYTUNNEL_PREFIX" ]; then BASE="$MYTUNNEL_PREFIX/etc/mytunnel"; else BASE="/etc/mytunnel"; fi
@@ -13510,7 +13506,7 @@ __EMBED_EOF__
 chmod 755 "$ETC/features/dropbear_version.sh"
 cat > "$ETC/login.sh" << '__EMBED_EOF__'
 #!/bin/bash
-# mytunnel login dashboard - tampil saat SSH login (60 kolom, 1:1 TUNNELING)
+# mytunnel login dashboard - tampil saat SSH login (60 kolom)
 # dipanggil via /etc/profile.d/mytunnel.sh - hanya interactive login
 MYTUNNEL_BASE="${MYTUNNEL_PREFIX:-}"
 ETC_BASE="/etc/mytunnel"
@@ -13586,7 +13582,7 @@ render_login_dashboard(){
   # bulan nama
   local month_name; month_name=$(date +%B 2>/dev/null || echo "")
 
-  # service status - TUNNELING pakai LOADBLC untuk nginx/haproxy
+  # service status - pakai LOADBLC untuk nginx/haproxy
   local xray sshws loadblc xcol scol lcol
   xray=$(svc_status xray 2>/dev/null || echo "OFF")
   sshws=$(svc_status ssh 2>/dev/null || echo "OFF")
@@ -13607,12 +13603,12 @@ render_login_dashboard(){
   # version info
   local version client expiry orderby
   version=$(cat "$ETC_BASE/config/version.txt" 2>/dev/null || cat /etc/mytunnel/config/version.txt 2>/dev/null || echo "v1.8.0")
-  # TUNNELING format: SPv07.01.26 -> kita pakai SUNEK-VPN prefix, tampil apa adanya
+  # Format versi: SPv07.01.26 -> kita pakai SUNEK-VPN prefix, tampil apa adanya
   client=$(get_ip_cached 2>/dev/null || echo "-")
   expiry=$(get_expiry 2>/dev/null || echo "-")
   orderby=$(get_brand 2>/dev/null || echo "SUNEK VPN")
 
-  # === RENDER (60 kolom, 1:1 TUNNELING) ===
+  # === RENDER (60 kolom) ===
   # brand header centered
   draw_box "$brand" 60
 
@@ -13645,7 +13641,7 @@ render_login_dashboard(){
   # service status
   echo -e "${xcol}XRAY : $xray${RESET} | ${scol}SSH-WS : $sshws${RESET} | ${lcol}LOADBLC : $loadblc${RESET} | GOOD"
 
-  # list accounts box - TUNNELING style
+  # list accounts box
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   _t="LIST ACCOUNTS"; _l=$(( (58 - ${#_t}) / 2 )); _r=$(( 58 - ${#_t} - _l ))
   printf "${BLUE}│${RESET}%*s${BOLD}%s${RESET}%*s${BLUE}│${RESET}\n" "$_l" "" "$_t" "$_r" ""
@@ -13656,7 +13652,7 @@ render_login_dashboard(){
   _line=$(printf "%-18s : %-4s ACCOUNT" "TROJAN" "$c_trojan"); printf "${BLUE}│${RESET} %-56s ${BLUE}│${RESET}\n" "$_line"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 
-  # version box - TUNNELING style
+  # version box
   echo -e "${BLUE}┌──────────────────────────────────────────────────────────┐${RESET}"
   printf "${BLUE}│${RESET} %-12s : %-41s ${BLUE}│${RESET}\n" "Version" "$version"
   printf "${BLUE}│${RESET} %-12s : %-41s ${BLUE}│${RESET}\n" "Order By" "$orderby"
@@ -13707,11 +13703,14 @@ cat > "$ETC/config/banner.txt" << '__EMBED_EOF__'
 
 __EMBED_EOF__
 chmod 644 "$ETC/config/banner.txt"
+# brand.txt immutable kalau sudah terkunci -> jangan menimpa
+if ! lsattr "$ETC/config/brand.txt" 2>/dev/null | grep -q "i"; then
 cat > "$ETC/config/brand.txt" << '__EMBED_EOF__'
 SUNEK VPN
 
 __EMBED_EOF__
-chmod 644 "$ETC/config/brand.txt"
+fi
+chmod 644 "$ETC/config/brand.txt" 2>/dev/null || true
 cat > "$ETC/config/dropbear_versions.txt" << '__EMBED_EOF__'
 2020.81
 2022.83
@@ -13720,7 +13719,7 @@ cat > "$ETC/config/dropbear_versions.txt" << '__EMBED_EOF__'
 __EMBED_EOF__
 chmod 644 "$ETC/config/dropbear_versions.txt"
 cat > "$ETC/config/version.txt" << '__EMBED_EOF__'
-v1.8.1
+v1.9.0
 __EMBED_EOF__
 chmod 644 "$ETC/config/version.txt"
 cat > "$ETC/config/repo.txt" << '__EMBED_EOF__'
@@ -13729,6 +13728,13 @@ __EMBED_EOF__
 chmod 644 "$ETC/config/repo.txt"
 cat > "$ETC/CHANGELOG.md" << '__EMBED_EOF__'
 # CHANGELOG
+
+## v1.9.0 — 2026-10-11 — brand SUNEK VPN permanen total + bersihkan referensi skrip lama
+### Fixed
+- brand tidak bisa diubah lewat jalur mana pun: bg_set() menolak saat canon immutable,
+  tanpa parameter force; menu 8 sepenuhnya read-only; --brand/MYTUNNEL_BRAND diabaikan
+  bila brand.txt sudah terkunci; embed brand.txt tidak menimpa file immutable
+- komentar yang menyebut nama skrip lama dihapus di seluruh install.sh dan README
 
 ## v1.8.1 — 2026-10-11 — brand permanen total + login-report menu 10
 ### Fixed
@@ -14418,7 +14424,7 @@ if [ -f "$ETC/logrotate.d/mytunnel" ]; then cp -a "$ETC/logrotate.d/mytunnel" "$
 chmod 644 "${BASE}/var/log"/*.log "${BASE}/var/log"/*.sim.log 2>/dev/null || true; chmod 644 "${BASE}/var/log/xray"/*.log 2>/dev/null || true
 if [ -f "$ETC/setup/logrotate.sh" ]; then bash "$ETC/setup/logrotate.sh" 2>&1 | tee -a "$LOG" || true; fi
 chmod +x "$BIN/menu" 2>/dev/null || true
-# suppress MOTD Ubuntu agar dashboard bersih 1:1 TUNNELING (60 kolom)
+# suppress MOTD Ubuntu agar dashboard bersih (60 kolom)
 touch "$HOME/.hushlogin" 2>/dev/null || touch /root/.hushlogin 2>/dev/null || true
 chmod 644 "$HOME/.hushlogin" 2>/dev/null || true
 chmod 644 /root/.hushlogin 2>/dev/null || true

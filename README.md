@@ -176,7 +176,7 @@ menu utama: 1 SSH  2 VMESS  3 VLESS  4 TROJAN  5 SETUP BOT  6 FEATURES  7 SET TI
 | **5 BOT** | Pasang token, set admin `chat_id`, webhook/polling, test `123456 ALLOWED 999999 BLOCKED`, mask `abc123***` |
 | **6 FEATURES** | Bandwidth, Reboot, Speedtest, Services, Backup, Domain, Banner, Security, AutoUpdate, Sysinfo, Dropbear-Version + `Layanan SSH Tambahan` (Squid/UDPGW/OHP/OpenVPN/SlowDNS/UDP-Custom) |
 | **7 TIME** | Set timezone/reduce |
-| **8 BRAND** | `BRAND_NAME` 1 baris (guard `tunnelcore`→editable) |
+| **8 BRAND** | `BRAND_NAME` 1 baris, dikunci permanen (immutable + canon + cron) |
 | **9 DOCTOR** | Banding `db/*.txt` vs `config.json` Xray vs `getent passwd`; lapor hilang/orphan/PARSIAL/expired + tawarkan fix |
 
 ### Contoh output (lebar 60 kolom, `──────────────── 36`)

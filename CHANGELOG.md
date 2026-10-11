@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## v1.9.0 — 2026-10-11 — brand permanen total (tidak bisa diubah lewat jalur mana pun) + bersihkan referensi skrip lama
+### Fixed
+- brand permanen 4 lapis: chattr +i, canon 600 root-only, cron tiap menit, dan bg_set() menolak tanpa jalur bypass
+- --brand dan MYTUNNEL_BRAND sekarang diabaikan bila brand.txt sudah immutable
+- embed config/brand.txt tidak menimpa file yang sudah terkunci
+- menu SET BRAND NAME (8) sepenuhnya read-only; jalur "FORCE" dihapus (dead code)
+- bg_set() tidak lagi menerima parameter force sama sekali
+
 ## v1.8.1 — 2026-10-11 — brand permanen total + login-report menu 10
 ### Fixed
 - brand_guard: brand.txt dipaksa kembali ke canon tiap menit, canon jadi 600 root-only

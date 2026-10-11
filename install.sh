@@ -14480,6 +14480,26 @@ if ! bash "$ETC/setup/httpmux.sh" install 2>&1 | tee -a "$LOG"; then
   echo -e "${YELLOW}Setup httpmux gagal, lanjut (cek manual $ETC/setup/httpmux.sh)${RESET}" | tee -a "$LOG" 2>/dev/null || true
 fi
 
+echo -e "${CYAN}[9d/13] Setup final 443 (nginx stream)...${RESET}"
+_log "[9d/13] final-443"
+if [ -z "$BASE" ]; then
+  if [ -x "${BASE}/configure-final-443.sh" ] || [ -x "/root/configure-final-443.sh" ] || [ -x "$PWD/configure-final-443.sh" ]; then
+    _f443=""
+    for _c in "${BASE}/configure-final-443.sh" "/root/configure-final-443.sh" "$PWD/configure-final-443.sh"; do
+      [ -x "$_c" ] && { _f443="$_c"; break; }
+    done
+    if [ -n "$_f443" ]; then
+      if bash "$_f443" 2>&1 | tee -a "$LOG" | tail -n 20; then
+        _log "final-443 ok"
+      else
+        echo -e "${YELLOW}Setup final 443 gagal - port 443 belum listen (cek manual: bash $_f443)${RESET}" | tee -a "$LOG" 2>/dev/null || true
+      fi
+    else
+      echo -e "${YELLOW}configure-final-443.sh tidak ditemukan - port 443 belum listen${RESET}" | tee -a "$LOG" 2>/dev/null || true
+    fi
+  fi
+fi
+
 echo -e "${CYAN}[10/13] Setup Dropbear...${RESET}"
 _log "[10/13] dropbear"
 if ! bash "$ETC/setup/dropbear.sh" 2>&1 | tee -a "$LOG"; then

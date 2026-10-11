@@ -2058,6 +2058,7 @@ show_menu() {
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 3.) VLESS               8.) SET BRAND NAME"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 4.) TROJAN              9.) CHECK SERVICES"
   printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" " 5.) SETUP BOT             x.) EXIT"
+  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\n" "10.) LOGIN REPORT"
   echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${RESET}"
 }
 
@@ -2125,6 +2126,7 @@ dispatch() {
     7) bash "$BASE/features/lock_time.sh" 2>/dev/null || { echo -e "${YELLOW}lock_time belum ada${RESET}"; pause; };;
     8) set_brand_name;;
     9) check_services;;
+    10) if [ -x /opt/login-report/menu.sh ]; then bash /opt/login-report/menu.sh 2>/dev/null || { echo -e "${YELLOW}menu login-report error${RESET}"; pause; }; else echo -e "${YELLOW}login-report belum terpasang${RESET}"; pause; fi;;
     x|X) echo -e "${GREEN}Keluar...${RESET}"; exit 0;;
     *) echo -e "${RED}Pilihan tidak valid: $1${RESET}"; sleep 1;;
   esac
@@ -2136,7 +2138,7 @@ while true; do
   show_status
   show_version
   show_menu
-  echo -ne "${BOLD}Select From Options [1-9 or x] : ${RESET}"
+  echo -ne "${BOLD}Select From Options [1-10 or x] : ${RESET}"
   read -r choice
   dispatch "$choice"
 done
@@ -10180,35 +10182,7 @@ systemctl daemon-reload 2>/dev/null || true
 # ── END login-report ──
 
 
-# ── BEGIN login-report (tool mandiri) ──
-# --- menu 10: LOGIN REPORT ---
-python3 - "$ETC/menu/main.sh" << '__EMBED_EOF__'
-import sys
-p = sys.argv[1]
-s = open(p, encoding="utf-8").read()
 
-menu_old = '  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" " 5.) SETUP BOT             x.) EXIT"'
-menu_new = '  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" " 5.) SETUP BOT             x.) EXIT"\n  printf "${BLUE}│${RESET} ${BOLD}%-56s${RESET} ${BLUE}│${RESET}\\n" "10.) LOGIN REPORT"'
-disp_old = '    9) check_services;;'
-disp_new = '    9) check_services;;\n    10) if [ -x /opt/login-report/menu.sh ]; then bash /opt/login-report/menu.sh 2>/dev/null || { echo -e "${YELLOW}menu login-report error${RESET}"; pause; }; else echo -e "${YELLOW}login-report belum terpasang${RESET}"; pause; fi;;'
-prompt_old = '  echo -ne "${BOLD}Select From Options [1-9 or x] : ${RESET}"'
-prompt_new = '  echo -ne "${BOLD}Select From Options [1-10 or x] : ${RESET}"'
-
-changed = []
-if menu_new not in s:
-    if s.count(menu_old) == 1:
-        s = s.replace(menu_old, menu_new, 1); changed.append("menu")
-if disp_new not in s:
-    if s.count(disp_old) == 1:
-        s = s.replace(disp_old, disp_new, 1); changed.append("dispatch")
-if prompt_new not in s:
-    if s.count(prompt_old) == 1:
-        s = s.replace(prompt_old, prompt_new, 1); changed.append("prompt")
-if changed:
-    open(p, "w", encoding="utf-8").write(s)
-print("menu/main.sh patched:", ",".join(changed) or "sudah")
-__EMBED_EOF__
-# ── END login-report ──
 
 cat > "$ETC/cron/quota.sh" << '__EMBED_EOF__'
 #!/bin/bash

@@ -14382,11 +14382,19 @@ chmod +x "$ETC/menu/"*.sh "$ETC/setup/"*.sh "$ETC/cron/"*.sh "$ETC/features/"*.s
 chmod 644 "$ETC/bot/handlers.sh" 2>/dev/null || true
 chmod 644 "$ETC/lib/advanced_helpers.sh" 2>/dev/null || true
 chmod 644 "$ETC/lib/"*.sh 2>/dev/null || true
+  # pastikan file executable (menu/fitur/entrypoint) tetap +x walau ditulis ulang
+  for _ex in "$ETC/menu/"*.sh "$ETC/setup/"*.sh "$ETC/cron/"*.sh "$ETC/features/"*.sh "$ETC/bot/"*.sh "$ETC/advanced/"*.sh "$ETC/menu/main.sh" "$ETC/uninstall.sh" "$ETC/lib/core.sh"; do
+    [ -f "$_ex" ] && chmod +x "$_ex" 2>/dev/null || true
+  done
+  unset _ex
 chmod 600 "$ETC/db/ssh.txt" "$ETC/db/vmess.txt" "$ETC/db/vless.txt" "$ETC/db/trojan.txt" 2>/dev/null || true
 chmod 600 "$ETC/db/.ssh.lock" "$ETC/db/.vmess.lock" "$ETC/db/.vless.lock" "$ETC/db/.trojan.lock" 2>/dev/null || true
 chmod 644 "$ETC/config/banner.txt" "$ETC/config/brand.txt" "$ETC/config/ports.conf" 2>/dev/null || true
 chmod 644 "$ETC/config/dropbear_versions.txt" "$ETC/config/version.txt" "$ETC/config/repo.txt" "$ETC/config/expiry.txt" "$ETC/config/domain.txt" 2>/dev/null || true
-ln -sf "$ETC/menu/main.sh" "$BIN/menu" 2>/dev/null || cp "$ETC/menu/main.sh" "$BIN/menu" 2>/dev/null || true
+ln -sf "$ETC/menu/main.sh" "$BIN/menu" 2>/dev/null || true
+if [ ! -e "$BIN/menu" ]; then cp "$ETC/menu/main.sh" "$BIN/menu" 2>/dev/null || true; fi
+chmod 755 "$ETC/menu/main.sh" 2>/dev/null || true
+if [ ! -L "$BIN/menu" ]; then chmod 755 "$BIN/menu" 2>/dev/null || true; fi
 # also expose doctor + uninstall at BIN and BASE
 ln -sf "$ETC/menu/doctor.sh" "$BIN/mytunnel-doctor" 2>/dev/null || cp "$ETC/menu/doctor.sh" "$BIN/mytunnel-doctor" 2>/dev/null || true
 chmod +x "$BIN/mytunnel-doctor" 2>/dev/null || true

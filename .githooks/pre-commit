@@ -46,8 +46,37 @@ for f in $staged; do
     esac
 done
 
+# --- SHA256SUMS harus sinkron dengan file yang di-commit ---
+_sums_check() {
+    local sums=SHA256SUMS _stale=() _want _have _f
+    [ -f "$sums" ] || return 0
+    command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || return 0
+    while IFS= read -r _f; do
+        [ -f "$_f" ] || continue
+        _want=$(awk -v n="$_f" '$2==n {print $1; exit}' "$sums" 2>/dev/null)
+        [ -n "$_want" ] || continue
+        _have=$(sha256sum "$_f" 2>/dev/null | awk '{print $1}')
+        [ "$_want" = "$_have" ] || _stale+=("$_f")
+    done <<'SUMSEOF'
+install.sh
+uninstall.sh
+VERSION
+CHANGELOG.md
+README.md
+ports.conf
+configure-final-443.sh
+LICENSE
+SUMSEOF
+    [ ${#_stale[@]} -eq 0 ] || report "SHA256SUMS basi: ${_stale[*]}"
+}
+
+if [ "$fail" -eq 0 ]; then
+    _sums_check
+fi
+
 if [ "$fail" -ne 0 ]; then
     printf '\nCommit DITOLAK. Bersihkan secret di atas, lalu `git add` ulang.\n' >&2
     exit 1
 fi
 exit 0
+# tweak hook

@@ -5040,6 +5040,19 @@ get_domain() {
   if [ -f "$DOMAIN_FILE" ]; then head -1 "$DOMAIN_FILE" 2>/dev/null | tr -d ' \n' | tr '[:upper:]' '[:lower:]'; else echo ""; fi
 }
 
+# ── argumen ──────────────────────────────────────────────────
+#   --force  : paksa issue ULANG walau cert sudah ada (dipakai setelah
+#              fallback self-signed terpasang karena ACME gagal/429)
+FORCE=0
+for _a in "$@"; do
+  case "$_a" in
+    --force) FORCE=1 ;;
+    --help|-h) echo "Usage: bash cert.sh [--force]"; echo "  --force  paksa issue ulang Let's Encrypt (abaikan cert yang sudah ada)"; exit 0 ;;
+    *) echo "opsi tidak dikenal: $_a (lihat --help)" >&2 ;;
+  esac
+done
+
+
 install_acme() {
   if [ -x "$ACME_HOME/acme.sh" ]; then echo -e "${GREEN}acme.sh sudah ada: $ACME_HOME/acme.sh${RESET}"; return 0; fi
   if [ -n "$BASE" ]; then
@@ -5084,6 +5097,19 @@ issue_cert() {
   cert_crt="$CERT_DIR/fullchain.crt"
   cert_key="$CERT_DIR/private.key"
   mkdir -p "$CERT_DIR" 2>/dev/null || true
+
+  # cert LE milik domain ini & masih valid -> skip issue (kecuali --force)
+  if [ "$FORCE" != "1" ] && [ -s "$cert_crt" ] && [ -s "$cert_key" ]; then
+    local _cn _exp _now
+    _exp=$(date -d "$(openssl x509 -in "$cert_crt" -noout -enddate 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null || echo 0)
+    _now=$(date +%s)
+    _cn=$(openssl x509 -in "$cert_crt" -noout -subject -nameopt RFC2253 2>/dev/null | tr ',' '\n' | sed -n 's/^\(subject=\)\{0,1\}CN=//p' | head -1 | tr -d '\n' | tr '[:upper:]' '[:lower:]')
+    if [ "$_exp" -gt "$_now" ] && [ "$_cn" = "$domain" ]; then
+      echo -e "${GREEN}Cert untuk $domain masih valid - skip issue (pakai --force untuk paksa)${RESET}" | tee -a "$LOG" 2>/dev/null || true
+      _log "cert: skip issue, cert $domain masih valid"
+      return 0
+    fi
+  fi
 
   if [ -n "$BASE" ]; then
     echo -e "${YELLOW}[TEST MODE] Simulasi issue cert untuk $domain${RESET}"
@@ -5158,7 +5184,7 @@ issue_cert() {
       chmod 600 "$CERT_KEY" 2>/dev/null || true
       chmod 644 "$CERT_CRT" 2>/dev/null || true
       echo -e "${YELLOW}Sertifikat self-signed terpasang - browser akan warning 'untrusted'.${RESET}" | tee -a "$LOG"
-      echo -e "${YELLOW}Ulangi issue Let's Encrypt nanti: bash $ETC/setup/cert.sh --force${RESET}" | tee -a "$LOG"
+echo -e "${YELLOW}Ulangi issue LE setelah rate limit reset (7 hari): bash $ETC/setup/cert.sh --force${RESET}" | tee -a "$LOG"
       _log "cert self-signed dipasang untuk $domain"
       return 0
     }
@@ -12703,7 +12729,7 @@ main() {
     # tanpa cek ini domain.txt ganti tapi 443 tetap menyajikan cert domain lama
     if [ "$cert_ok" -eq 1 ]; then
       local _cn _san
-      _cn=$(openssl x509 -in "$ETC/cert/fullchain.crt" -noout -subject 2>/dev/null | sed "s/.*CN *= *//" | tr -d "\n" | tr "[:upper:]" "[:lower:]")
+      _cn=$(openssl x509 -in "$ETC/cert/fullchain.crt" -noout -subject -nameopt RFC2253 2>/dev/null | tr ',' '\n' | sed -n 's/^\(subject=\)\{0,1\}CN=//p' | head -1 | tr -d '\n' | tr '[:upper:]' '[:lower:]')
       _san=$(openssl x509 -in "$ETC/cert/fullchain.crt" -noout -ext subjectAltName 2>/dev/null | grep -io "DNS:$new\b" | head -1)
       if [ "$_cn" != "$new" ] && [ -z "$_san" ]; then
         cert_ok=0

@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## v1.9.4 — 2026-10-12 — fix Change Domain dan --force + cert.sh idempoten
+### Fixed
+- `features/domain.sh` (menu 6 -> 9 Change Domain VPS): parsing `CN` dari subject cert
+  pakai `sed "s/.*CN *= *//"` yang menghasilkan `new.example.com, o = mytunnel` ketika
+  subject mengandung field lain (contoh `O=MyTunnel` dari self-signed). Akibatnya validasi
+  "cert harus milik domain baru" salah tolak dan menggagalkan ganti domain. Sekarang pakai
+  `-nameopt RFC2253` + split per-field, teruji 3 kasus (CN saja, CN+O, CN huruf besar).
+- `setup/cert.sh` tidak punya parser argumen sama sekali, padahal v1.9.3 memberi instruksi
+  `bash $ETC/setup/cert.sh --force` ke user. Ditambahkan parser `--force` (paksa issue ulang
+  walau cert masih ada) dan `--help`.
+- `cert.sh` sekarang idempoten: kalau cert untuk domain itu sudah ada dan masih valid,
+  issue di-skip (bukan re-issue tiap kali dipanggil dari step install/change-domain).
+  `--force` melewati skip ini — dipakai untuk mengganti self-signed fallback dengan LE asli.
+- Pesan setelah fallback self-signed sekarang menyebut reset rate limit 7 hari secara eksplisit.
+
 ## v1.9.3 — 2026-10-12 — cert gagal (429 rate limit LE) tidak lagi mati total install
 ### Fixed
 - `setup/cert.sh`: saat ACME gagal (HTTP 429 `too many certificates (5) already issued for

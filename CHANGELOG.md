@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## v1.9.5 — 2026-10-12 — fix port 443 tidak listen: modul stream nginx tidak pernah dimuat
+### Fixed
+- **Penyebab utama 443 mati (80 tetap konek)**: nginx dari repo distro (`apt-get install nginx`)
+  TIDAK otomatis memuat modul stream. Blok `stream { listen 443; ssl_preread on; }` yang
+  dipasang `configure-final-443.sh` membuat `nginx -t` gagal ("unknown directive \"stream\""),
+  sehingga script rollback dan 443 tidak pernah listen. HTTP di port 80 tidak butuh modul
+  stream — itu sebab 80 konek sementara 443 mati.
+- `setup/nginx.sh` `install_nginx()` sekarang memanggil `ensure_nginx_stream()`:
+  pasang `libnginx-mod-stream` kalau belum ada, dan tambahkan `load_module modules/ngx_stream_module.so;`
+  di baris paling atas nginx.conf (posisi wajib, sebelum `events`/`http`),
+  lalu validasi `nginx -t`.
+- Install nginx baru memakai `apt-get install -y nginx libnginx-mod-stream` (fallback ke `nginx` saja).
+- `configure-final-443.sh` `check_prereq()` tidak lagi `die` kebetulan user tidak punya modul —
+  sekarang memasang otomatis, dan menambah `load_module` ke nginx.conf sebelum melanjutkan.
+- `configure-final-443.sh` (file fisik) disinkronkan dengan versi embed di `install.sh`.
+
+### Verifikasi
+- `bash -n` semua file OK; harness `MYTUNNEL_PREFIX --no-deps` OK.
+- `nginx.sh` & `configure-final-443.sh` hasil harness memuat guard (7 dan 9 ref).
+- Simulasi penambahan `load_module`: masuk di baris 1, sebelum `events`/`http` — divalidasi grep.
+
 ## v1.9.4 — 2026-10-12 — fix Change Domain dan --force + cert.sh idempoten
 ### Fixed
 - `features/domain.sh` (menu 6 -> 9 Change Domain VPS): parsing `CN` dari subject cert

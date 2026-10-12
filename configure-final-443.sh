@@ -75,10 +75,34 @@ check_prereq() {
   command -v ss >/dev/null 2>&1 || die "iproute2 (ss) tidak tersedia"
 
   if ! nginx -V 2>&1 | grep -q -- '--with-stream' && [ ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
-    die "modul nginx stream tidak ada. Pasang dulu: apt-get install -y libnginx-mod-stream"
+    warn "modul nginx stream belum ada — memasang libnginx-mod-stream..."
+    if command -v apt-get >/dev/null 2>&1; then
+      DEBIAN_FRONTEND=noninteractive apt-get install -y libnginx-mod-stream >/dev/null 2>&1 || true
+    fi
+    if ! nginx -V 2>&1 | grep -q -- '--with-stream' && [ ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+      die "modul nginx stream tidak bisa dipasang" "Jalankan manual: apt-get install -y libnginx-mod-stream"
+    fi
   fi
   ok "modul nginx stream tersedia"
 
+  # nginx dari repo distro tidak otomatis load modul stream; pastikan
+  # ngx_stream_module.so dimuat sebelum blok stream dipakai
+  if ! nginx -V 2>&1 | grep -q -- '--with-stream' && [ -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+    if ! grep -qs 'ngx_stream_module\.so' /etc/nginx/nginx.conf /etc/nginx/modules-enabled/*.conf 2>/dev/null; then
+      warn "menambahkan load_module ngx_stream_module.so ke nginx.conf"
+      if grep -qE '^\s*load_module' /etc/nginx/nginx.conf; then
+        awk 'BEGIN{done=0} /^\s*load_module/ && !done {print "load_module modules/ngx_stream_module.so;"; done=1} {print}' \
+          /etc/nginx/nginx.conf > /etc/nginx/nginx.conf.new && mv -f /etc/nginx/nginx.conf.new /etc/nginx/nginx.conf
+      else
+        printf 'load_module modules/ngx_stream_module.so;\n' | cat - /etc/nginx/nginx.conf > /etc/nginx/nginx.conf.new \
+          && mv -f /etc/nginx/nginx.conf.new /etc/nginx/nginx.conf
+      fi
+      if ! nginx -t >/dev/null 2>&1; then
+        die "nginx.conf rusak setelah menambah load_module" "Cek: nginx -t ; restore dari /etc/nginx/nginx.conf.bak-*"
+      fi
+      ok "load_module stream ditambahkan"
+    fi
+  fi
   [ -f "$SITE_CONF" ] || die "$SITE_CONF tidak ada (nginx belum dikonfigurasi mytunnel?)"
   [ -f "$STUNNEL_CONF" ] || die "$STUNNEL_CONF tidak ada (stunnel belum terpasang?)"
 

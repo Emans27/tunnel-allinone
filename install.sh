@@ -14800,7 +14800,7 @@ apply_http_tls_listen() {
     ok "server http ${NGINX_HTTP_TLS_PORT} ssl sudah ada + listen 443 sudah dilepas (skip)"
     return 1
   fi
-  [ "$need_add" -eq 1 ] && plan_change "$SITE_CONF: tambah listen 127.0.0.1:${NGINX_HTTP_TLS_PORT} ssl http2"
+  [ "$need_add" -eq 1 ] && plan_change "$SITE_CONF: tambah listen 127.0.0.1:${NGINX_HTTP_TLS_PORT} ssl (TANPA http2)"
   [ "$need_del" -eq 1 ] && plan_change "$SITE_CONF: hapus listen 443 (dipindah ke blok stream ssl_preread)"
   [ "$DRY_RUN" -eq 1 ] && return 0
   backup_file "$SITE_CONF"
@@ -14814,7 +14814,9 @@ if not re.search(r'listen[ \t]+127\.0\.0\.1:%s[ \t]+ssl' % re.escape(port), s):
     if not m:
         sys.exit('listen 8443 ssl tidak ditemukan')
     indent = m.group(1)
-    s = s[:m.end()] + f'{indent}listen 127.0.0.1:{port} ssl http2;\n' + s[m.end():]
+    s = s[:m.end()] + f'{indent}listen 127.0.0.1:{port} ssl;\n' + s[m.end():]
+# 9443 SENGAJA tanpa http2: klien WS menawarkan ALPN 'h2,http/1.1'; bila 9443
+# punya http2, nginx 1.18 membalas 400 dan WS mati. h2 untuk gRPC lewat 8443.
 # 2. WAJIB: hapus listen 443 / [::]:443 — blok stream ssl_preread yang mengambil 443.
 #    Tanpa ini nginx gagal start (bind() 98) karena 443 dobel.
 s = re.sub(r'^[ \t]*listen[ \t]+(\[::\]:)?443[ \t]+ssl[^\n]*\n', '', s, flags=re.M)

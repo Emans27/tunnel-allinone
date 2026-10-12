@@ -1429,7 +1429,7 @@ gen_links() {
       json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"ws","path":"%s","type":"none","host":"%s","tls":"none"}' "$user" "$domain" "$nontls_port" "$id" "$ws_path" "$domain")
       b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
       echo "vmess://$b64"
-      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"grpc","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$grpc_svc" "$domain" "$domain")
+      json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"grpc","path":"","serviceName":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$grpc_svc" "$domain" "$domain")
       b64=$(echo -n "$json" | base64 -w 0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')
       echo "vmess://$b64"
       json=$(printf '{"v":"2","ps":"%s","add":"%s","port":"%s","id":"%s","aid":"0","net":"httpupgrade","path":"%s","type":"none","host":"%s","tls":"tls","sni":"%s"}' "$user" "$domain" "$tls_port" "$id" "$hu_path" "$domain" "$domain")

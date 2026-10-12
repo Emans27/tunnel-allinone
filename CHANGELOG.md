@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## v1.9.2 — 2026-10-12 — fix 443 tidak listen + login-report tidak bisa menerima token bot
+### Fixed
+- **PORT 443 tidak pernah ter-setup**: embed `configure-final-443.sh` menulis ke
+  `${BASE}/configure-final-443.sh` yang saat produksi = `/configure-final-443.sh` (root FS),
+  tapi `chmod` diarahkan ke `/root/configure-final-443.sh`. File tidak executable sehingga
+  blok step `[9d/13]` selalu dilewati. Sekarang keduanya pakai variabel `F443` yang sama
+  (`${BASE:-/root}/configure-final-443.sh`).
+- step `[9d/13]` sekarang memverifikasi `ss -tln | grep ':443 '` dan `:80 ` setelah setup;
+  kalau belum listen, paksa buka UFW + reload nginx, jalankan ulang httpmux, lalu laporkan
+  status final ke layar (tidak diam-diam gagal).
+- **LOGIN REPORT tidak bisa menerima token bot**: `menu 1` memanggil `lr_sanitize` yang
+  tidak pernah didefinisikan di `common.sh`/`collector.sh`/`core.sh`. Akibatnya
+  `t=$(lr_sanitize "$t")` menghasilkan string kosong dan token yang diketik user hilang.
+  Fungsi `lr_sanitize` sekarang ada (buang karakter di luar `[0-9A-Za-z:_-]`).
+- `lr_load_conf` kini memanggil `lr_defaults` lebih dulu: semua variabel config punya nilai
+  default, jadi `set -u` tidak lagi melempar "unbound variable" (XRAY_CONFIG, XRAY_ACCESS_LOG,
+  dll) saat `/etc/login-report/config.conf` hilang atau rusak.
+- `lr_set_conf` membuat `config.conf` dari template default bila file belum ada, sehingga
+  menu 1 tetap bisa menyimpan token pada instalasi baru.
+- `lr_log` memilih path fallback writable (`$TMPDIR/login-report.log`) bila `/var/log` tidak bisa ditulis.
+- `LR_BASE`/`LR_CONF`/`LR_LOG` di `core.sh`, `menu.sh`, `common.sh` kini memakai `${VAR:-default}`
+  agar bisa di-override (test mode) tanpa mengubah perilaku produksi.
+- dispatcher menu 10 tidak lagi membuang stderr (`2>/dev/null` dihapus) dan punya fallback ke
+  `/etc/mytunnel/login-report/menu.sh`; kode error ditampilkan sebagai `rc=$?`.
+- semua fungsi `lr_*` yang dipanggil sudah terdefinisi (scan otomatis: 0 missing).
+
 ## v1.9.1 — 2026-10-12 — install 1-perintah tanpa setting lanjutan + login-report token bisa dimasukan
 ### Fixed
 - login-report: `/etc/login-report/config.conf` dijamin ada saat install. Sebelumnya blok copy

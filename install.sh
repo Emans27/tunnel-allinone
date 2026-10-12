@@ -2128,7 +2128,14 @@ dispatch() {
     7) bash "$BASE/features/lock_time.sh" 2>/dev/null || { echo -e "${YELLOW}lock_time belum ada${RESET}"; pause; };;
     8) set_brand_name;;
     9) check_services;;
-    10) if [ -x /opt/login-report/menu.sh ]; then bash /opt/login-report/menu.sh 2>/dev/null || { echo -e "${YELLOW}menu login-report error${RESET}"; pause; }; else echo -e "${YELLOW}login-report belum terpasang${RESET}"; pause; fi;;
+    10) if [ -x /opt/login-report/menu.sh ]; then
+          bash /opt/login-report/menu.sh || { echo -e "${RED}menu login-report error (rc=$?)${RESET}"; pause; }
+        elif [ -x /etc/mytunnel/login-report/menu.sh ]; then
+          # test mode: pakai path ber-prefix
+          bash /etc/mytunnel/login-report/menu.sh || { echo -e "${RED}menu login-report error (rc=$?)${RESET}"; pause; }
+        else
+          echo -e "${YELLOW}login-report belum terpasang${RESET}"; pause
+        fi;;
     x|X) echo -e "${GREEN}Keluar...${RESET}"; exit 0;;
     *) echo -e "${RED}Pilihan tidak valid: $1${RESET}"; sleep 1;;
   esac
@@ -9285,8 +9292,17 @@ lr_head(){ printf '\n%s%s%s\n' "$BOLD$C" "$*" "$N"; }
 lr_line(){ printf '%s\n' "--------------------------------------------"; }
 
 # ── konfigurasi ─────────────────────────────────────────────
-LR_CONF=/etc/login-report/config.conf
+LR_CONF="${LR_CONF:-/etc/login-report/config.conf}"
+# default semua key — pastikan tidak ada unbound variable walau config hilang/rusak
+lr_defaults(){
+  BOT_TOKEN=""; CHAT_ID=""; ENABLED="off"; INTERVAL_MIN="30"; DAILY_AT=""
+  SEND_SSH="on"; SEND_VMESS="on"; SEND_VLESS="on"; SEND_TROJAN="on"
+  XRAY_LOG_MINUTES="15"; XRAY_ACCESS_LOG="/var/log/xray/access.log"
+  XRAY_CONFIG="/usr/local/etc/xray/config.json"; XRAY_API_ADDR="127.0.0.1:10085"
+  DOMAIN="auto"; INFO_COLUMNS=""; CURL_RETRY="2"; CURL_TIMEOUT="20"
+}
 lr_load_conf(){
+  lr_defaults
   [ -r "$LR_CONF" ] || { printf '[!] config tidak ada: %s\n' "$LR_CONF" >&2; return 1; }
   local line key val
   while IFS= read -r line; do
@@ -9306,6 +9322,21 @@ lr_load_conf(){
 # tulis nilai ke config (preserve komentar & urutan, tanpa sed -i pada file asli)
 lr_set_conf(){
   local key="$1" val="$2" tmp
+  # config hilang? buat dari default dulu supaya menu 1 tetap bisa menyimpan token
+  if [ ! -f "$LR_CONF" ]; then
+    local d; d=$(dirname "$LR_CONF")
+    mkdir -p "$d" 2>/dev/null || true
+    [ -w "$d" ] || return 1
+    lr_defaults
+    { printf '# login-report config (auto-created)\n'
+      printf 'BOT_TOKEN=""\nCHAT_ID=""\nENABLED=off\nINTERVAL_MIN=30\nDAILY_AT=""\n'
+      printf 'SEND_SSH=on\nSEND_VMESS=on\nSEND_VLESS=on\nSEND_TROJAN=on\n'
+      printf 'XRAY_LOG_MINUTES=15\nXRAY_ACCESS_LOG=/var/log/xray/access.log\n'
+      printf 'XRAY_CONFIG=/usr/local/etc/xray/config.json\nXRAY_API_ADDR=127.0.0.1:10085\n'
+      printf 'DOMAIN=auto\nINFO_COLUMNS=""\nCURL_RETRY=2\nCURL_TIMEOUT=20\n'
+    } > "$LR_CONF" 2>/dev/null || return 1
+    chmod 600 "$LR_CONF" 2>/dev/null || true
+  fi
   [ -r "$LR_CONF" ] || return 1
   [ -w "$LR_CONF" ] || return 1
   val=$(printf '%s' "$val" | tr -d '\n\r')
@@ -9326,8 +9357,13 @@ lr_set_conf(){
 }
 
 # ── logging (token TIDAK pernah masuk log) ──────────────────
-LR_LOG=/var/log/login-report.log
-lr_log(){ printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LR_LOG" 2>/dev/null || true; }
+LR_LOG="${LR_LOG:-/var/log/login-report.log}"
+lr_log(){
+  local f="$LR_LOG" d
+  d=$(dirname "$f")
+  [ -d "$d" ] && [ -w "$d" ] || f="${TMPDIR:-/tmp}/login-report.log"
+  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$f" 2>/dev/null || true
+}
 
 # ── validasi ────────────────────────────────────────────────
 lr_valid_interval(){ case "$1" in 5|10|15|30|60|180|360|720|1440) return 0 ;; *) return 1 ;; esac; }
@@ -9344,6 +9380,11 @@ lr_mask_token(){
 }
 
 lr_valid_chat_id(){ [[ "${1:-}" =~ ^-?[0-9]+$ ]]; }
+
+# bersihkan input user sebelum disimpan (hanya karakter valid token bot Telegram)
+lr_sanitize(){
+  printf '%s' "${1:-}" | tr -d '\r\n\t ' | sed 's/[^0-9A-Za-z:_\-]//g'
+}
 __EMBED_EOF__
 chmod 644 "$LR_DIR/lib/common.sh"
 
@@ -9673,7 +9714,7 @@ cat > "$LR_DIR/lib/core.sh" <<'__EMBED_EOF__'
 # shellcheck disable=SC2034,SC2154,SC1091
 set -uo pipefail
 
-LR_BASE=/opt/login-report
+LR_BASE="${LR_BASE:-/opt/login-report}"
 . "$LR_BASE/lib/common.sh"
 . "$LR_BASE/lib/collector.sh"
 
@@ -9902,7 +9943,7 @@ cat > "$LR_DIR/menu.sh" <<'__EMBED_EOF__'
 # login-report — menu "lreport"
 # shellcheck disable=SC2034,SC2154,SC1091
 set -uo pipefail
-LR_BASE=/opt/login-report
+LR_BASE="${LR_BASE:-/opt/login-report}"
 . "$LR_BASE/lib/common.sh"
 . "$LR_BASE/lib/core.sh"
 
@@ -9967,9 +10008,9 @@ while true; do
         lr_set_conf CHAT_ID "$cid"; lr_log "CHAT_ID diperbarui"
       else lr_warn "Chat ID tidak valid"; fi
       # verifikasi token
-      local_ok=$(curl -4 -sS --max-time 10 "https://api.telegram.org/bot${t}/getMe" 2>/dev/null | jq -r '.ok // false' 2>/dev/null)
-      [ "$local_ok" = "true" ] && lr_ok "Token valid" || lr_warn "Token tidak diverifikasi (cek jaringan/token)"
-      lr_set_conf XRAY_ACCESS_LOG "$XRAY_ACCESS_LOG"; ;;
+      tok_ok=$(curl -4 -sS --max-time 10 "https://api.telegram.org/bot${t}/getMe" 2>/dev/null | jq -r '.ok // false' 2>/dev/null)
+      [ "$tok_ok" = "true" ] && lr_ok "Token valid" || lr_warn "Token tidak diverifikasi (cek jaringan/token)"
+      ;;
     2) # ── interval ────────────────────────────────────────
       lr_load_conf; echo
       printf '%s\n' "  1) 5 menit     2) 10 menit    3) 15 menit   4) 30 menit"
@@ -14419,7 +14460,8 @@ __EMBED_EOF__
 # izinkan override saat install: MYTUNNEL_EXPIRY=2099-12-31 bash install.sh
 if [ -n "${MYTUNNEL_EXPIRY:-}" ]; then printf '%s\n' "$MYTUNNEL_EXPIRY" > "$ETC/config/expiry.txt"; fi
 chmod 644 "$ETC/config/expiry.txt"
-cat > "${BASE}/configure-final-443.sh" << '__EMBED_EOF__'
+F443="${BASE:-/root}/configure-final-443.sh"
+cat > "$F443" << '__EMBED_EOF__'
 #!/bin/bash
 # mytunnel-configure-final-443.sh - pasang arsitektur final 443 (nginx stream -> 9443 / stunnel 4443)
 #
@@ -14784,7 +14826,7 @@ say "  backup: ${BACKUP_DIR}"
 say "  rollback: bash $0 --rollback"
 verify_state
 __EMBED_EOF__
-if [ -n "$BASE" ]; then chmod 755 "${BASE}/configure-final-443.sh"; else chmod 755 /root/configure-final-443.sh 2>/dev/null || true; fi
+chmod 755 "$F443" 2>/dev/null || true
 
 echo -e "${CYAN}[4/13] Pasang perintah menu...${RESET}"
 chmod +x "$ETC/menu/"*.sh "$ETC/setup/"*.sh "$ETC/cron/"*.sh "$ETC/features/"*.sh "$ETC/bot/"*.sh "$ETC/advanced/"*.sh 2>/dev/null || true
@@ -14878,21 +14920,47 @@ fi
 
 echo -e "${CYAN}[9d/13] Setup final 443 (nginx stream)...${RESET}"
 _log "[9d/13] final-443"
-if [ -x "${BASE}/configure-final-443.sh" ] || [ -x "/root/configure-final-443.sh" ] || [ -x "$PWD/configure-final-443.sh" ]; then
-    _f443=""
-    for _c in "${BASE}/configure-final-443.sh" "/root/configure-final-443.sh" "$PWD/configure-final-443.sh"; do
-      [ -x "$_c" ] && { _f443="$_c"; break; }
-    done
-    if [ -n "$_f443" ]; then
-      if bash "$_f443" 2>&1 | tee -a "$LOG" | tail -n 20; then
-        _log "final-443 ok"
-      else
-        echo -e "${YELLOW}Setup final 443 gagal - port 443 belum listen (cek manual: bash $_f443)${RESET}" | tee -a "$LOG" 2>/dev/null || true
-      fi
-    else
-      echo -e "${YELLOW}configure-final-443.sh tidak ditemukan - port 443 belum listen${RESET}" | tee -a "$LOG" 2>/dev/null || true
-    fi
+_f443=""
+for _c in "${BASE:+$BASE/}configure-final-443.sh" "/root/configure-final-443.sh" "$PWD/configure-final-443.sh"; do
+  [ -f "$_c" ] && { _f443="$_c"; break; }
+done
+if [ -n "$_f443" ]; then
+  chmod 755 "$_f443" 2>/dev/null || true
+  if bash "$_f443" 2>&1 | tee -a "$LOG" | tail -n 20; then
+    _log "final-443 ok"
+  else
+    echo -e "${YELLOW}Setup final 443 gagal (cek manual: bash $_f443)${RESET}" | tee -a "$LOG" 2>/dev/null || true
   fi
+else
+  echo -e "${YELLOW}configure-final-443.sh tidak ditemukan - port 443 belum listen${RESET}" | tee -a "$LOG" 2>/dev/null || true
+fi
+# verifikasi nyata: 443 HARUS listen setelah step ini, kalau tidak UFW buka + reload
+if [ -z "$BASE" ]; then
+  if ! ss -tln 2>/dev/null | grep -q ':443 '; then
+    echo -e "${YELLOW}! 443 belum listen, paksa: buka UFW + reload nginx${RESET}" | tee -a "$LOG" 2>/dev/null || true
+    ufw allow 443/tcp >/dev/null 2>&1 || true
+    systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+    sleep 2
+    if ss -tln 2>/dev/null | grep -q ':443 '; then
+      echo -e "${GREEN}✓ 443 aktif setelah paksa reload${RESET}" | tee -a "$LOG" 2>/dev/null || true
+      _log "final-443 force ok"
+    else
+      echo -e "${RED}✗ 443 masih mati. Cek: bash $_f443 --dry-run ; nginx -t${RESET}" | tee -a "$LOG" 2>/dev/null || true
+    fi
+  else
+    _log "final-443 verified listen"
+  fi
+  # 80 juga harus listen (httpmux)
+  if ! ss -tln 2>/dev/null | grep -q ':80 '; then
+    echo -e "${YELLOW}! 80 belum listen, jalankan ulang httpmux${RESET}" | tee -a "$LOG" 2>/dev/null || true
+    bash "$ETC/setup/httpmux.sh" install 2>&1 | tee -a "$LOG" | tail -n 5 || true
+    ufw allow 80/tcp >/dev/null 2>&1 || true
+    sleep 2
+    ss -tln 2>/dev/null | grep -q ':80 ' && { echo -e "${GREEN}✓ 80 aktif${RESET}" | tee -a "$LOG" 2>/dev/null || true; _log "port 80 verified"; }
+  else
+    _log "port 80 verified"
+  fi
+fi
 
 echo -e "${CYAN}[10/13] Setup Dropbear...${RESET}"
 _log "[10/13] dropbear"

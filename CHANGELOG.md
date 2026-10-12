@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## v1.9.3 — 2026-10-12 — cert gagal (429 rate limit LE) tidak lagi mati total install
+### Fixed
+- `setup/cert.sh`: saat ACME gagal (HTTP 429 `too many certificates (5) already issued for
+  this exact set of identifiers`, atau DNS belum propagasi), script sebelumnya memanggil
+  `die` = `exit 1` sehingga seluruh install berhenti. Sekarang pasang **self-signed
+  365 hari** sebagai fallback (cert lama di-backup `.bak-<timestamp>` dulu) dan install
+  lanjut sampai selesai, supaya 443/8443/80 tetap listen dan menu/xray/dropbear tetap terpasang.
+- Pesan error sekarang menyebut rate limit 5/domain/minggu secara eksplisit, dan petunjuk
+  ulangi issue manual: `bash $ETC/setup/cert.sh --force`.
+- Cert self-signed tetap memicu warning 'untrusted' di browser (wajar) — ini memang
+  fallback sementara sampai rate limit LE reset (7 hari) dan issue ulang dimasukkan.
+
+### Catatan
+- Kegagalan 429 Let's Encrypt bukan bug script dan tidak bisa diperbaiki dari repo:
+  limit LE = 5 sertifikat per exact set identifier per minggu. Solusi: tunggu reset
+  seminggu, atau pakai domain lain, atau pakai DNS-01 challenge.
+
 ## v1.9.2 — 2026-10-12 — fix 443 tidak listen + login-report tidak bisa menerima token bot
 ### Fixed
 - **PORT 443 tidak pernah ter-setup**: embed `configure-final-443.sh` menulis ke

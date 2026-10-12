@@ -5139,9 +5139,28 @@ issue_cert() {
     # fallback rsa
     echo -e "${YELLOW}EC gagal, coba RSA...${RESET}"
     "$acme" --issue --standalone -d "$domain" --server letsencrypt 2>&1 | tee -a "$LOG" || {
-      # nginx harus hidup lagi walau gagal - cert lama masih utuh (install jalan)
+      # nginx harus hidup lagi walau ACME gagal - cert lama masih utuh (install jalan)
       systemctl start nginx 2>/dev/null || true
-      die "Gagal issue sertifikat untuk $domain" "Cek: 1) A record sudah point ke IP VPS, 2) port 80 terbuka (ufw allow 80), 3) tidak ada layanan lain di 80, 4) rate limit LE"
+      # JANGAN mati install. Rate limit LE (429, 5/domain/minggu) atau DNS belum
+      # propagasi bukan alasan membatalkan setup port/xray/dropbear/menu.
+      # Pasang self-signed supaya 443 tetap listen TLS, user ulangi issue nanti.
+      echo -e "${YELLOW}Issue Let's Encrypt gagal (kemungkinan rate limit 5/domain/minggu atau DNS belum siap)${RESET}" | tee -a "$LOG"
+      echo -e "${YELLOW}Pasang sertifikat self-signed sementara supaya 443 tetap jalan...${RESET}" | tee -a "$LOG"
+      _log "cert: ACME gagal ($domain), pasang self-signed"
+      mkdir -p "$CERT_DIR" 2>/dev/null || true
+      [ -f "$CERT_CRT" ] && cp -a "$CERT_CRT" "${CERT_CRT}.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+      [ -f "$CERT_KEY" ] && cp -a "$CERT_KEY" "${CERT_KEY}.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+      if ! openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+           -keyout "$CERT_KEY" -out "$CERT_CRT" \
+           -subj "/CN=$domain/O=MyTunnel" -addext "subjectAltName=DNS:$domain" 2>>"$LOG"; then
+        die "Self-signed ikut gagal dipasang" "Cek $LOG dan izin tulis $CERT_DIR"
+      fi
+      chmod 600 "$CERT_KEY" 2>/dev/null || true
+      chmod 644 "$CERT_CRT" 2>/dev/null || true
+      echo -e "${YELLOW}Sertifikat self-signed terpasang - browser akan warning 'untrusted'.${RESET}" | tee -a "$LOG"
+      echo -e "${YELLOW}Ulangi issue Let's Encrypt nanti: bash $ETC/setup/cert.sh --force${RESET}" | tee -a "$LOG"
+      _log "cert self-signed dipasang untuk $domain"
+      return 0
     }
   fi
 

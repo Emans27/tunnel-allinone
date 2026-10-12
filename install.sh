@@ -580,18 +580,11 @@ xray_reload() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] xray reload (simulated)" >> "$LOG" 2>/dev/null || true
     return 0
   fi
-  # live apply baru saja sukses (TTL 30s): config file & instance sudah sinkron
-  if [ -f "$_LIVE_FLAG" ]; then
-    local fs ts
-    fs=$(stat -c %Y "$_LIVE_FLAG" 2>/dev/null || echo 0)
-    ts=$(date +%s 2>/dev/null || echo 0)
-    if [ "$((ts - fs))" -le 30 ]; then
-      rm -f "$_LIVE_FLAG" 2>/dev/null || true
-      echo -e "${GREEN}xray sudah di-apply via API (restart dilewati)${RESET}"
-      return 0
-    fi
-    rm -f "$_LIVE_FLAG" 2>/dev/null || true   # flag basi -> restart normal
-  fi
+  # Flag live-apply TIDAK lagi menjadi syarat skip restart. Versi sebelumnya
+  # mengembalikan 0 tanpa restart bila flag <= 30 detik, padahal config hanya
+  # berubah di disk: akun baru tertinggal di file dan Xray tetap/USD menolak
+  # "user do not exist" sampai restart manual. Sekarang selalu restart.
+  rm -f "$_LIVE_FLAG" 2>/dev/null || true
   systemctl restart xray 2>/dev/null || systemctl reload xray 2>/dev/null || service xray restart 2>/dev/null || {
     pkill -HUP xray 2>/dev/null || true
     echo -e "${YELLOW}Reload via pkill HUP${RESET}"

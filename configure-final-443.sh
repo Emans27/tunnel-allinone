@@ -128,7 +128,7 @@ backup_file() {
   local f="$1"
   [ -f "$f" ] || return 0
   if [ "$DRY_RUN" -eq 1 ]; then
-    say "  ${DIM}[dry-run] backup ${f} -> ${BACKUP_DIR}/$(echo "$f" | tr '/' '_')${RESET}"
+    say "  ${DIM}[dry-run] backup ${f} -> ${BACKUP_DIR}/$(echo "$f" | tr '/' '_').<ts>.off${RESET}"
     return 0
   fi
   for entry in "${BACKED_UP[@]}"; do
@@ -176,7 +176,6 @@ stream {
         # Entri ini harus PALING ATAS. 9443 hanya "ssl" tanpa http2: bila
         # klien WS (ALPN "h2,http/1.1") diarahkan ke sana, nginx 1.18 balas 400.
         ~^h2$           127.0.0.1:${NGINX_GRPC_H2_PORT};
-        ~^h2,           127.0.0.1:${NGINX_GRPC_H2_PORT};
         ~\bh2\b        127.0.0.1:${NGINX_HTTP_TLS_PORT};
         ~\bhttp/1\.1\b 127.0.0.1:${NGINX_HTTP_TLS_PORT};
         default         127.0.0.1:${STUNNEL_LEGACY_PORT};
@@ -215,19 +214,20 @@ apply_grpc_h2_route() {
   # Guard ganda: pre-scan awk (deteksi entri di dalam blok map) + penanda done.
   awk -v port="$NGINX_GRPC_H2_PORT" '
     FNR == NR {
-      if ($0 ~ /~\^h2/) already = 1
+      # Cek KETAT: hanya exact-match ^h2$ yang dihitung (bukan ~^h2, atau varian lain).
+      if ($0 ~ /~\^h2\$[[:space:]]/) already = 1
       next
     }
     { print }
     /map[[:space:]]+\$ssl_preread_alpn_protocols/ && !done {
       if (!already) {
         print "        ~^h2$           127.0.0.1:" port ";"
-        print "        ~^h2,           127.0.0.1:" port ";"
       }
       done = 1
     }
-  ' "$NGINX_CONF" "$NGINX_CONF" > "$tmp" && cat "$tmp" > "$NGINX_CONF"
-  rm -f "$tmp"
+  ' "$NGINX_CONF" "$NGINX_CONF" > "$tmp" || { rm -f "$tmp"; warn "awk gagal, file tidak diubah"; return 1; }
+  # Pindahkan hasil ke tujuan (bukan cat >), lalu pastikan tetap ada.
+  mv -f "$tmp" "$NGINX_CONF" || { rm -f "$tmp"; warn "mv gagal, file tidak diubah"; return 1; }
   CHANGED=1
   return 0
 }

@@ -14743,7 +14743,6 @@ stream {
         # Entri ini harus PALING ATAS. 9443 hanya "ssl" tanpa http2: bila
         # klien WS (ALPN "h2,http/1.1") diarahkan ke sana, nginx 1.18 balas 400.
         ~^h2$           127.0.0.1:${NGINX_GRPC_H2_PORT};
-        ~^h2,           127.0.0.1:${NGINX_GRPC_H2_PORT};
         ~\bh2\b        127.0.0.1:${NGINX_HTTP_TLS_PORT};
         ~\bhttp/1\.1\b 127.0.0.1:${NGINX_HTTP_TLS_PORT};
         default         127.0.0.1:${STUNNEL_LEGACY_PORT};

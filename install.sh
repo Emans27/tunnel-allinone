@@ -212,6 +212,16 @@ banner() {
 }
 backup_file() {
   [ -f "$1" ] || return 0
+  # File di bawah /etc/nginx TIDAK boleh di-backup di tempatnya: nginx meng-include
+  # conf.d/*.conf, dan backup bersuffix .conf bikin listener/location dobel.
+  case "$1" in
+    /etc/nginx/*)
+      mkdir -p /root/nginx-backup 2>/dev/null || true
+      local off="/root/nginx-backup/$(echo "$1" | tr '/' '_').$(date +%s).off"
+      cp -a "$1" "$off" 2>/dev/null && { echo "$off"; return 0; }
+      return 0
+      ;;
+  esac
   local bak
   bak="$1.bak-$(date +%Y%m%d-%H%M%S)"
   cp -a "$1" "$bak" 2>/dev/null && echo "$bak"
@@ -14589,7 +14599,8 @@ WORKER_CONNECTIONS_VALUE="4096"
 WORKER_RLIMIT_VALUE="65535"
 CONNTRACK_MAX="65536"
 CONNTRACK_TIMEOUT_ESTABLISHED="7200"
-NGINX_HTTP_TLS_PORT="9443"
+NGINX_HTTP_TLS_PORT="9443"      # nginx TLS server (WS/http1.1) — JANGAN pakai http2
+NGINX_GRPC_H2_PORT="8443"       # nginx TLS server dgn http2 — target ALPN h2 (gRPC)
 STUNNEL_LEGACY_PORT="4443"
 
 DRY_RUN=0
@@ -14728,6 +14739,11 @@ apply_nginx_stream() {
 
 stream {
     map \$ssl_preread_alpn_protocols \$tls443_backend {
+        # gRPC klien menawarkan ALPN "h2" saja -> WAJIB ke 8443 (ssl http2).
+        # Entri ini harus PALING ATAS. 9443 hanya "ssl" tanpa http2: bila
+        # klien WS (ALPN "h2,http/1.1") diarahkan ke sana, nginx 1.18 balas 400.
+        ~^h2$           127.0.0.1:${NGINX_GRPC_H2_PORT};
+        ~^h2,           127.0.0.1:${NGINX_GRPC_H2_PORT};
         ~\bh2\b        127.0.0.1:${NGINX_HTTP_TLS_PORT};
         ~\bhttp/1\.1\b 127.0.0.1:${NGINX_HTTP_TLS_PORT};
         default         127.0.0.1:${STUNNEL_LEGACY_PORT};

@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## v1.9.1 — 2026-10-12 — install 1-perintah tanpa setting lanjutan + login-report token bisa dimasukan
+### Fixed
+- login-report: `/etc/login-report/config.conf` dijamin ada saat install. Sebelumnya blok copy
+  hanya jalan kalau `[ -d /etc/login-report ]` dan `install -d -m 700` gagal (non-root),
+  sehingga `lr_load_conf` gagal "config tidak ada" dan menu (10) tidak bisa menerima
+  BOT_TOKEN / CHAT_ID. Sekarang ada fallback default berisi semua key.
+- login-report: semua path install ikut prefix (`$BASE`) sehingga test mode `MYTUNNEL_PREFIX`
+  tidak lagi gagal "Permission denied" saat menulis unit systemd.
+- domain & brand diambil otomatis dari env atau `/etc/mytunnel/*.txt`; tidak ada lagi
+  prompt konfirmasi install yang menggantung di piped input.
+- brand fallback stabil ke "SUNEK VPN" (bukan "My Brand").
+
 ## v1.9.0 — 2026-10-11 — brand permanen total (tidak bisa diubah lewat jalur mana pun) + bersihkan referensi skrip lama
 ### Fixed
 - brand permanen 4 lapis: chattr +i, canon 600 root-only, cron tiap menit, dan bg_set() menolak tanpa jalur bypass

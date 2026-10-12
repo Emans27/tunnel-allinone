@@ -59,6 +59,12 @@ if [ -z "$MYTUNNEL_PREFIX" ]; then
   if ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI --max-time 5 https://github.com >/dev/null 2>&1; then echo -e "  Internet: ${GREEN}OK ✓${RESET}"; else echo -e "  Internet: ${YELLOW}TIDAK TERDETEKSI (butuh untuk acme/Xray)${RESET}"; fi
   BUSY=""
   for _p in 80 443 444 90 81; do if ss -tlnp 2>/dev/null | grep -q ":$_p " || ss -tln 2>/dev/null | grep -q ":$_p "; then BUSY="$BUSY $_p"; fi; done
+# Force domain & brand dari env/fallback file, jangan prompt
+MYTUNNEL_DOMAIN="${MYTUNNEL_DOMAIN:-$(cat /etc/mytunnel/domain.txt 2>/dev/null)}"
+MYTUNNEL_BRAND="${MYTUNNEL_BRAND:-$(cat /etc/mytunnel/brand.txt 2>/dev/null || echo SUNEK VPN)}"
+if [ -z "$MYTUNNEL_BRAND" ]; then MYTUNNEL_BRAND="SUNEK VPN"; fi
+AUTO_YES=1
+
   if [ -n "$BUSY" ]; then echo -e "  Port terpakai:${YELLOW}$BUSY${RESET} (akan ditangani setup)"; else echo -e "  Port 80/443/444/90/81: ${GREEN}bebas ✓${RESET}"; fi
   if [ "$AUTO_YES" != "1" ]; then
     echo ""
@@ -10132,26 +10138,49 @@ chmod 755 "$LR_DIR/uninstall.sh"
 
 # ── BEGIN login-report (tool mandiri) ──
 # systemd unit login-report (jadwal = timer, laporan = oneshot)
-install -d -m 755 /opt/login-report/lib 2>/dev/null || true
-install -d -m 700 /etc/login-report 2>/dev/null || true
-install -m 644 "$LR_DIR/lib/common.sh"    /opt/login-report/lib/common.sh    2>/dev/null || true
-install -m 644 "$LR_DIR/lib/collector.sh" /opt/login-report/lib/collector.sh 2>/dev/null || true
-install -m 755 "$LR_DIR/lib/core.sh"      /opt/login-report/lib/core.sh      2>/dev/null || true
-install -m 755 "$LR_DIR/menu.sh"          /opt/login-report/menu.sh          2>/dev/null || true
-install -m 755 "$LR_DIR/uninstall.sh"     /opt/login-report/uninstall.sh     2>/dev/null || true
-ln -sf /opt/login-report/menu.sh /usr/local/bin/lreport 2>/dev/null || true
+LR_OPT="${BASE:-}/opt/login-report"
+LR_ETC="${BASE:-}/etc/login-report"
+LR_UNIT="${BASE:-}/etc/systemd/system"
+mkdir -p "$LR_OPT/lib" "$LR_ETC" "$LR_UNIT" 2>/dev/null || true
+chmod 755 "$LR_OPT" "$LR_OPT/lib" 2>/dev/null || true
+chmod 700 "$LR_ETC" 2>/dev/null || true
+install -m 644 "$LR_DIR/lib/common.sh"    "$LR_OPT/lib/common.sh"    2>/dev/null || true
+install -m 644 "$LR_DIR/lib/collector.sh" "$LR_OPT/lib/collector.sh" 2>/dev/null || true
+install -m 755 "$LR_DIR/lib/core.sh"      "$LR_OPT/lib/core.sh"      2>/dev/null || true
+install -m 755 "$LR_DIR/menu.sh"          "$LR_OPT/menu.sh"          2>/dev/null || true
+install -m 755 "$LR_DIR/uninstall.sh"     "$LR_OPT/uninstall.sh"     2>/dev/null || true
+ln -sf "$LR_OPT/menu.sh" "${BASE:-}/usr/local/bin/lreport" 2>/dev/null || true
 # config hanya sekali; JANGAN timpa config yang sudah ada (isi token user)
-if [ -d /etc/login-report ] && [ ! -f /etc/login-report/config.conf ] && [ -r "$ETC/login-report/config.conf" ]; then
-  sed -e "s#^XRAY_CONFIG=.*#XRAY_CONFIG=/usr/local/etc/xray/config.json#"       "$ETC/login-report/config.conf" > /etc/login-report/config.conf.new 2>/dev/null || true
-  [ -s /etc/login-report/config.conf.new ] && mv -f /etc/login-report/config.conf.new /etc/login-report/config.conf
-  chmod 600 /etc/login-report/config.conf 2>/dev/null || true
-fi
-# laporan default nonaktif; user aktifkan dari menu (10) atau lreport
-if [ -d /etc/login-report ] && [ -w /etc/login-report ]; then
-  grep -q '^ENABLED=' /etc/login-report/config.conf 2>/dev/null ||     echo 'ENABLED="off"' >> /etc/login-report/config.conf
+if [ ! -f "$LR_ETC/config.conf" ]; then
+  sed -e "s#^XRAY_CONFIG=.*#XRAY_CONFIG=/usr/local/etc/xray/config.json#"       "$ETC/login-report/config.conf" > "$LR_ETC/config.conf.new" 2>/dev/null || true
+  if [ -s "$LR_ETC/config.conf.new" ]; then
+    mv -f "$LR_ETC/config.conf.new" "$LR_ETC/config.conf"
+  else
+    rm -f "$LR_ETC/config.conf.new" 2>/dev/null || true
+    # default: file lengkap dengan semua key, nilai kosong — lr_load_conf tidak lagi error
+    cat > "$LR_ETC/config.conf" << '__LR_CONF_EOF__'
+# login-report config
+# Isi BOT_TOKEN dari @BotFather, CHAT_ID dari menu (10) / lreport
+BOT_TOKEN=""
+CHAT_ID=""
+ENABLED="off"
+INTERVAL_MIN="60"
+DAILY_AT="08:00"
+SEND_SSH="yes"
+SEND_VMESS="yes"
+SEND_VLESS="yes"
+SEND_TROJAN="yes"
+XRAY_LOG_MINUTES="1440"
+DOMAIN=""
+INFO_COLUMNS="36"
+XRAY_ACCESS_LOG="/var/log/nginx/access.log"
+XRAY_CONFIG="/usr/local/etc/xray/config.json"
+__LR_CONF_EOF__
+  fi
+  chmod 600 "$LR_ETC/config.conf" 2>/dev/null || true
 fi
 
-cat > /etc/systemd/system/login-report.service << '__EMBED_EOF__'
+cat > "$LR_UNIT/login-report.service" << '__EMBED_EOF__'
 [Unit]
 Description=login-report — kirim laporan login ke Telegram
 After=network-online.target xray.service
@@ -10167,7 +10196,7 @@ TimeoutStartSec=180
 WantedBy=multi-user.target
 __EMBED_EOF__
 
-cat > /etc/systemd/system/login-report.timer << '__EMBED_EOF__'
+cat > "$LR_UNIT/login-report.timer" << '__EMBED_EOF__'
 [Unit]
 Description=login-report schedule (otomatis ditulis oleh menu lreport)
 

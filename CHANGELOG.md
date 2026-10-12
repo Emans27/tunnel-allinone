@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## v1.9.6 — 2026-10-12 — fix stream module dynamic + cert 429 tidak lagi matiin install
+### Fixed
+- **`--with-stream=dynamic` (Debian 12)**: `nginx -V 2>&1 | grep -q -- '--with-stream'`
+  ikut match nilai dynamic, sehingga guard `ensure_nginx_stream()` langsung `return 0`
+  dan `load_module` tidak pernah ditambahkan — padahal modul `.so` tetap WAJIB dimuat
+  lewat `load_module`. Akibatnya blok `stream { listen 443; ssl_preread on; }` tidak
+  aktif, `configure-final-443.sh` rollback, dan **443 tidak listen** (80 tetap jalan
+  karena tidak butuh modul stream). Semua guard diganti ke `grep -q -- '--with-stream[^=]'`
+  supaya hanya static compile yang boleh skip `load_module`.
+- **cert 429 / install-cert gagal tidak lagi mematikan install**: log VPS menunjukkan
+  `cat: /root/.acme.sh/<domain>_ecc/fullchain.cer: No such file or directory` →
+  `✗ File cert kosong setelah issue` → `die`, sehingga VPS terpasang tanpa cert apa pun
+  dan 443 mati total (bukan cuma warning browser). `--install-cert` yang gagal atau
+  staging yang kosong sekarang memanggil `fallback_selfsigned()` (self-signed 365 hari,
+  backup + chmod yang benar) lalu `return 0`, jadi install lanjut dan 443 tetap listen TLS.
+
+### Catatan
+- Kegagalan **429 rate limit** Let's Encrypt (`new-certificates-per-exact-set-of-identifiers`,
+  5 per 168 jam) adalah limit eksternal LE, tidak bisa diperbaiki dari repo. Reset otomatis
+  setelah 7 hari; lalu ulangi dengan `bash /etc/mytunnel/setup/cert.sh --force`.
+
 ## v1.9.5 — 2026-10-12 — fix port 443 tidak listen: modul stream nginx tidak pernah dimuat
 ### Fixed
 - **Penyebab utama 443 mati (80 tetap konek)**: nginx dari repo distro (`apt-get install nginx`)

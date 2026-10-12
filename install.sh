@@ -5192,6 +5192,24 @@ echo -e "${YELLOW}Ulangi issue LE setelah rate limit reset (7 hari): bash $ETC/s
 
   # install ke STAGING dulu - cert lama masih dipakai nginx/stunnel, jangan ditimpa
   # sebelum tau issue benar-benar sukses (acme.sh truncate file tujuan saat write)
+  # cert berhasil issue tapi --install-cert ke staging gagal (mis. acme.sh
+  # menjalankan --install-cert SEBELUM issue, atau rate-limit 429) -> pasang
+  # self-signed supaya nginx tetap punya cert dan 443 bisa listen.
+  fallback_selfsigned(){
+    echo -e "${YELLOW}Install cert ACME gagal, pasang self-signed supaya 443 tetap listen...${RESET}" | tee -a "$LOG"
+    [ -f "$cert_crt" ] && cp -a "$cert_crt" "${cert_crt}.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+    [ -f "$cert_key" ] && cp -a "$cert_key" "${cert_key}.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+    if ! openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+         -keyout "$cert_key" -out "$cert_crt" \
+         -subj "/CN=$domain/O=MyTunnel" -addext "subjectAltName=DNS:$domain" 2>>"$LOG"; then
+      die "Self-signed juga gagal dipasang" "Cek izin tulis $CERT_DIR dan $LOG"
+    fi
+    chmod 600 "$cert_key" 2>/dev/null || true
+    chmod 644 "$cert_crt" 2>/dev/null || true
+    echo -e "${YELLOW}Self-signed terpasang. Ulangi LE nanti: bash $ETC/setup/cert.sh --force${RESET}" | tee -a "$LOG"
+    _log "cert self-signed dipasang untuk $domain"
+  }
+
   local stg_crt="$CERT_DIR/.fullchain.crt.new" stg_key="$CERT_DIR/.private.key.new"
   echo -e "${CYAN}Install cert ke staging...${RESET}"
   "$acme" --install-cert -d "$domain" --ecc \
@@ -5199,10 +5217,13 @@ echo -e "${YELLOW}Ulangi issue LE setelah rate limit reset (7 hari): bash $ETC/s
     --key-file "$stg_key" 2>&1 | tee -a "$LOG" || \
     "$acme" --install-cert -d "$domain" --server letsencrypt \
     --fullchain-file "$stg_crt" \
-    --key-file "$stg_key" 2>&1 | tee -a "$LOG" || \
-    { rm -f "$stg_crt" "$stg_key"; die "Gagal install cert" "Cek permission $CERT_DIR dan log acme.sh"; }
+    --key-file "$stg_key" 2>&1 | tee -a "$LOG" || {
+      rm -f "$stg_crt" "$stg_key"
+      fallback_selfsigned
+      return 0
+    }
 
-  [ -s "$stg_crt" ] && [ -s "$stg_key" ] || { rm -f "$stg_crt" "$stg_key"; die "File cert kosong setelah issue" "Cek $LOG dan $ACME_HOME"; }
+  [ -s "$stg_crt" ] && [ -s "$stg_key" ] || { rm -f "$stg_crt" "$stg_key"; fallback_selfsigned; return 0; }
 
   # validasi pair: cert public key harus == key public key
   local _cp _kp
@@ -5633,7 +5654,9 @@ get_domain() {
 
 # pastikan modul stream tersedia + dimuat (blok `stream {}` butuh ini di 443)
 ensure_nginx_stream() {
-  if nginx -V 2>&1 | grep -q -- '--with-stream'; then return 0; fi
+  # Debian/Ubuntu pakai --with-stream=dynamic: modul .so ada tapi tetap WAJIB
+  # dimuat lewat load_module di nginx.conf. Deteksi "static compiled" secara ketat.
+  if nginx -V 2>&1 | grep -q -- '--with-stream[^=]'; then return 0; fi
   if [ ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
     [ -n "$BASE" ] && return 0
     echo -e "${YELLOW}Modul stream nginx belum ada - memasang libnginx-mod-stream...${RESET}"
@@ -14609,7 +14632,7 @@ check_prereq() {
   command -v nginx >/dev/null 2>&1 || die "nginx tidak terpasang"
   command -v ss >/dev/null 2>&1 || die "iproute2 (ss) tidak tersedia"
 
-  if ! nginx -V 2>&1 | grep -q -- '--with-stream' && [ ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+  if ! nginx -V 2>&1 | grep -q -- '--with-stream[^=]' && [ ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
     warn "modul nginx stream belum ada — memasang libnginx-mod-stream..."
     if command -v apt-get >/dev/null 2>&1; then
       DEBIAN_FRONTEND=noninteractive apt-get install -y libnginx-mod-stream >/dev/null 2>&1 || true
@@ -14622,7 +14645,7 @@ check_prereq() {
 
   # nginx dari repo distro tidak otomatis load modul stream; pastikan
   # ngx_stream_module.so dimuat sebelum blok stream dipakai
-  if ! nginx -V 2>&1 | grep -q -- '--with-stream' && [ -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+  if ! nginx -V 2>&1 | grep -q -- '--with-stream[^=]' && [ -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
     if ! grep -qs 'ngx_stream_module\.so' /etc/nginx/nginx.conf /etc/nginx/modules-enabled/*.conf 2>/dev/null; then
       warn "menambahkan load_module ngx_stream_module.so ke nginx.conf"
       if grep -qE '^\s*load_module' /etc/nginx/nginx.conf; then

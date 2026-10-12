@@ -20,8 +20,9 @@
 set -euo pipefail
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_BASE="/root/mytunnel-443-backup"
-BACKUP_DIR="${BACKUP_BASE}/${STAMP}"
+BACKUP_BASE="/root/nginx-backup"
+BACKUP_DIR="${BACKUP_BASE}"
+BACKUP_OFF_SUFFIX=".off"
 NGINX_CONF="/etc/nginx/nginx.conf"
 SITE_CONF="/etc/nginx/conf.d/mytunnel.conf"
 STUNNEL_CONF="/etc/stunnel/stunnel.conf"
@@ -31,7 +32,8 @@ WORKER_CONNECTIONS_VALUE="4096"
 WORKER_RLIMIT_VALUE="65535"
 CONNTRACK_MAX="65536"
 CONNTRACK_TIMEOUT_ESTABLISHED="7200"
-NGINX_HTTP_TLS_PORT="9443"
+NGINX_HTTP_TLS_PORT="9443"      # nginx TLS server (WS/http1.1) — JANGAN pakai http2
+NGINX_GRPC_H2_PORT="8443"       # nginx TLS server dgn http2 — target ALPN h2 (gRPC)
 STUNNEL_LEGACY_PORT="4443"
 
 DRY_RUN=0
@@ -126,14 +128,14 @@ backup_file() {
   local f="$1"
   [ -f "$f" ] || return 0
   if [ "$DRY_RUN" -eq 1 ]; then
-    say "  ${DIM}[dry-run] backup ${f} -> ${BACKUP_DIR}/$(echo "$f" | tr '/' '_')${RESET}"
+    say "  ${DIM}[dry-run] backup ${f} -> ${BACKUP_DIR}/$(echo "$f" | tr '/' '_').<ts>.off${RESET}"
     return 0
   fi
   for entry in "${BACKED_UP[@]}"; do
     [ "${entry%%|*}" = "$f" ] && return 0
   done
   mkdir -p "$BACKUP_DIR"
-  local dest="${BACKUP_DIR}/$(echo "$f" | tr '/' '_')"
+  local dest="${BACKUP_DIR}/$(echo "$f" | tr '/' '_').$(date +%s).off"
   cp -a "$f" "$dest"
   BACKED_UP+=("$f|$dest")
   say "  ${DIM}backup ${f} -> ${dest}${RESET}"
@@ -170,6 +172,10 @@ apply_nginx_stream() {
 
 stream {
     map \$ssl_preread_alpn_protocols \$tls443_backend {
+        # gRPC klien menawarkan ALPN "h2" saja -> WAJIB ke 8443 (ssl http2).
+        # Entri ini harus PALING ATAS. 9443 hanya "ssl" tanpa http2: bila
+        # klien WS (ALPN "h2,http/1.1") diarahkan ke sana, nginx 1.18 balas 400.
+        ~^h2$           127.0.0.1:${NGINX_GRPC_H2_PORT};
         ~\bh2\b        127.0.0.1:${NGINX_HTTP_TLS_PORT};
         ~\bhttp/1\.1\b 127.0.0.1:${NGINX_HTTP_TLS_PORT};
         default         127.0.0.1:${STUNNEL_LEGACY_PORT};
@@ -186,6 +192,47 @@ EOF
   CHANGED=1
   return 0
 }
+
+# Tambah entri ALPN h2 -> 8443 ke map stream yang SUDAH ADA di VPS lama.
+# Idempotent: bila entri sudah ada, tidak menambah apa pun. Backup ke
+# /root/nginx-backup/*.off (BUKAN conf.d, BUKAN *.conf) agar tidak di-include nginx.
+apply_grpc_h2_route() {
+  local have=0
+  grep -qE '^[[:space:]]*~\^h2\$[[:space:]]+127\.0\.0\.1:' "$NGINX_CONF" && have=1
+  if [ "$have" -eq 1 ]; then
+    ok "map stream sudah punya route ALPN h2 -> ${NGINX_GRPC_H2_PORT} (skip)"
+    return 1
+  fi
+  if ! grep -qE '^[[:space:]]*map[[:space:]]+\$ssl_preread_alpn_protocols' "$NGINX_CONF"; then
+    ok "map ssl_preread tidak ada di $NGINX_CONF — dilewati (ditangani apply_nginx_stream)"
+    return 1
+  fi
+  plan_change "$NGINX_CONF: sisipkan route ALPN h2 -> ${NGINX_GRPC_H2_PORT} di map stream"
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  backup_file "$NGINX_CONF"
+  local tmp; tmp=$(mktemp)
+  # Guard ganda: pre-scan awk (deteksi entri di dalam blok map) + penanda done.
+  awk -v port="$NGINX_GRPC_H2_PORT" '
+    FNR == NR {
+      # Cek KETAT: hanya exact-match ^h2$ yang dihitung (bukan ~^h2, atau varian lain).
+      if ($0 ~ /~\^h2\$[[:space:]]/) already = 1
+      next
+    }
+    { print }
+    /map[[:space:]]+\$ssl_preread_alpn_protocols/ && !done {
+      if (!already) {
+        print "        ~^h2$           127.0.0.1:" port ";"
+      }
+      done = 1
+    }
+  ' "$NGINX_CONF" "$NGINX_CONF" > "$tmp" || { rm -f "$tmp"; warn "awk gagal, file tidak diubah"; return 1; }
+  # Pindahkan hasil ke tujuan (bukan cat >), lalu pastikan tetap ada.
+  mv -f "$tmp" "$NGINX_CONF" || { rm -f "$tmp"; warn "mv gagal, file tidak diubah"; return 1; }
+  CHANGED=1
+  return 0
+}
+
+apply_grpc_h2_route || true
 
 apply_worker_limits() {
   local touched=0

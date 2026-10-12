@@ -14849,8 +14849,7 @@ fi
 
 echo -e "${CYAN}[9d/13] Setup final 443 (nginx stream)...${RESET}"
 _log "[9d/13] final-443"
-if [ -z "$BASE" ]; then
-  if [ -x "${BASE}/configure-final-443.sh" ] || [ -x "/root/configure-final-443.sh" ] || [ -x "$PWD/configure-final-443.sh" ]; then
+if [ -x "${BASE}/configure-final-443.sh" ] || [ -x "/root/configure-final-443.sh" ] || [ -x "$PWD/configure-final-443.sh" ]; then
     _f443=""
     for _c in "${BASE}/configure-final-443.sh" "/root/configure-final-443.sh" "$PWD/configure-final-443.sh"; do
       [ -x "$_c" ] && { _f443="$_c"; break; }
@@ -14865,7 +14864,6 @@ if [ -z "$BASE" ]; then
       echo -e "${YELLOW}configure-final-443.sh tidak ditemukan - port 443 belum listen${RESET}" | tee -a "$LOG" 2>/dev/null || true
     fi
   fi
-fi
 
 echo -e "${CYAN}[10/13] Setup Dropbear...${RESET}"
 _log "[10/13] dropbear"

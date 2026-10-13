@@ -99,11 +99,11 @@ if [ -n "$CONNECT" ] && command -v openssl >/dev/null 2>&1; then
   else f "ALPN h2 ke :443 = '${ALPN_H2:-none}' (harus h2)" "cek: map stream h2 -> 8444 & 8444 ssl http2"; fi
   # h2,http/1.1 mendarat di 8444: tahan koneksi (sleep|openssl), cek ss, lalu tutup.
   _found=0
-  ( sleep 8 | timeout 8 openssl s_client -alpn h2,http/1.1 -connect "127.0.0.1:443" -servername "${DOMAIN:-$CONNECT}" >/dev/null 2>&1 ) &
+  ( sleep 12 | timeout 12 openssl s_client -alpn h2,http/1.1 -connect "127.0.0.1:443" -servername "${DOMAIN:-$CONNECT}" >/dev/null 2>&1 ) &
   _pid=$!
-  for _try in 1 2 3 4 5 6; do
+  for _try in $(seq 1 15); do
     if ss -tn state established 2>/dev/null | awk '{print $3, $4}' | grep -qE '127\.0\.0\.1:8444'; then _found=1; break; fi
-    sleep 0.7
+    sleep 0.6
   done
   kill "$_pid" 2>/dev/null || true
   wait "$_pid" 2>/dev/null || true

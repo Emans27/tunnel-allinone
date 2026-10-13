@@ -6253,6 +6253,20 @@ main() {
   write_config
   validate_config || die "Validasi nginx gagal" "Cek $NGINX_SITE"
   enable_service
+  # PENTING: write_config menulis ulang mytunnel.conf dari template (hanya 8080/8443/81).
+  # Tanpa ini, listener 8444 (gRPC/h2) & 127.0.0.1:9443 (WS TLS) HILANG setiap kali
+  # nginx.sh dijalankan ulang (mis. ganti domain / proto create) -> 443 tak lagi
+  # melayani h2/WS dan semua vmess/vless/trojan/ssh-ws mati. Panggil migration
+  # final-443 di sini agar idempotent & selalu konsisten.
+  _f443="${BASE:-/root}/configure-final-443.sh"
+  [ -f "$_f443" ] || _f443="/root/configure-final-443.sh"
+  if [ -f "$_f443" ]; then
+    echo -e "${CYAN}[nginx] Pasang ulang route 443 (8444 gRPC/h2 + 9443 WS)...${RESET}" | tee -a "$LOG" 2>/dev/null || true
+    bash "$_f443" 2>&1 | tee -a "$LOG" | tail -n 8 || \
+      echo -e "${YELLOW}Route 443 gagal dipasang; jalankan manual: bash $_f443${RESET}" | tee -a "$LOG" 2>/dev/null || true
+  else
+    echo -e "${YELLOW}configure-final-443.sh tidak ditemukan - 8444/9443 belum dipasang${RESET}" | tee -a "$LOG" 2>/dev/null || true
+  fi
   echo -e "${GREEN}[nginx] Selesai${RESET}" | tee -a "$LOG" 2>/dev/null || true
 }
 main "$@"

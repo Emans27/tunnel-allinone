@@ -1,6 +1,31 @@
 # CHANGELOG
 
-## unreleased — gRPC lewat 443: listener 8444 (gRPC-only)
+## unreleased — preflight minim-error + verify.sh (gRPC 8444 sudah di rilis ini)
+
+### Added
+- **`preflight()` di `install.sh`**, dijalankan paling awal, berhenti dengan pesan
+  jelas bila syarat wajib gagal. Cek: OS Ubuntu/Debian didukung; root; nginx
+  terpasang **dan** modul stream (static atau `modules-enabled` + `load_module`);
+  port **80/443/8443/8444/9443** tidak dipakai proses lain (proses mytunnel
+  sendiri saat reinstall dikecualikan); domain resolve ke IP publik VPS
+  (**peringatan**, bukan fatal, bila via Cloudflare); internet & disk (≥2 GB,
+  fatal) / RAM (<512 MB, peringatan). Mode `MYTUNNEL_PREFIX` melewati cek sistem
+  agar test tetap jalan.
+- **`verify.sh`** (root repo, dipanggil di akhir `install.sh`, bisa manual).
+  Mencetak PASS/FAIL untuk: `nginx -t`; nginx & xray active; map stream
+  (`~^h2$`/`~^h2,http/1\.1$` -> 8444 di paling atas, `9443` tanpa http2, `8444`
+  ssl http2); listener 8444 & 9443; `openssl -alpn h2` ke :443 = `h2`; ALPN
+  `h2,http/1.1` mendarat di 8444 (`ss`); WS `101` untuk `/vmess` `/vless`
+  `/trojan` (`--http1.1`); SSH-WS `101` & SSH-TLS terbuka; sertifikat valid
+  (tanggal expired). Ringkasan akhir: `SEMUA LULUS` atau daftar gagal + perintah
+  perbaikan. Exit 1 bila ada FAIL. Diuji live: **18 PASS, 0 FAIL**.
+
+### Changed
+- **Panduan preflight lama (inline) diganti `preflight()`** yang mencakup OS,
+  root, nginx+stream, port 8443/8444/9443, dan domain resolve.
+- Semua perubahan nginx (via `configure-final-443.sh`) tetap: backup `.off`,
+  tulis lewat file temp, `nginx -t`, baru reload; gagal -> restore otomatis dan
+  cetak penyebab.
 
 ### Fixed
 - **gRPC (VMess/VLESS/Trojan) tidak konek lewat port 443.** Klien gRPC (mis.

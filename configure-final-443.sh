@@ -33,8 +33,19 @@ WORKER_RLIMIT_VALUE="65535"
 CONNTRACK_MAX="65536"
 CONNTRACK_TIMEOUT_ESTABLISHED="7200"
 NGINX_HTTP_TLS_PORT="9443"      # nginx TLS server (WS/http1.1) — JANGAN pakai http2
-NGINX_GRPC_H2_PORT="8443"       # nginx TLS server dgn http2 — target ALPN h2 (gRPC)
+NGINX_GRPC_H2_PORT="8443"       # nginx TLS server dgn http2 (legacy, tetap ada)
+NGINX_GRPC_8444_PORT="8444"     # nginx TLS server gRPC-only (h2) — target ALPN h2/h2,http/1.1
 STUNNEL_LEGACY_PORT="4443"
+
+# Direktif SSL untuk listener 8444 — DISAMAKAN PERSIS dengan blok 8443 live.
+CERT_CRT="/etc/mytunnel/cert/fullchain.crt"
+CERT_KEY="/etc/mytunnel/cert/private.key"
+SSL_PROTOCOLS="TLSv1.2 TLSv1.3"
+SSL_CIPHERS="ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384"
+SSL_SESSION_CACHE="shared:SSL:10m"
+SSL_SESSION_TIMEOUT="10m"
+# server_name untuk blok 8444 baru: diambil OTOMATIS dari blok 8443 di SITE_CONF
+# saat runtime (fungsi 8444), agar tidak ada domain hardcoded di repo.
 
 DRY_RUN=0
 DO_ROLLBACK=0
@@ -172,12 +183,14 @@ apply_nginx_stream() {
 
 stream {
     map \$ssl_preread_alpn_protocols \$tls443_backend {
-        # gRPC klien menawarkan ALPN "h2" saja -> WAJIB ke 8443 (ssl http2).
-        # Entri ini harus PALING ATAS. 9443 hanya "ssl" tanpa http2: bila
-        # klien WS (ALPN "h2,http/1.1") diarahkan ke sana, nginx 1.18 balas 400.
-        ~^h2$           127.0.0.1:${NGINX_GRPC_H2_PORT};
-        ~\bh2\b        127.0.0.1:${NGINX_HTTP_TLS_PORT};
-        ~\bhttp/1\.1\b 127.0.0.1:${NGINX_HTTP_TLS_PORT};
+        # gRPC-only (h2). Klien gRPC (v2rayNG mode gun) menawarkan ALPN
+        # "h2,http/1.1" — WAJIB ke 8444 yang murni HTTP/2 dan TANPA location WS.
+        # Bila diarahkan ke 9443 (tanpa http2), HTTP/2 tak pernah terbentuk.
+        ~^h2\$             127.0.0.1:${NGINX_GRPC_8444_PORT};
+        ~^h2,http/1\\.1\$   127.0.0.1:${NGINX_GRPC_8444_PORT};
+        # WS/http1.1 -> 9443 (tanpa http2).
+        ~\\bh2\\b        127.0.0.1:${NGINX_HTTP_TLS_PORT};
+        ~\\bhttp/1\\.1\\b 127.0.0.1:${NGINX_HTTP_TLS_PORT};
         default         127.0.0.1:${STUNNEL_LEGACY_PORT};
     }
     server {
@@ -193,46 +206,135 @@ EOF
   return 0
 }
 
-# Tambah entri ALPN h2 -> 8443 ke map stream yang SUDAH ADA di VPS lama.
-# Idempotent: bila entri sudah ada, tidak menambah apa pun. Backup ke
-# /root/nginx-backup/*.off (BUKAN conf.d, BUKAN *.conf) agar tidak di-include nginx.
+# Perbaiki/pasang route ALPN gRPC di map stream yang SUDAH ADA (VPS lama).
+# Menjamin DUA entri menuju listener gRPC-only (8444):
+#   ~^h2$           -> 8444
+#   ~^h2,http/1.1$  -> 8444
+# Idempotent: bila keduanya sudah ada & benar, tidak menambah apa pun.
+# Backup ke /root/nginx-backup/*.off (BUKAN conf.d, BUKAN *.conf).
+# TIDAK memakai sed -i bersamaan dengan awk: satu mekanisme (awk -> mktemp -> mv).
 apply_grpc_h2_route() {
-  local have=0
-  grep -qE '^[[:space:]]*~\^h2\$[[:space:]]+127\.0\.0\.1:' "$NGINX_CONF" && have=1
-  if [ "$have" -eq 1 ]; then
-    ok "map stream sudah punya route ALPN h2 -> ${NGINX_GRPC_H2_PORT} (skip)"
-    return 1
-  fi
+  local up="${NGINX_GRPC_8444_PORT}"
   if ! grep -qE '^[[:space:]]*map[[:space:]]+\$ssl_preread_alpn_protocols' "$NGINX_CONF"; then
     ok "map ssl_preread tidak ada di $NGINX_CONF — dilewati (ditangani apply_nginx_stream)"
     return 1
   fi
-  plan_change "$NGINX_CONF: sisipkan route ALPN h2 -> ${NGINX_GRPC_H2_PORT} di map stream"
+  # Sudah benar? (kedua entri menunjuk 8444) — pakai fixed-string, hindari regex ganda.
+  local have_h2=0 have_h2h1=0
+  grep -qF "~^h2\$             127.0.0.1:${up};"      "$NGINX_CONF" && have_h2=1
+  grep -qF "~^h2,http/1\\.1\$   127.0.0.1:${up};"      "$NGINX_CONF" && have_h2h1=1
+  if [ "$have_h2" -eq 1 ] && [ "$have_h2h1" -eq 1 ]; then
+    ok "map stream sudah punya route ALPN h2 & h2,http/1.1 -> ${up} (skip)"
+    return 1
+  fi
+  plan_change "$NGINX_CONF: pasang route ALPN h2 & h2,http/1.1 -> ${up} di map stream"
   [ "$DRY_RUN" -eq 1 ] && return 0
   backup_file "$NGINX_CONF"
   local tmp; tmp=$(mktemp)
-  # Guard ganda: pre-scan awk (deteksi entri di dalam blok map) + penanda done.
-  awk -v port="$NGINX_GRPC_H2_PORT" '
-    FNR == NR {
-      # Cek KETAT: hanya exact-match ^h2$ yang dihitung (bukan ~^h2, atau varian lain).
-      if ($0 ~ /~\^h2\$[[:space:]]/) already = 1
-      next
-    }
-    { print }
-    /map[[:space:]]+\$ssl_preread_alpn_protocols/ && !done {
-      if (!already) {
-        print "        ~^h2$           127.0.0.1:" port ";"
+  awk -v up="$up" '
+    BEGIN { h2done = 0; h1done = 0; indone = 0 }
+    # buang entri lama ~^h2$ / ~^h2,http/1.1$ yang menunjuk port lain (mis. 8443),
+    # supaya tidak dobel. Kita cetak ulang versi benarnya setelah header map.
+    /^[[:space:]]*~\^h2\$[[:space:]]+127\.0\.0\.1:[0-9]+;/        { next }
+    /^[[:space:]]*~\^h2,http\/1\\\.1\$[[:space:]]+127\.0\.0\.1:[0-9]+;/ { next }
+    {
+      print
+      if (!indone && $0 ~ /map[[:space:]]+\$ssl_preread_alpn_protocols/) {
+        print "        ~^h2$             127.0.0.1:" up ";"
+        print "        ~^h2,http/1\\.1$   127.0.0.1:" up ";"
+        indone = 1
       }
-      done = 1
     }
-  ' "$NGINX_CONF" "$NGINX_CONF" > "$tmp" || { rm -f "$tmp"; warn "awk gagal, file tidak diubah"; return 1; }
-  # Pindahkan hasil ke tujuan (bukan cat >), lalu pastikan tetap ada.
+  ' "$NGINX_CONF" > "$tmp" || { rm -f "$tmp"; warn "awk gagal, file tidak diubah"; return 1; }
+  # Pastikan kedua entri benar-benar ada di hasil; kalau tidak, batalkan.
+  grep -qF "~^h2\$             127.0.0.1:${up};"   "$tmp" \
+    && grep -qF "~^h2,http/1\\.1\$   127.0.0.1:${up};"   "$tmp" \
+    || { rm -f "$tmp"; warn "hasil awk tidak memuat kedua entri — file tidak diubah"; return 1; }
   mv -f "$tmp" "$NGINX_CONF" || { rm -f "$tmp"; warn "mv gagal, file tidak diubah"; return 1; }
   CHANGED=1
   return 0
 }
 
-apply_grpc_h2_route || true
+# Pasang listener gRPC-only 8444 di SITE_CONF (mytunnel.conf).
+# WAJIB: tanpa location WS. Hanya grpc_pass ke 10011/10012/10013 + 404 di /.
+# Idempotent: bila blok "listen 127.0.0.1:8444 ssl http2" sudah ada, skip.
+apply_grpc_8444_listener() {
+  local p="${NGINX_GRPC_8444_PORT}"
+  if grep -qE "listen[[:space:]]+127\.0\.0\.1:${p}[[:space:]]+ssl" "$SITE_CONF" 2>/dev/null; then
+    ok "listener gRPC-only ${p} sudah ada di $SITE_CONF (skip)"
+    return 1
+  fi
+  plan_change "$SITE_CONF: tambah server gRPC-only 127.0.0.1:${p} (ssl http2, tanpa location WS)"
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  # Ambil server_name dari blok 8443 yang sudah ada (fallback: "_").
+  local srv_names
+  srv_names=$(awk '/listen[[:space:]]+8443[[:space:]]+ssl/{f=1} f && /server_name/{sub(/^[^ ]*[[:space:]]*server_name[[:space:]]*/,""); sub(/;.*/,""); print; exit}' "$SITE_CONF")
+  [ -n "$srv_names" ] || srv_names="_"
+  backup_file "$SITE_CONF"
+  local tmp; tmp=$(mktemp)
+  cat "$SITE_CONF" > "$tmp"
+  cat >> "$tmp" <<EOF
+
+# gRPC-only: HTTP/2 murni, TANPA location WS. Target ALPN h2 / h2,http/1.1 dari :443.
+server {
+  listen 127.0.0.1:${NGINX_GRPC_8444_PORT} ssl http2;
+
+  server_name ${srv_names};
+
+  ssl_certificate ${CERT_CRT};
+  ssl_certificate_key ${CERT_KEY};
+  ssl_protocols ${SSL_PROTOCOLS};
+  ssl_prefer_server_ciphers on;
+  ssl_ciphers ${SSL_CIPHERS};
+  ssl_session_cache ${SSL_SESSION_CACHE};
+  ssl_session_timeout ${SSL_SESSION_TIMEOUT};
+
+  client_body_timeout 3600s;
+
+  location ~ ^/vmess/.* {
+    grpc_pass grpc://127.0.0.1:10011;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location ~ ^/vless/.* {
+    grpc_pass grpc://127.0.0.1:10012;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location ~ ^/trojan/.* {
+    grpc_pass grpc://127.0.0.1:10013;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location = /vmess.Tun {
+    grpc_pass grpc://127.0.0.1:10011;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location = /vless.Tun {
+    grpc_pass grpc://127.0.0.1:10012;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location = /trojan.Tun {
+    grpc_pass grpc://127.0.0.1:10013;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+
+  location / { return 404; }
+}
+EOF
+  mv -f "$tmp" "$SITE_CONF" || { rm -f "$tmp"; warn "mv gagal, file tidak diubah"; return 1; }
+  CHANGED=1
+  return 0
+}
 
 apply_worker_limits() {
   local touched=0
@@ -410,6 +512,8 @@ fi
 say ""
 say "${CYAN}=== rencana perubahan ===${RESET}"
 apply_nginx_stream || true
+apply_grpc_8444_listener || true
+apply_grpc_h2_route || true
 apply_worker_limits || true
 apply_http_tls_listen || true
 apply_stunnel_port || true

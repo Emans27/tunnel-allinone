@@ -13896,12 +13896,174 @@ chmod 644 "$ETC/config/repo.txt"
 cat > "$ETC/CHANGELOG.md" << '__EMBED_EOF__'
 # CHANGELOG
 
-## v1.9.0 — 2026-10-11 — brand SUNEK VPN permanen total + bersihkan referensi skrip lama
+## unreleased — gRPC lewat 443: listener 8444 (gRPC-only)
+
 ### Fixed
-- brand tidak bisa diubah lewat jalur mana pun: bg_set() menolak saat canon immutable,
-  tanpa parameter force; menu 8 sepenuhnya read-only; --brand/MYTUNNEL_BRAND diabaikan
-  bila brand.txt sudah terkunci; embed brand.txt tidak menimpa file immutable
-- komentar yang menyebut nama skrip lama dihapus di seluruh install.sh dan README
+- **gRPC (VMess/VLESS/Trojan) tidak konek lewat port 443.** Klien gRPC (mis.
+  v2rayNG mode `gun`) menawarkan ALPN `h2,http/1.1` (dan sebagian `h2` saja),
+  sementara map `$ssl_preread_alpn_protocols` mengarahkannya ke
+  `127.0.0.1:9443` yang hanya `listen ... ssl` **tanpa `http2`**. Negosiasi jatuh
+  ke HTTP/1.1 sehingga gRPC — yang mewajibkan HTTP/2 — tidak pernah terbentuk.
+  Gejala di klien: "Unable to detect internet connection" walau server menerima
+  koneksi TLS. Diverifikasi live: `curl --http2` ke `:8443` menjawab HTTP/2 (rute
+  benar), sedangkan ke `:443` gagal total; `tshark` membuktikan klien WS nyata
+  mengirim `http/1.1` polos dan klien gRPC mengirim `h2,http/1.1`.
+
+### Changed
+- **Listener baru `127.0.0.1:8444` bersifat gRPC-only:** `listen ... ssl http2`,
+  **tanpa** `include mytunnel-locations.inc` dan **tanpa location WS** — cuma
+  `grpc_pass` ke `10011/10012/10013` (termasuk varian `.Tun`) plus `404` di `/`.
+  Cert, ciphers, `ssl_protocols`, `ssl_session_cache` **disamakan** dengan blok
+  8443; `server_name` diambil otomatis dari blok 8443 (tidak ada domain
+  hardcoded).
+- **Map stream (urutan tepat):**
+  `~^h2$` -> `8444`, `~^h2,http/1\.1$` -> `8444`,
+  `~\bh2\b` -> `9443`, `~\bhttp/1\.1\b` -> `9443`, `default` -> `4443`.
+  `9443` tetap tanpa `http2` (melayani WS/HTTP-1.1).
+- **Idempotent:** dijalankan 2×+ tidak menambah server 8444 atau entri map
+  dobel. `apply_grpc_h2_route()` membuang entri `~^h2$`/`~^h2,http/1.1$` lama
+  yang menunjuk port lain lalu menulis ulang versi benarnya. Satu mekanisme
+  (awk -> `mktemp` -> `mv`), **tidak** menggabungkan `sed -i` dengan `awk`.
+  `nginx -t` sebelum reload; gagal = rollback otomatis. Backup
+  `/root/nginx-backup/*.off`.
+
+### Risiko
+- **Klien WS yang mengirim ALPN `h2,http/1.1` akan mendarat di `8444` dan
+  mendapat `404`.** Diuji pada klien WS nyata yang dipakai (v2rayNG) yang
+  mengirim `http/1.1` polos, jadi tidak terpengaruh. Tetapi aplikasi WS lain
+  yang menawarkan `h2,http/1.1` (beberapa browser/klien gabungan) tidak akan
+  mendapat WS di jalur ini. Bila perlu, pisahkan lewat SNI khusus (mis.
+  `grpc.<domain>` -> 8444) alih-alih memakai `h2,http/1.1`.
+
+### Tested
+- Ubuntu (24.04) + nginx 1.18.0, live: WS `/vmess` `/vless` `/trojan` @443
+  balas `101`, `/ssh-ws` `101`, SSH-TLS 444 & SSH 22 terbuka, `-alpn h2` ke
+  `8444` = `h2`, `9443` tetap tanpa `http2`, koneksi gRPC mendarat di `8444`.
+- Nginx versi lebih baru mungkin perlu sintaks `http2 on;` (directive terpisah)
+  alih-alih flag `http2` pada `listen`.
+- Verifikasi live: WS `/vmess` `/vless` `/trojan` @443 = `101`; koneksi gRPC
+  mendarat di `8444`; ALPN `h2`/`h2,http/1.1` -> `8444`, `http/1.1` -> `9443`.
+
+
+## v1.9.6 — 2026-10-12 — fix stream module dynamic + cert 429 tidak lagi matiin install
+### Fixed
+- **`--with-stream=dynamic` (Debian 12)**: `nginx -V 2>&1 | grep -q -- '--with-stream'`
+  ikut match nilai dynamic, sehingga guard `ensure_nginx_stream()` langsung `return 0`
+  dan `load_module` tidak pernah ditambahkan — padahal modul `.so` tetap WAJIB dimuat
+  lewat `load_module`. Akibatnya blok `stream { listen 443; ssl_preread on; }` tidak
+  aktif, `configure-final-443.sh` rollback, dan **443 tidak listen** (80 tetap jalan
+  karena tidak butuh modul stream). Semua guard diganti ke `grep -q -- '--with-stream[^=]'`
+  supaya hanya static compile yang boleh skip `load_module`.
+- **cert 429 / install-cert gagal tidak lagi mematikan install**: log VPS menunjukkan
+  `cat: /root/.acme.sh/<domain>_ecc/fullchain.cer: No such file or directory` →
+  `✗ File cert kosong setelah issue` → `die`, sehingga VPS terpasang tanpa cert apa pun
+  dan 443 mati total (bukan cuma warning browser). `--install-cert` yang gagal atau
+  staging yang kosong sekarang memanggil `fallback_selfsigned()` (self-signed 365 hari,
+  backup + chmod yang benar) lalu `return 0`, jadi install lanjut dan 443 tetap listen TLS.
+
+### Catatan
+- Kegagalan **429 rate limit** Let's Encrypt (`new-certificates-per-exact-set-of-identifiers`,
+  5 per 168 jam) adalah limit eksternal LE, tidak bisa diperbaiki dari repo. Reset otomatis
+  setelah 7 hari; lalu ulangi dengan `bash /etc/mytunnel/setup/cert.sh --force`.
+
+## v1.9.5 — 2026-10-12 — fix port 443 tidak listen: modul stream nginx tidak pernah dimuat
+### Fixed
+- **Penyebab utama 443 mati (80 tetap konek)**: nginx dari repo distro (`apt-get install nginx`)
+  TIDAK otomatis memuat modul stream. Blok `stream { listen 443; ssl_preread on; }` yang
+  dipasang `configure-final-443.sh` membuat `nginx -t` gagal ("unknown directive \"stream\""),
+  sehingga script rollback dan 443 tidak pernah listen. HTTP di port 80 tidak butuh modul
+  stream — itu sebab 80 konek sementara 443 mati.
+- `setup/nginx.sh` `install_nginx()` sekarang memanggil `ensure_nginx_stream()`:
+  pasang `libnginx-mod-stream` kalau belum ada, dan tambahkan `load_module modules/ngx_stream_module.so;`
+  di baris paling atas nginx.conf (posisi wajib, sebelum `events`/`http`),
+  lalu validasi `nginx -t`.
+- Install nginx baru memakai `apt-get install -y nginx libnginx-mod-stream` (fallback ke `nginx` saja).
+- `configure-final-443.sh` `check_prereq()` tidak lagi `die` kebetulan user tidak punya modul —
+  sekarang memasang otomatis, dan menambah `load_module` ke nginx.conf sebelum melanjutkan.
+- `configure-final-443.sh` (file fisik) disinkronkan dengan versi embed di `install.sh`.
+
+### Verifikasi
+- `bash -n` semua file OK; harness `MYTUNNEL_PREFIX --no-deps` OK.
+- `nginx.sh` & `configure-final-443.sh` hasil harness memuat guard (7 dan 9 ref).
+- Simulasi penambahan `load_module`: masuk di baris 1, sebelum `events`/`http` — divalidasi grep.
+
+## v1.9.4 — 2026-10-12 — fix Change Domain dan --force + cert.sh idempoten
+### Fixed
+- `features/domain.sh` (menu 6 -> 9 Change Domain VPS): parsing `CN` dari subject cert
+  pakai `sed "s/.*CN *= *//"` yang menghasilkan `new.example.com, o = mytunnel` ketika
+  subject mengandung field lain (contoh `O=MyTunnel` dari self-signed). Akibatnya validasi
+  "cert harus milik domain baru" salah tolak dan menggagalkan ganti domain. Sekarang pakai
+  `-nameopt RFC2253` + split per-field, teruji 3 kasus (CN saja, CN+O, CN huruf besar).
+- `setup/cert.sh` tidak punya parser argumen sama sekali, padahal v1.9.3 memberi instruksi
+  `bash $ETC/setup/cert.sh --force` ke user. Ditambahkan parser `--force` (paksa issue ulang
+  walau cert masih ada) dan `--help`.
+- `cert.sh` sekarang idempoten: kalau cert untuk domain itu sudah ada dan masih valid,
+  issue di-skip (bukan re-issue tiap kali dipanggil dari step install/change-domain).
+  `--force` melewati skip ini — dipakai untuk mengganti self-signed fallback dengan LE asli.
+- Pesan setelah fallback self-signed sekarang menyebut reset rate limit 7 hari secara eksplisit.
+
+## v1.9.3 — 2026-10-12 — cert gagal (429 rate limit LE) tidak lagi mati total install
+### Fixed
+- `setup/cert.sh`: saat ACME gagal (HTTP 429 `too many certificates (5) already issued for
+  this exact set of identifiers`, atau DNS belum propagasi), script sebelumnya memanggil
+  `die` = `exit 1` sehingga seluruh install berhenti. Sekarang pasang **self-signed
+  365 hari** sebagai fallback (cert lama di-backup `.bak-<timestamp>` dulu) dan install
+  lanjut sampai selesai, supaya 443/8443/80 tetap listen dan menu/xray/dropbear tetap terpasang.
+- Pesan error sekarang menyebut rate limit 5/domain/minggu secara eksplisit, dan petunjuk
+  ulangi issue manual: `bash $ETC/setup/cert.sh --force`.
+- Cert self-signed tetap memicu warning 'untrusted' di browser (wajar) — ini memang
+  fallback sementara sampai rate limit LE reset (7 hari) dan issue ulang dimasukkan.
+
+### Catatan
+- Kegagalan 429 Let's Encrypt bukan bug script dan tidak bisa diperbaiki dari repo:
+  limit LE = 5 sertifikat per exact set identifier per minggu. Solusi: tunggu reset
+  seminggu, atau pakai domain lain, atau pakai DNS-01 challenge.
+
+## v1.9.2 — 2026-10-12 — fix 443 tidak listen + login-report tidak bisa menerima token bot
+### Fixed
+- **PORT 443 tidak pernah ter-setup**: embed `configure-final-443.sh` menulis ke
+  `${BASE}/configure-final-443.sh` yang saat produksi = `/configure-final-443.sh` (root FS),
+  tapi `chmod` diarahkan ke `/root/configure-final-443.sh`. File tidak executable sehingga
+  blok step `[9d/13]` selalu dilewati. Sekarang keduanya pakai variabel `F443` yang sama
+  (`${BASE:-/root}/configure-final-443.sh`).
+- step `[9d/13]` sekarang memverifikasi `ss -tln | grep ':443 '` dan `:80 ` setelah setup;
+  kalau belum listen, paksa buka UFW + reload nginx, jalankan ulang httpmux, lalu laporkan
+  status final ke layar (tidak diam-diam gagal).
+- **LOGIN REPORT tidak bisa menerima token bot**: `menu 1` memanggil `lr_sanitize` yang
+  tidak pernah didefinisikan di `common.sh`/`collector.sh`/`core.sh`. Akibatnya
+  `t=$(lr_sanitize "$t")` menghasilkan string kosong dan token yang diketik user hilang.
+  Fungsi `lr_sanitize` sekarang ada (buang karakter di luar `[0-9A-Za-z:_-]`).
+- `lr_load_conf` kini memanggil `lr_defaults` lebih dulu: semua variabel config punya nilai
+  default, jadi `set -u` tidak lagi melempar "unbound variable" (XRAY_CONFIG, XRAY_ACCESS_LOG,
+  dll) saat `/etc/login-report/config.conf` hilang atau rusak.
+- `lr_set_conf` membuat `config.conf` dari template default bila file belum ada, sehingga
+  menu 1 tetap bisa menyimpan token pada instalasi baru.
+- `lr_log` memilih path fallback writable (`$TMPDIR/login-report.log`) bila `/var/log` tidak bisa ditulis.
+- `LR_BASE`/`LR_CONF`/`LR_LOG` di `core.sh`, `menu.sh`, `common.sh` kini memakai `${VAR:-default}`
+  agar bisa di-override (test mode) tanpa mengubah perilaku produksi.
+- dispatcher menu 10 tidak lagi membuang stderr (`2>/dev/null` dihapus) dan punya fallback ke
+  `/etc/mytunnel/login-report/menu.sh`; kode error ditampilkan sebagai `rc=$?`.
+- semua fungsi `lr_*` yang dipanggil sudah terdefinisi (scan otomatis: 0 missing).
+
+## v1.9.1 — 2026-10-12 — install 1-perintah tanpa setting lanjutan + login-report token bisa dimasukan
+### Fixed
+- login-report: `/etc/login-report/config.conf` dijamin ada saat install. Sebelumnya blok copy
+  hanya jalan kalau `[ -d /etc/login-report ]` dan `install -d -m 700` gagal (non-root),
+  sehingga `lr_load_conf` gagal "config tidak ada" dan menu (10) tidak bisa menerima
+  BOT_TOKEN / CHAT_ID. Sekarang ada fallback default berisi semua key.
+- login-report: semua path install ikut prefix (`$BASE`) sehingga test mode `MYTUNNEL_PREFIX`
+  tidak lagi gagal "Permission denied" saat menulis unit systemd.
+- domain & brand diambil otomatis dari env atau `/etc/mytunnel/*.txt`; tidak ada lagi
+  prompt konfirmasi install yang menggantung di piped input.
+- brand fallback stabil ke "SUNEK VPN" (bukan "My Brand").
+
+## v1.9.0 — 2026-10-11 — brand permanen total (tidak bisa diubah lewat jalur mana pun) + bersihkan referensi skrip lama
+### Fixed
+- brand permanen 4 lapis: chattr +i, canon 600 root-only, cron tiap menit, dan bg_set() menolak tanpa jalur bypass
+- --brand dan MYTUNNEL_BRAND sekarang diabaikan bila brand.txt sudah immutable
+- embed config/brand.txt tidak menimpa file yang sudah terkunci
+- menu SET BRAND NAME (8) sepenuhnya read-only; jalur "FORCE" dihapus (dead code)
+- bg_set() tidak lagi menerima parameter force sama sekali
 
 ## v1.8.1 — 2026-10-11 — brand permanen total + login-report menu 10
 ### Fixed
@@ -14583,6 +14745,7 @@ set -euo pipefail
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_BASE="/root/mytunnel-443-backup"
 BACKUP_DIR="${BACKUP_BASE}/${STAMP}"
+BACKUP_OFF_SUFFIX=".off"
 NGINX_CONF="/etc/nginx/nginx.conf"
 SITE_CONF="/etc/nginx/conf.d/mytunnel.conf"
 STUNNEL_CONF="/etc/stunnel/stunnel.conf"
@@ -14593,8 +14756,19 @@ WORKER_RLIMIT_VALUE="65535"
 CONNTRACK_MAX="65536"
 CONNTRACK_TIMEOUT_ESTABLISHED="7200"
 NGINX_HTTP_TLS_PORT="9443"      # nginx TLS server (WS/http1.1) — JANGAN pakai http2
-NGINX_GRPC_H2_PORT="8443"       # nginx TLS server dgn http2 — target ALPN h2 (gRPC)
+NGINX_GRPC_H2_PORT="8443"       # nginx TLS server dgn http2 (legacy, tetap ada)
+NGINX_GRPC_8444_PORT="8444"     # nginx TLS server gRPC-only (h2) — target ALPN h2/h2,http/1.1
 STUNNEL_LEGACY_PORT="4443"
+
+# Direktif SSL untuk listener 8444 — DISAMAKAN PERSIS dengan blok 8443 live.
+CERT_CRT="/etc/mytunnel/cert/fullchain.crt"
+CERT_KEY="/etc/mytunnel/cert/private.key"
+SSL_PROTOCOLS="TLSv1.2 TLSv1.3"
+SSL_CIPHERS="ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384"
+SSL_SESSION_CACHE="shared:SSL:10m"
+SSL_SESSION_TIMEOUT="10m"
+# server_name untuk blok 8444 baru: diambil OTOMATIS dari blok 8443 di SITE_CONF
+# saat runtime (fungsi 8444), agar tidak ada domain hardcoded di repo.
 
 DRY_RUN=0
 DO_ROLLBACK=0
@@ -14636,7 +14810,7 @@ check_prereq() {
   command -v nginx >/dev/null 2>&1 || die "nginx tidak terpasang"
   command -v ss >/dev/null 2>&1 || die "iproute2 (ss) tidak tersedia"
 
-  if ! nginx -V 2>&1 | grep -q -- '--with-stream[^=]' && [ ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+  if ! nginx -V 2>&1 | grep -q -- '--with-stream' && [ ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
     warn "modul nginx stream belum ada — memasang libnginx-mod-stream..."
     if command -v apt-get >/dev/null 2>&1; then
       DEBIAN_FRONTEND=noninteractive apt-get install -y libnginx-mod-stream >/dev/null 2>&1 || true
@@ -14649,7 +14823,7 @@ check_prereq() {
 
   # nginx dari repo distro tidak otomatis load modul stream; pastikan
   # ngx_stream_module.so dimuat sebelum blok stream dipakai
-  if ! nginx -V 2>&1 | grep -q -- '--with-stream[^=]' && [ -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+  if ! nginx -V 2>&1 | grep -q -- '--with-stream' && [ -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
     if ! grep -qs 'ngx_stream_module\.so' /etc/nginx/nginx.conf /etc/nginx/modules-enabled/*.conf 2>/dev/null; then
       warn "menambahkan load_module ngx_stream_module.so ke nginx.conf"
       if grep -qE '^\s*load_module' /etc/nginx/nginx.conf; then
@@ -14688,14 +14862,14 @@ backup_file() {
   local f="$1"
   [ -f "$f" ] || return 0
   if [ "$DRY_RUN" -eq 1 ]; then
-    say "  ${DIM}[dry-run] backup ${f} -> ${BACKUP_DIR}/$(echo "$f" | tr '/' '_')${RESET}"
+    say "  ${DIM}[dry-run] backup ${f} -> ${BACKUP_DIR}/$(echo "$f" | tr '/' '_').<ts>.off${RESET}"
     return 0
   fi
   for entry in "${BACKED_UP[@]}"; do
     [ "${entry%%|*}" = "$f" ] && return 0
   done
   mkdir -p "$BACKUP_DIR"
-  local dest="${BACKUP_DIR}/$(echo "$f" | tr '/' '_')"
+  local dest="${BACKUP_DIR}/$(echo "$f" | tr '/' '_').$(date +%s).off"
   cp -a "$f" "$dest"
   BACKED_UP+=("$f|$dest")
   say "  ${DIM}backup ${f} -> ${dest}${RESET}"
@@ -14732,12 +14906,14 @@ apply_nginx_stream() {
 
 stream {
     map \$ssl_preread_alpn_protocols \$tls443_backend {
-        # gRPC klien menawarkan ALPN "h2" saja -> WAJIB ke 8443 (ssl http2).
-        # Entri ini harus PALING ATAS. 9443 hanya "ssl" tanpa http2: bila
-        # klien WS (ALPN "h2,http/1.1") diarahkan ke sana, nginx 1.18 balas 400.
-        ~^h2$           127.0.0.1:${NGINX_GRPC_H2_PORT};
-        ~\bh2\b        127.0.0.1:${NGINX_HTTP_TLS_PORT};
-        ~\bhttp/1\.1\b 127.0.0.1:${NGINX_HTTP_TLS_PORT};
+        # gRPC-only (h2). Klien gRPC (v2rayNG mode gun) menawarkan ALPN
+        # "h2,http/1.1" — WAJIB ke 8444 yang murni HTTP/2 dan TANPA location WS.
+        # Bila diarahkan ke 9443 (tanpa http2), HTTP/2 tak pernah terbentuk.
+        ~^h2\$             127.0.0.1:${NGINX_GRPC_8444_PORT};
+        ~^h2,http/1\\.1\$   127.0.0.1:${NGINX_GRPC_8444_PORT};
+        # WS/http1.1 -> 9443 (tanpa http2).
+        ~\\bh2\\b        127.0.0.1:${NGINX_HTTP_TLS_PORT};
+        ~\\bhttp/1\\.1\\b 127.0.0.1:${NGINX_HTTP_TLS_PORT};
         default         127.0.0.1:${STUNNEL_LEGACY_PORT};
     }
     server {
@@ -14749,6 +14925,136 @@ stream {
     }
 }
 EOF
+  CHANGED=1
+  return 0
+}
+
+# Perbaiki/pasang route ALPN gRPC di map stream yang SUDAH ADA (VPS lama).
+# Menjamin DUA entri menuju listener gRPC-only (8444):
+#   ~^h2$           -> 8444
+#   ~^h2,http/1.1$  -> 8444
+# Idempotent: bila keduanya sudah ada & benar, tidak menambah apa pun.
+# Backup ke /root/nginx-backup/*.off (BUKAN conf.d, BUKAN *.conf).
+# TIDAK memakai sed -i bersamaan dengan awk: satu mekanisme (awk -> mktemp -> mv).
+apply_grpc_h2_route() {
+  local up="${NGINX_GRPC_8444_PORT}"
+  if ! grep -qE '^[[:space:]]*map[[:space:]]+\$ssl_preread_alpn_protocols' "$NGINX_CONF"; then
+    ok "map ssl_preread tidak ada di $NGINX_CONF — dilewati (ditangani apply_nginx_stream)"
+    return 1
+  fi
+  # Sudah benar? (kedua entri menunjuk 8444) — pakai fixed-string, hindari regex ganda.
+  local have_h2=0 have_h2h1=0
+  grep -qF "~^h2\$             127.0.0.1:${up};"      "$NGINX_CONF" && have_h2=1
+  grep -qF "~^h2,http/1\\.1\$   127.0.0.1:${up};"      "$NGINX_CONF" && have_h2h1=1
+  if [ "$have_h2" -eq 1 ] && [ "$have_h2h1" -eq 1 ]; then
+    ok "map stream sudah punya route ALPN h2 & h2,http/1.1 -> ${up} (skip)"
+    return 1
+  fi
+  plan_change "$NGINX_CONF: pasang route ALPN h2 & h2,http/1.1 -> ${up} di map stream"
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  backup_file "$NGINX_CONF"
+  local tmp; tmp=$(mktemp)
+  awk -v up="$up" '
+    BEGIN { h2done = 0; h1done = 0; indone = 0 }
+    # buang entri lama ~^h2$ / ~^h2,http/1.1$ yang menunjuk port lain (mis. 8443),
+    # supaya tidak dobel. Kita cetak ulang versi benarnya setelah header map.
+    /^[[:space:]]*~\^h2\$[[:space:]]+127\.0\.0\.1:[0-9]+;/        { next }
+    /^[[:space:]]*~\^h2,http\/1\\\.1\$[[:space:]]+127\.0\.0\.1:[0-9]+;/ { next }
+    {
+      print
+      if (!indone && $0 ~ /map[[:space:]]+\$ssl_preread_alpn_protocols/) {
+        print "        ~^h2$             127.0.0.1:" up ";"
+        print "        ~^h2,http/1\\.1$   127.0.0.1:" up ";"
+        indone = 1
+      }
+    }
+  ' "$NGINX_CONF" > "$tmp" || { rm -f "$tmp"; warn "awk gagal, file tidak diubah"; return 1; }
+  # Pastikan kedua entri benar-benar ada di hasil; kalau tidak, batalkan.
+  grep -qF "~^h2\$             127.0.0.1:${up};"   "$tmp" \
+    && grep -qF "~^h2,http/1\\.1\$   127.0.0.1:${up};"   "$tmp" \
+    || { rm -f "$tmp"; warn "hasil awk tidak memuat kedua entri — file tidak diubah"; return 1; }
+  mv -f "$tmp" "$NGINX_CONF" || { rm -f "$tmp"; warn "mv gagal, file tidak diubah"; return 1; }
+  CHANGED=1
+  return 0
+}
+
+# Pasang listener gRPC-only 8444 di SITE_CONF (mytunnel.conf).
+# WAJIB: tanpa location WS. Hanya grpc_pass ke 10011/10012/10013 + 404 di /.
+# Idempotent: bila blok "listen 127.0.0.1:8444 ssl http2" sudah ada, skip.
+apply_grpc_8444_listener() {
+  local p="${NGINX_GRPC_8444_PORT}"
+  if grep -qE "listen[[:space:]]+127\.0\.0\.1:${p}[[:space:]]+ssl" "$SITE_CONF" 2>/dev/null; then
+    ok "listener gRPC-only ${p} sudah ada di $SITE_CONF (skip)"
+    return 1
+  fi
+  plan_change "$SITE_CONF: tambah server gRPC-only 127.0.0.1:${p} (ssl http2, tanpa location WS)"
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  # Ambil server_name dari blok 8443 yang sudah ada (fallback: "_").
+  local srv_names
+  srv_names=$(awk '/listen[[:space:]]+8443[[:space:]]+ssl/{f=1} f && /server_name/{sub(/^[^ ]*[[:space:]]*server_name[[:space:]]*/,""); sub(/;.*/,""); print; exit}' "$SITE_CONF")
+  [ -n "$srv_names" ] || srv_names="_"
+  backup_file "$SITE_CONF"
+  local tmp; tmp=$(mktemp)
+  cat "$SITE_CONF" > "$tmp"
+  cat >> "$tmp" <<EOF
+
+# gRPC-only: HTTP/2 murni, TANPA location WS. Target ALPN h2 / h2,http/1.1 dari :443.
+server {
+  listen 127.0.0.1:${NGINX_GRPC_8444_PORT} ssl http2;
+
+  server_name ${srv_names};
+
+  ssl_certificate ${CERT_CRT};
+  ssl_certificate_key ${CERT_KEY};
+  ssl_protocols ${SSL_PROTOCOLS};
+  ssl_prefer_server_ciphers on;
+  ssl_ciphers ${SSL_CIPHERS};
+  ssl_session_cache ${SSL_SESSION_CACHE};
+  ssl_session_timeout ${SSL_SESSION_TIMEOUT};
+
+  client_body_timeout 3600s;
+
+  location ~ ^/vmess/.* {
+    grpc_pass grpc://127.0.0.1:10011;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location ~ ^/vless/.* {
+    grpc_pass grpc://127.0.0.1:10012;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location ~ ^/trojan/.* {
+    grpc_pass grpc://127.0.0.1:10013;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location = /vmess.Tun {
+    grpc_pass grpc://127.0.0.1:10011;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location = /vless.Tun {
+    grpc_pass grpc://127.0.0.1:10012;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+  location = /trojan.Tun {
+    grpc_pass grpc://127.0.0.1:10013;
+    grpc_set_header Host \$host;
+    grpc_read_timeout 3600s;
+    grpc_send_timeout 3600s;
+  }
+
+  location / { return 404; }
+}
+EOF
+  mv -f "$tmp" "$SITE_CONF" || { rm -f "$tmp"; warn "mv gagal, file tidak diubah"; return 1; }
   CHANGED=1
   return 0
 }
@@ -14929,6 +15235,8 @@ fi
 say ""
 say "${CYAN}=== rencana perubahan ===${RESET}"
 apply_nginx_stream || true
+apply_grpc_8444_listener || true
+apply_grpc_h2_route || true
 apply_worker_limits || true
 apply_http_tls_listen || true
 apply_stunnel_port || true

@@ -16,7 +16,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; RESET='\033[0m'
 PASS=0; FAIL=0; FAILED_ITEMS=(); FIXES=()
 
-_r() { [ "$QUIET" = "1" ] || printf '  %s\n' "$1"; }
+_r() { [ "$QUIET" = "1" ] || printf '  %b\n' "$1"; }
 p() { PASS=$((PASS+1)); _r "${GREEN}PASS${RESET}  $1"; }
 f() { FAIL=$((FAIL+1)); FAILED_ITEMS+=("$1"); _r "${RED}FAIL${RESET}  $1"; [ -n "${2:-}" ] && FIXES+=("$1 -> $2"); }
 
@@ -97,10 +97,17 @@ if [ -n "$CONNECT" ] && command -v openssl >/dev/null 2>&1; then
   ALPN_H2=$(echo | timeout 8 openssl s_client -alpn h2 -connect "${CONNECT}:443" -servername "${DOMAIN:-$CONNECT}" 2>/dev/null | grep -i 'ALPN protocol' | awk -F': ' '{print $2}' | tr -d '\r')
   if [ "$ALPN_H2" = "h2" ]; then p "ALPN h2 ke :443 = h2"
   else f "ALPN h2 ke :443 = '${ALPN_H2:-none}' (harus h2)" "cek: map stream h2 -> 8444 & 8444 ssl http2"; fi
-  # h2,http/1.1 mendarat di 8444: pakai ss saat koneksi aktif
-  ( echo | timeout 6 openssl s_client -alpn h2,http/1.1 -connect "127.0.0.1:443" -servername "${DOMAIN:-$CONNECT}" >/dev/null 2>&1 & ) 2>/dev/null
-  sleep 1
-  if ss -tn state established 2>/dev/null | awk '{print $3, $4}' | grep -qE '127\.0\.0\.1:8444'; then
+  # h2,http/1.1 mendarat di 8444: tahan koneksi (sleep|openssl), cek ss, lalu tutup.
+  _found=0
+  ( sleep 8 | timeout 8 openssl s_client -alpn h2,http/1.1 -connect "127.0.0.1:443" -servername "${DOMAIN:-$CONNECT}" >/dev/null 2>&1 ) &
+  _pid=$!
+  for _try in 1 2 3 4 5 6; do
+    if ss -tn state established 2>/dev/null | awk '{print $3, $4}' | grep -qE '127\.0\.0\.1:8444'; then _found=1; break; fi
+    sleep 0.7
+  done
+  kill "$_pid" 2>/dev/null || true
+  wait "$_pid" 2>/dev/null || true
+  if [ "$_found" = "1" ]; then
     p "ALPN h2,http/1.1 mendarat di 8444"
   else
     _r "${YELLOW}SKIP${RESET}  ALPN h2,http/1.1 -> 8444 (tak ada koneksi terdeteksi saat cek)"

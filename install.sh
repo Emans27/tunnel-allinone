@@ -76,10 +76,15 @@ preflight() {
   fi
 
   # 3. nginx + modul stream (static ATAU modules-enabled)
+  # Catatan: installer memasang nginx sendiri (lihat install_nginx), jadi belum
+  # terpasang BUKAN fatal di VPS baru — hanya peringatan. Fatal hanya bila apt
+  # tidak tersedia sehingga tak mungkin dipasang otomatis.
   if ! command -v nginx >/dev/null 2>&1; then
-    _preflight_fail "nginx belum terpasang" "apt-get install -y nginx libnginx-mod-stream"
-  fi
-  if nginx -V 2>&1 | grep -q -- '--with-stream[^=]'; then
+    if ! command -v apt-get >/dev/null 2>&1; then
+      _preflight_fail "nginx belum terpasang & apt-get tidak ada" "pasang nginx + libnginx-mod-stream secara manual lalu jalankan ulang"
+    fi
+    _preflight_warn "nginx belum terpasang — akan dipasang otomatis oleh installer (nginx + libnginx-mod-stream)"
+  elif nginx -V 2>&1 | grep -q -- '--with-stream[^=]'; then
     echo -e "  nginx stream: ${GREEN}static ✓${RESET}"
   elif nginx -V 2>&1 | grep -q -- '--with-stream=dynamic' || [ -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
     local modloaded=0
@@ -90,7 +95,11 @@ preflight() {
       _preflight_warn "modul stream dinamis ada tapi belum di-load_module; installer akan menambahkannya"
     fi
   else
-    _preflight_fail "nginx tanpa modul stream" "apt-get install -y libnginx-mod-stream"
+    if command -v apt-get >/dev/null 2>&1; then
+      _preflight_warn "nginx terpasang tanpa modul stream — installer akan memasang libnginx-mod-stream"
+    else
+      _preflight_fail "nginx tanpa modul stream & apt-get tidak ada" "apt-get install -y libnginx-mod-stream"
+    fi
   fi
 
   # 4. port tidak dipakai proses lain (selain milik script ini saat reinstall)
@@ -4874,11 +4883,13 @@ main() {
     fi
     ans=$(resolve_a "$domain")
     if [ -n "$ans" ] && [ -n "$myip" ] && [ "$ans" != "$myip" ]; then
-      echo -e "${RED}DNS A $domain -> $ans tidak sama dengan IP VPS $myip${RESET}" >&2
-      return 1
+      # Non-interaktif: DNS mismatch = PERINGATAN, tetap simpan & lanjut agar
+      # nginx/8444/9443 tetap terpasang; cert mungkin gagal (verify akan melapor).
+      echo -e "${YELLOW}PERINGATAN: DNS A $domain -> $ans != IP VPS $myip${RESET}" >&2
+      echo -e "${YELLOW}  Domain tetap disimpan; perbaiki A record ke $myip lalu jalankan: bash $ETC/setup/cert.sh${RESET}" >&2
     elif [ -z "$ans" ]; then
-      echo -e "${RED}A record $domain tidak dapat di-resolve${RESET}" >&2
-      return 1
+      echo -e "${YELLOW}PERINGATAN: A record $domain tidak dapat di-resolve (belum propagasi?)${RESET}" >&2
+      echo -e "${YELLOW}  Domain tetap disimpan; pastikan A record -> $myip sebelum pasang cert.${RESET}" >&2
     else
       echo -e "${GREEN}DNS OK: $domain -> $ans${RESET}"
     fi
@@ -14955,14 +14966,28 @@ if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:)9443$'; then p "liste
 else f "listener 9443 tidak listen" "systemctl restart nginx; ss -tlnp | grep :9443"; fi
 
 # 6. ALPN: h2 -> :443 dan h2,http/1.1 mendarat di 8444
+# Uji LOKAL ke 127.0.0.1 (SNI domain) supaya tidak false-FAIL saat DNS domain
+# belum/tidak mengarah ke VPS ini. Fallback ke domain bila lokal tak tersedia.
 CONNECT="${DOMAIN:-$IP}"
-if [ -n "$CONNECT" ] && command -v openssl >/dev/null 2>&1; then
-  ALPN_H2=$(echo | timeout 8 openssl s_client -alpn h2 -connect "${CONNECT}:443" -servername "${DOMAIN:-$CONNECT}" 2>/dev/null | grep -i 'ALPN protocol' | awk -F': ' '{print $2}' | tr -d '\r')
-  if [ "$ALPN_H2" = "h2" ]; then p "ALPN h2 ke :443 = h2"
+HOST_LOCAL="127.0.0.1"
+SNI="${DOMAIN:-$CONNECT}"
+_alpn_probe() { # $1=host $2=alpn -> cetak nilai ALPN atau kosong
+  echo | timeout 8 openssl s_client -alpn "$2" -connect "$1:443" -servername "$SNI" 2>/dev/null \
+    | grep -i 'ALPN protocol' | awk -F': ' '{print $2}' | tr -d '\r'
+}
+if command -v openssl >/dev/null 2>&1; then
+  ALPN_H2=$(_alpn_probe "$HOST_LOCAL" h2)
+  WHICH="127.0.0.1"
+  if [ "$ALPN_H2" != "h2" ] && [ -n "$CONNECT" ] && [ "$CONNECT" != "$HOST_LOCAL" ]; then
+    # lokal gagal -> coba domain (berguna bila layanan hanya listen di IP publik)
+    _d=$(_alpn_probe "$CONNECT" h2)
+    [ -n "$_d" ] && { ALPN_H2="$_d"; WHICH="$CONNECT"; }
+  fi
+  if [ "$ALPN_H2" = "h2" ]; then p "ALPN h2 ke :443 = h2 (via $WHICH)"
   else f "ALPN h2 ke :443 = '${ALPN_H2:-none}' (harus h2)" "cek: map stream h2 -> 8444 & 8444 ssl http2"; fi
   # h2,http/1.1 mendarat di 8444: tahan koneksi (sleep|openssl), cek ss, lalu tutup.
   _found=0
-  ( sleep 12 | timeout 12 openssl s_client -alpn h2,http/1.1 -connect "127.0.0.1:443" -servername "${DOMAIN:-$CONNECT}" >/dev/null 2>&1 ) &
+  ( sleep 12 | timeout 12 openssl s_client -alpn h2,http/1.1 -connect "127.0.0.1:443" -servername "$SNI" >/dev/null 2>&1 ) &
   _pid=$!
   for _try in $(seq 1 15); do
     if ss -tn state established 2>/dev/null | awk '{print $3, $4}' | grep -qE '127\.0\.0\.1:8444'; then _found=1; break; fi
@@ -14976,29 +15001,35 @@ if [ -n "$CONNECT" ] && command -v openssl >/dev/null 2>&1; then
     _r "${YELLOW}SKIP${RESET}  ALPN h2,http/1.1 -> 8444 (tak ada koneksi terdeteksi saat cek)"
   fi
 else
-  _r "${YELLOW}SKIP${RESET}  uji ALPN (domain/IP atau openssl tidak tersedia)"
+  _r "${YELLOW}SKIP${RESET}  uji ALPN (openssl tidak tersedia)"
 fi
 
-# 7. WS 101 untuk /vmess /vless /trojan (HTTP/1.1)
-if command -v curl >/dev/null 2>&1 && [ -n "$CONNECT" ]; then
+# 7. WS 101 untuk /vmess /vless /trojan (HTTP/1.1) — uji LOKAL ke 127.0.0.1
+_ws_probe() { # $1=host $2=path -> cetak kode HTTP
+  curl -s -D - -o /dev/null --max-time 8 --http1.1 -k \
+    -H 'Host: '"$SNI" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    "https://$1:443/$2" 2>/dev/null | tr -d '\r' | awk '/^HTTP\//{print $2; exit}'
+}
+if command -v curl >/dev/null 2>&1; then
   for path in vmess vless trojan; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' --http1.1 -m 8 -k \
-      -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-      -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-      "https://${CONNECT}:443/${path}" 2>/dev/null)
+    code=$(_ws_probe "$HOST_LOCAL" "$path")
+    if [ "$code" != "101" ] && [ -n "$CONNECT" ] && [ "$CONNECT" != "$HOST_LOCAL" ]; then
+      _c=$(_ws_probe "$CONNECT" "$path"); [ -n "$_c" ] && code="$_c"
+    fi
     if [ "$code" = "101" ]; then p "WS /${path} @443 = 101"
     else f "WS /${path} @443 = ${code:-none} (harus 101)" "cek listener 9443 & blok WS di $SITE_CONF"; fi
   done
 else
-  _r "${YELLOW}SKIP${RESET}  uji WS (curl/alamat tidak tersedia)"
+  _r "${YELLOW}SKIP${RESET}  uji WS (curl tidak tersedia)"
 fi
 
-# 8. SSH-WS + SSH-TLS
-if command -v curl >/dev/null 2>&1 && [ -n "$CONNECT" ]; then
-  code=$(curl -s -o /dev/null -w '%{http_code}' --http1.1 -m 8 -k \
-    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-    "https://${CONNECT}:443/ssh-ws" 2>/dev/null)
+# 8. SSH-WS + SSH-TLS — uji LOKAL ke 127.0.0.1
+if command -v curl >/dev/null 2>&1; then
+  code=$(_ws_probe "$HOST_LOCAL" "ssh-ws")
+  if [ "$code" != "101" ] && [ -n "$CONNECT" ] && [ "$CONNECT" != "$HOST_LOCAL" ]; then
+    _c=$(_ws_probe "$CONNECT" "ssh-ws"); [ -n "$_c" ] && code="$_c"
+  fi
   if [ "$code" = "101" ]; then p "SSH-WS /ssh-ws = 101"
   else f "SSH-WS /ssh-ws = ${code:-none} (harus 101)" "cek location /ssh-ws di mytunnel-locations.inc + 10004"; fi
 fi

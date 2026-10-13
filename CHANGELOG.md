@@ -1,45 +1,52 @@
 # CHANGELOG
 
-## unreleased — fix gRPC ALPN h2 di port 443
+## unreleased — gRPC lewat 443: listener 8444 (gRPC-only)
 
 ### Fixed
-- **gRPC (VMess/VLESS/Trojan) tidak konek di port 443.** Klien gRPC hanya menawarkan
-  ALPN `h2`, sementara map `$ssl_preread_alpn_protocols` mengarahkan semua `h2`/
-  `http/1.1` ke `127.0.0.1:9443` yang hanya `listen ... ssl` tanpa `http2`. Negosiasi
-  jatuh ke HTTP/1.1 dan gRPC — yang mewajibkan HTTP/2 — tidak pernah terbentuk.
+- **gRPC (VMess/VLESS/Trojan) tidak konek lewat port 443.** Klien gRPC (mis.
+  v2rayNG mode `gun`) menawarkan ALPN `h2,http/1.1` (dan sebagian `h2` saja),
+  sementara map `$ssl_preread_alpn_protocols` mengarahkannya ke
+  `127.0.0.1:9443` yang hanya `listen ... ssl` **tanpa `http2`**. Negosiasi jatuh
+  ke HTTP/1.1 sehingga gRPC — yang mewajibkan HTTP/2 — tidak pernah terbentuk.
   Gejala di klien: "Unable to detect internet connection" walau server menerima
-  koneksi TLS.
+  koneksi TLS. Diverifikasi live: `curl --http2` ke `:8443` menjawab HTTP/2 (rute
+  benar), sedangkan ke `:443` gagal total; `tshark` membuktikan klien WS nyata
+  mengirim `http/1.1` polos dan klien gRPC mengirim `h2,http/1.1`.
 
 ### Changed
-- **Map stream menambah exact match `~^h2$` -> `127.0.0.1:8443` (paling atas).**
-  `8443` sudah `listen 8443 ssl http2`, jadi klien berbasis gRPC mendapat HTTP/2
-  penuh. Entri lama tetap: `~\bh2\b` dan `~\bhttp/1\.1\b` -> `9443`,
-  `default` -> `4443`.
-- **ALPN `h2,http/1.1` sengaja TIDAK diarahkan ke 8443.** Klien WS (browser/aplikasi
-  tunnel) menawarkan gabungan itu; bila masuk `8443`, nginx 1.18 membalas `400`
-  karena tidak mendukung WebSocket di atas HTTP/2. Percobaan menambahkan
-  `~^h2,` -> 8443 terbukti membuat WS flapping `101`/`400` di live dan sudah dibuang.
-- **Backup nginx dipindah ke `/root/nginx-backup/*.off`** (sebelumnya `.bak-*` di
-  samping file aslinya). nginx meng-include `conf.d/*.conf`, sehingga backup
-  bersuffix `.conf` di sana memicu listener/location dobel. Nama file unik
-  (`.$(date +%s).off`) agar tidak saling menimpa.
-- `apply_grpc_h2_route()`: patch idempotent untuk VPS lama. Satu mekanisme saja —
-  `awk` ke file temp lalu `mv` ke tujuan, **tidak** menggabungkan `sed -i` dengan
-  `awk` pada file yang sama. Gagal `awk`/`mv` = file tidak diubah.
+- **Listener baru `127.0.0.1:8444` bersifat gRPC-only:** `listen ... ssl http2`,
+  **tanpa** `include mytunnel-locations.inc` dan **tanpa location WS** — cuma
+  `grpc_pass` ke `10011/10012/10013` (termasuk varian `.Tun`) plus `404` di `/`.
+  Cert, ciphers, `ssl_protocols`, `ssl_session_cache` **disamakan** dengan blok
+  8443; `server_name` diambil otomatis dari blok 8443 (tidak ada domain
+  hardcoded).
+- **Map stream (urutan tepat):**
+  `~^h2$` -> `8444`, `~^h2,http/1\.1$` -> `8444`,
+  `~\bh2\b` -> `9443`, `~\bhttp/1\.1\b` -> `9443`, `default` -> `4443`.
+  `9443` tetap tanpa `http2` (melayani WS/HTTP-1.1).
+- **Idempotent:** dijalankan 2×+ tidak menambah server 8444 atau entri map
+  dobel. `apply_grpc_h2_route()` membuang entri `~^h2$`/`~^h2,http/1.1$` lama
+  yang menunjuk port lain lalu menulis ulang versi benarnya. Satu mekanisme
+  (awk -> `mktemp` -> `mv`), **tidak** menggabungkan `sed -i` dengan `awk`.
+  `nginx -t` sebelum reload; gagal = rollback otomatis. Backup
+  `/root/nginx-backup/*.off`.
 
-### Upgrade VPS lama
-```bash
-bash /root/configure-final-443.sh
-```
-Idempotent: melewati penyisipan bila entri sudah ada. `nginx -t` dijalankan sebelum
-reload; bila gagal, backup dipulihkan otomatis. Uji rencana dulu dengan `--dry-run`.
+### Risiko
+- **Klien WS yang mengirim ALPN `h2,http/1.1` akan mendarat di `8444` dan
+  mendapat `404`.** Diuji pada klien WS nyata yang dipakai (v2rayNG) yang
+  mengirim `http/1.1` polos, jadi tidak terpengaruh. Tetapi aplikasi WS lain
+  yang menawarkan `h2,http/1.1` (beberapa browser/klien gabungan) tidak akan
+  mendapat WS di jalur ini. Bila perlu, pisahkan lewat SNI khusus (mis.
+  `grpc.<domain>` -> 8444) alih-alih memakai `h2,http/1.1`.
 
 ### Tested
-- Ubuntu 22.04 + nginx 1.18.0.
+- Ubuntu (24.04) + nginx 1.18.0, live: WS `/vmess` `/vless` `/trojan` @443
+  balas `101`, `/ssh-ws` `101`, SSH-TLS 444 & SSH 22 terbuka, `-alpn h2` ke
+  `8444` = `h2`, `9443` tetap tanpa `http2`, koneksi gRPC mendarat di `8444`.
 - Nginx versi lebih baru mungkin perlu sintaks `http2 on;` (directive terpisah)
   alih-alih flag `http2` pada `listen`.
-- Verifikasi: WS `/vmess` `/vless` `/trojan` = `101`; gRPC via 443 = HTTP/2
-  (`server accepted to use h2`); ALPN `h2` -> 8443, ALPN `h2,http/1.1` -> 9443.
+- Verifikasi live: WS `/vmess` `/vless` `/trojan` @443 = `101`; koneksi gRPC
+  mendarat di `8444`; ALPN `h2`/`h2,http/1.1` -> `8444`, `http/1.1` -> `9443`.
 
 
 ## v1.9.6 — 2026-10-12 — fix stream module dynamic + cert 429 tidak lagi matiin install

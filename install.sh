@@ -25,6 +25,141 @@ _fail() {
   [ -n "$2" ] && echo -e "${YELLOW}Penyebab: $2${RESET}" >&2
   exit 1
 }
+# ------------------------------------------------------------------ preflight
+# Dijalankan paling awal. Berhenti dengan pesan jelas bila syarat wajib gagal.
+# Peringatan (bukan fatal): OS versi tak umum, RAM/disk di bawah saran, domain
+# Cloudflare, internet tak terdeteksi (diperiksa saat butuh acme/xray).
+_preflight_fail() { echo -e "${RED}✗ PREFLIGHT GAGAL: $1${RESET}" | tee -a "$LOG" 2>/dev/null || true; [ -n "$2" ] && echo -e "  ${YELLOW}Perbaikan: $2${RESET}"; exit 1; }
+_preflight_warn() { echo -e "${YELLOW}! $1${RESET}"; }
+
+# Port yang harus bebas sebelum install/reinstall. Jika reinstall milik script
+# ini (nginx/xray/stunnel/dropbear sudah dari mytunnel) → tidak dianggap bentrok.
+_preflight_port_owner_ok() {
+  local p="$1" owner="$2"
+  case "$owner" in
+    *nginx*|*xray*|*stunnel*|*dropbear*|*mytunnel*|*python3*) return 0 ;;
+  esac
+  # reinstall: unit mytunnel sudah ada dan port ini milik proses kita
+  if [ -f "${ETC}/VERSION" ] || [ -d "${ETC}/setup" ]; then
+    case "$owner" in *nginx*|*xray*|*stunnel*|*dropbear*) return 0 ;; esac
+  fi
+  return 1
+}
+
+preflight() {
+  echo -e "${CYAN}=== Preflight check ===${RESET}"
+
+  # Mode test (MYTUNNEL_PREFIX): lewati cek yang bergantung sistem live.
+  if [ -n "$MYTUNNEL_PREFIX" ]; then
+    echo -e "  mode test (MYTUNNEL_PREFIX=$MYTUNNEL_PREFIX): cek sistem dilompati ✓"
+    return 0
+  fi
+
+  # 1. OS didukung
+  if [ ! -f /etc/os-release ]; then _preflight_fail "OS tidak dikenali (/etc/os-release tidak ada)"; fi
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  OS="${ID:-}"; VER="${VERSION_ID:-}"
+  case "$OS" in
+    ubuntu|debian) echo -e "  OS: ${GREEN}${OS} ${VER}${RESET}" ;;
+    *) _preflight_fail "OS '${OS:-?}' tidak didukung" "pakai Ubuntu 18/20/22/24 atau Debian 11/12" ;;
+  esac
+  case "${OS}-${VER}" in
+    ubuntu-18.04|ubuntu-20.04|ubuntu-22.04|ubuntu-24.04|debian-11|debian-12)
+      echo -e "  Versi: ${GREEN}${OS} ${VER} ✓${RESET}" ;;
+    *) _preflight_warn "Versi ${OS} ${VER} belum diuji resmi (disarankan Debian 12 / Ubuntu 22.04)" ;;
+  esac
+
+  # 2. root (kecuali test mode MYTUNNEL_PREFIX)
+  if [ -z "$MYTUNNEL_PREFIX" ] && [ "$(id -u)" -ne 0 ]; then
+    _preflight_fail "bukan root" "jalankan: sudo -i lalu ulangi, atau bash install.sh sebagai root"
+  fi
+
+  # 3. nginx + modul stream (static ATAU modules-enabled)
+  if ! command -v nginx >/dev/null 2>&1; then
+    _preflight_fail "nginx belum terpasang" "apt-get install -y nginx libnginx-mod-stream"
+  fi
+  if nginx -V 2>&1 | grep -q -- '--with-stream[^=]'; then
+    echo -e "  nginx stream: ${GREEN}static ✓${RESET}"
+  elif nginx -V 2>&1 | grep -q -- '--with-stream=dynamic' || [ -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+    local modloaded=0
+    if grep -rqs 'ngx_stream_module\.so' /etc/nginx/nginx.conf /etc/nginx/modules-enabled/ 2>/dev/null; then modloaded=1; fi
+    if [ "$modloaded" = "1" ]; then
+      echo -e "  nginx stream: ${GREEN}dynamic + load_module ✓${RESET}"
+    else
+      _preflight_warn "modul stream dinamis ada tapi belum di-load_module; installer akan menambahkannya"
+    fi
+  else
+    _preflight_fail "nginx tanpa modul stream" "apt-get install -y libnginx-mod-stream"
+  fi
+
+  # 4. port tidak dipakai proses lain (selain milik script ini saat reinstall)
+  local REQ_PORTS="80 443 8443 8444 9443" busy="" p owner
+  for p in $REQ_PORTS; do
+    # ambil owner proses yang listen di port ini (jika ada)
+    owner=$(ss -tlnp 2>/dev/null | awk -v P=":$p" '$4 ~ P"$" {print $6; exit}')
+    if [ -n "$owner" ]; then
+      if _preflight_port_owner_ok "$p" "$owner"; then
+        echo -e "  port $p: ${GREEN}dipakai mytunnel/nginx (reinstall) ✓${RESET}"
+      else
+        busy="$busy $p"
+      fi
+    else
+      # tidak ada listener tapi port direservasi proses lain? cek bind test
+      if ss -tln 2>/dev/null | awk -v P=":$p" '$4 ~ P"$"' | grep -q .; then busy="$busy $p"; fi
+    fi
+  done
+  if [ -n "$busy" ]; then
+    _preflight_fail "port terpakai proses lain:${busy}" "hentikan layanan yang memakai port itu (ss -tlnp | grep -E ':(80|443|8443|8444|9443)')"
+  fi
+  echo -e "  port 80/443/8443/8444/9443: ${GREEN}bebas ✓${RESET}"
+
+  # 5. domain resolve ke IP publik VPS (peringatan, bukan fatal)
+  local dom="${MYTUNNEL_DOMAIN:-}"
+  [ -z "$dom" ] && dom=$(cat "${ETC}/config/domain.txt" 2>/dev/null || true)
+  [ -z "$dom" ] && dom=$(cat /etc/mytunnel/domain.txt 2>/dev/null || true)
+  if [ -n "$dom" ] && [ "$dom" != "-" ]; then
+    local pub_ip vps_ip
+    vps_ip=$(curl -fsS --max-time 6 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 6 https://ifconfig.me 2>/dev/null || true)
+    pub_ip=$(getent hosts "$dom" 2>/dev/null | awk '{print $1; exit}')
+    if command -v dig >/dev/null 2>&1; then
+      pub_ip=$(dig +short A "$dom" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
+      # Cloudflare? (proxy orange) - range 172.64-71.x / 104.16-31.x / 162.158.x
+      if dig +short A "$dom" 2>/dev/null | grep -qE '^(172\.(6[4-9]|7[01])\.|104\.(1[6-9]|2[0-9]|3[01])\.|162\.158\.|188\.114\.|190\.93\.|197\.234\.|198\.41\.)'; then
+        _preflight_warn "domain ${dom} tampak via Cloudflare (proxy) — gRPC/WS harus 'DNS only' atau pakai IP langsung"
+      fi
+    fi
+    if [ -n "$vps_ip" ] && [ -n "$pub_ip" ]; then
+      if [ "$pub_ip" = "$vps_ip" ]; then
+        echo -e "  domain ${dom}: ${GREEN}resolve ke ${pub_ip} ✓${RESET}"
+      else
+        _preflight_warn "domain ${dom} -> ${pub_ip}, IP publik VPS ${vps_ip} (cek DNS / matikan proxy Cloudflare bila gRPC gagal)"
+      fi
+    else
+      _preflight_warn "domain ${dom}: resolusi/IP publik tak terbaca (lanjut; pastikan A record benar)"
+    fi
+  else
+    _preflight_warn "domain belum diisi (akan ditanya/di-set nanti)"
+  fi
+
+  # 6. internet + disk
+  if ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI --max-time 5 https://github.com >/dev/null 2>&1; then
+    echo -e "  internet: ${GREEN}OK ✓${RESET}"
+  else
+    _preflight_warn "internet tak terdeteksi (wajib untuk acme/Xray)"
+  fi
+  local disk_mb ram_mb
+  disk_mb=$(df -m / 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
+  ram_mb=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || echo 0)
+  if [ "${disk_mb:-0}" -lt 2048 ] 2>/dev/null; then
+    _preflight_fail "disk / hanya ${disk_mb} MB (butuh ≥ 2 GB)"
+  fi
+  echo -e "  disk /: ${GREEN}${disk_mb} MB ✓${RESET}"
+  if [ "${ram_mb:-0}" -lt 512 ] 2>/dev/null; then _preflight_warn "RAM ${ram_mb} MB (< 512 MB disarankan)"; else echo -e "  RAM: ${GREEN}${ram_mb} MB ✓${RESET}"; fi
+
+  echo -e "${GREEN}Preflight: LULUS${RESET}"
+}
+
 # BAGIAN D-3: arg parsing
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,42 +176,30 @@ done
 [ "$MYTUNNEL_YES" = "1" ] && AUTO_YES=1
 export MYTUNNEL_DOMAIN MYTUNNEL_BRAND MYTUNNEL_YES
 # BAGIAN D-4: hanya HTTPS (sudah enforced di setup/*.sh; http:// hanya 127.0.0.1 internal)
-if [[ "$EUID" -ne 0 && -z "$MYTUNNEL_PREFIX" ]]; then echo -e "${RED}Jalankan sebagai root${RESET}"; exit 1; fi
-if [[ -f /etc/os-release ]]; then . /etc/os-release; OS=$ID; VER=$VERSION_ID; else echo -e "${RED}OS tidak dikenali${RESET}"; exit 1; fi
-case "$OS" in ubuntu|debian) echo -e "${GREEN}OS: $OS $VER${RESET}";; *) echo -e "${RED}Hanya Ubuntu/Debian${RESET}"; exit 1;; esac
-# BAGIAN D-2: preflight (skip jika MYTUNNEL_PREFIX test mode)
+# Preflight menyeluruh — OS, root, nginx+stream, port, domain, internet, disk.
+preflight
+# Virtualisasi & arsitektur (peringatan saja)
 if [ -z "$MYTUNNEL_PREFIX" ]; then
-  echo -e "${CYAN}=== Preflight check ===${RESET}"
   VIRT=$(systemd-detect-virt 2>/dev/null || echo unknown); [ "$VIRT" = "openvz" ] && { echo -e "${RED}OpenVZ tidak didukung${RESET}"; exit 1; }; echo "  Virtualisasi: $VIRT"
   ARCH=$(uname -m 2>/dev/null || echo unknown)
   case "$ARCH" in x86_64|amd64) echo -e "  Arch: ${GREEN}$ARCH ✓${RESET}";; aarch64|arm64) echo -e "  Arch: ${YELLOW}$ARCH (terbatas, build badvpn mungkin perlu adaptasi)${RESET}";; *) echo -e "  Arch: ${YELLOW}$ARCH (belum diuji)${RESET}";; esac
-  case "$OS-$VER" in ubuntu-22.04|ubuntu-24.04|debian-12|debian-11|ubuntu-20.04|ubuntu-18.04|debian-10) echo -e "  OS versi: ${GREEN}$OS $VER ✓${RESET}";; *) echo -e "  OS versi: ${YELLOW}$OS $VER (disarankan Debian 12 / Ubuntu 22.04)${RESET}";; esac
-  RAM_MB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || echo 0)
-  if [ "$RAM_MB" -lt 512 ] 2>/dev/null; then echo -e "  RAM: ${YELLOW}${RAM_MB} MB (minimum 512 MB disarankan)${RESET}"; else echo -e "  RAM: ${GREEN}${RAM_MB} MB ✓${RESET}"; fi
-  DISK_AVAIL=$(df -m / 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
-  if [ "$DISK_AVAIL" -lt 2048 ] 2>/dev/null; then echo -e "  Disk /: ${YELLOW}${DISK_AVAIL} MB (minimum 2 GB disarankan)${RESET}"; else echo -e "  Disk /: ${GREEN}${DISK_AVAIL} MB ✓${RESET}"; fi
-  [ "$RAM_MB" -lt 512 ] 2>/dev/null && { echo -e "${RED}RAM minimum 512 MB${RESET}"; exit 1; }; [ "$DISK_AVAIL" -lt 2048 ] 2>/dev/null && { echo -e "${RED}Disk minimum 2 GB${RESET}"; exit 1; }
-  if ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI --max-time 5 https://github.com >/dev/null 2>&1; then echo -e "  Internet: ${GREEN}OK ✓${RESET}"; else echo -e "  Internet: ${YELLOW}TIDAK TERDETEKSI (butuh untuk acme/Xray)${RESET}"; fi
-  BUSY=""
-  for _p in 80 443 444 90 81; do if ss -tlnp 2>/dev/null | grep -q ":$_p " || ss -tln 2>/dev/null | grep -q ":$_p "; then BUSY="$BUSY $_p"; fi; done
+fi
 # Force domain & brand dari env/fallback file, jangan prompt
 MYTUNNEL_DOMAIN="${MYTUNNEL_DOMAIN:-$(cat /etc/mytunnel/domain.txt 2>/dev/null)}"
 MYTUNNEL_BRAND="${MYTUNNEL_BRAND:-$(cat /etc/mytunnel/brand.txt 2>/dev/null || echo SUNEK VPN)}"
 if [ -z "$MYTUNNEL_BRAND" ]; then MYTUNNEL_BRAND="SUNEK VPN"; fi
 AUTO_YES=1
 
-  if [ -n "$BUSY" ]; then echo -e "  Port terpakai:${YELLOW}$BUSY${RESET} (akan ditangani setup)"; else echo -e "  Port 80/443/444/90/81: ${GREEN}bebas ✓${RESET}"; fi
-  if [ "$AUTO_YES" != "1" ]; then
-    echo ""
-    echo -e "${BOLD}Ringkasan:${RESET} OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(- tanya nanti)} | Brand ${MYTUNNEL_BRAND:-SUNEK VPN}"
-    echo -e "${YELLOW}Akan mengubah: UFW, BBR sysctl, nginx, Xray, cron, user system${RESET}"
-    echo -ne "Lanjut install? [y/N]: "
-    read -r _ans 2>/dev/null || _ans=""
-    case "$_ans" in y|Y|yes|YES) ;; *) echo "Batal."; exit 0;; esac
-  else
-    echo -e "  Auto-YES: lanjut tanpa konfirmasi (MYTUNNEL_YES=1 / --yes)"
-    echo -e "  Ringkasan: OS $OS $VER | Arch $ARCH | RAM ${RAM_MB}MB | Disk ${DISK_AVAIL}MB | Domain ${MYTUNNEL_DOMAIN:-(-)} | Brand ${MYTUNNEL_BRAND:-SUNEK VPN}"
-  fi
+if [ "$AUTO_YES" != "1" ]; then
+  echo ""
+  echo -e "${BOLD}Ringkasan:${RESET} OS $OS $VER | Arch ${ARCH:-?} | Domain ${MYTUNNEL_DOMAIN:-(- tanya nanti)} | Brand ${MYTUNNEL_BRAND:-SUNEK VPN}"
+  echo -e "${YELLOW}Akan mengubah: UFW, BBR sysctl, nginx, Xray, cron, user system${RESET}"
+  echo -ne "Lanjut install? [y/N]: "
+  read -r _ans 2>/dev/null || _ans=""
+  case "$_ans" in y|Y|yes|YES) ;; *) echo "Batal."; exit 0;; esac
+else
+  echo -e "  Auto-YES: lanjut tanpa konfirmasi (MYTUNNEL_YES=1 / --yes)"
+  echo -e "  Ringkasan: OS $OS $VER | Arch ${ARCH:-?} | Domain ${MYTUNNEL_DOMAIN:-(-)} | Brand ${MYTUNNEL_BRAND:-SUNEK VPN}"
 fi
 if [[ "$NO_DEPS" = "0" && -z "$MYTUNNEL_PREFIX" ]]; then
   echo -e "${CYAN}[1/13] Install dependensi...${RESET}"
@@ -13896,7 +14019,32 @@ chmod 644 "$ETC/config/repo.txt"
 cat > "$ETC/CHANGELOG.md" << '__EMBED_EOF__'
 # CHANGELOG
 
-## unreleased — gRPC lewat 443: listener 8444 (gRPC-only)
+## unreleased — preflight minim-error + verify.sh (gRPC 8444 sudah di rilis ini)
+
+### Added
+- **`preflight()` di `install.sh`**, dijalankan paling awal, berhenti dengan pesan
+  jelas bila syarat wajib gagal. Cek: OS Ubuntu/Debian didukung; root; nginx
+  terpasang **dan** modul stream (static atau `modules-enabled` + `load_module`);
+  port **80/443/8443/8444/9443** tidak dipakai proses lain (proses mytunnel
+  sendiri saat reinstall dikecualikan); domain resolve ke IP publik VPS
+  (**peringatan**, bukan fatal, bila via Cloudflare); internet & disk (≥2 GB,
+  fatal) / RAM (<512 MB, peringatan). Mode `MYTUNNEL_PREFIX` melewati cek sistem
+  agar test tetap jalan.
+- **`verify.sh`** (root repo, dipanggil di akhir `install.sh`, bisa manual).
+  Mencetak PASS/FAIL untuk: `nginx -t`; nginx & xray active; map stream
+  (`~^h2$`/`~^h2,http/1\.1$` -> 8444 di paling atas, `9443` tanpa http2, `8444`
+  ssl http2); listener 8444 & 9443; `openssl -alpn h2` ke :443 = `h2`; ALPN
+  `h2,http/1.1` mendarat di 8444 (`ss`); WS `101` untuk `/vmess` `/vless`
+  `/trojan` (`--http1.1`); SSH-WS `101` & SSH-TLS terbuka; sertifikat valid
+  (tanggal expired). Ringkasan akhir: `SEMUA LULUS` atau daftar gagal + perintah
+  perbaikan. Exit 1 bila ada FAIL. Diuji live: **18 PASS, 0 FAIL**.
+
+### Changed
+- **Panduan preflight lama (inline) diganti `preflight()`** yang mencakup OS,
+  root, nginx+stream, port 8443/8444/9443, dan domain resolve.
+- Semua perubahan nginx (via `configure-final-443.sh`) tetap: backup `.off`,
+  tulis lewat file temp, `nginx -t`, baru reload; gagal -> restore otomatis dan
+  cetak penyebab.
 
 ### Fixed
 - **gRPC (VMess/VLESS/Trojan) tidak konek lewat port 443.** Klien gRPC (mis.
@@ -14712,6 +14860,178 @@ if [ -z "$BASE" ]; then echo "  Reboot disarankan jika BBR/resolver diubah."; fi
 
 __EMBED_EOF__
 chmod 755 "$ETC/uninstall.sh"
+cat > "$ETC/verify.sh" << '__EMBED_VERIFY_EOF__'
+#!/bin/bash
+# mytunnel verify.sh — cek kesehatan tunnel (nginx/xray/stream/gRPC/WS/SSH/cert).
+#
+# Dipanggil di akhir install.sh, atau manual:
+#   bash verify.sh            # auto-deteksi domain & IP VPS
+#   bash verify.sh --quiet    # ringkas (hanya FAIL + ringkasan)
+#   DOMAIN=example.com IP=1.2.3.4 bash verify.sh
+#
+# Exit 0 = SEMUA LULUS, exit 1 = ada yang gagal (daftar + perintah perbaikan).
+set -uo pipefail
+
+QUIET=0
+[ "${1:-}" = "--quiet" ] && QUIET=1
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; RESET='\033[0m'
+PASS=0; FAIL=0; FAILED_ITEMS=(); FIXES=()
+
+_r() { [ "$QUIET" = "1" ] || printf '  %s\n' "$1"; }
+p() { PASS=$((PASS+1)); _r "${GREEN}PASS${RESET}  $1"; }
+f() { FAIL=$((FAIL+1)); FAILED_ITEMS+=("$1"); _r "${RED}FAIL${RESET}  $1"; [ -n "${2:-}" ] && FIXES+=("$1 -> $2"); }
+
+NGINX_CONF="/etc/nginx/nginx.conf"
+SITE_CONF="/etc/nginx/conf.d/mytunnel.conf"
+ETC="${MYTUNNEL_PREFIX:-}/etc/mytunnel"
+CERT="${ETC}/cert/fullchain.crt"
+
+# domain & IP
+DOMAIN="${DOMAIN:-$(cat "${ETC}/config/domain.txt" 2>/dev/null)}"
+[ -z "$DOMAIN" ] || [ "$DOMAIN" = "-" ] && DOMAIN="$(cat /etc/mytunnel/domain.txt 2>/dev/null)"
+IP="${IP:-$(curl -fsS --max-time 6 https://api.ipify.org 2>/dev/null || echo "")}"
+[ -z "$IP" ] && IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
+printf '%b\n' "${CYAN}=== mytunnel verify ===${RESET}"
+_r "domain: ${DOMAIN:-(-)}  ip: ${IP:-(-)}"
+echo
+
+# 1. nginx -t
+if nginx -t >/tmp/verify-nginxt.log 2>&1; then p "nginx -t lulus"
+else f "nginx -t GAGAL" "lihat /tmp/verify-nginxt.log; perbaiki config lalu: nginx -t && systemctl reload nginx"; fi
+
+# 2. service
+for svc in nginx xray; do
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then p "$svc active"
+    else f "$svc tidak active" "systemctl status $svc; systemctl restart $svc"; fi
+  fi
+done
+
+# 3. map stream: urutan & target
+if [ -f "$NGINX_CONF" ]; then
+  # posisi relatif: ~^h2$ dan ~^h2,http/1\.1$ harus sebelum ~\bh2\b
+  L_H2=$(grep -nE '^[[:space:]]*~\^h2\$' "$NGINX_CONF" | head -1 | cut -d: -f1)
+  L_H2H1=$(grep -nE '^[[:space:]]*~\^h2,http/1\\\.1\$' "$NGINX_CONF" | head -1 | cut -d: -f1)
+  L_H2GEN=$(grep -nE '^[[:space:]]*~\\bh2\\b' "$NGINX_CONF" | head -1 | cut -d: -f1)
+  if grep -qE '^[[:space:]]*~\^h2\$[[:space:]]+127\.0\.0\.1:8444;' "$NGINX_CONF" \
+     && grep -qE '^[[:space:]]*~\^h2,http/1\\\.1\$[[:space:]]+127\.0\.0\.1:8444;' "$NGINX_CONF"; then
+    p "map stream: ~^h2\$ & ~^h2,http/1\\.1\$ -> 8444"
+  else
+    f "map stream: entri h2 -> 8444 tidak lengkap" "bash /root/configure-final-443.sh  # pasang ulang route 8444"
+  fi
+  if [ -n "${L_H2:-}" ] && [ -n "${L_H2H1:-}" ] && [ -n "${L_H2GEN:-}" ] \
+     && [ "$L_H2" -lt "$L_H2GEN" ] && [ "$L_H2H1" -lt "$L_H2GEN" ]; then
+    p "map urutan: h2/h2,http/1.1 di atas ~\\bh2\\b"
+  else
+    f "map urutan salah (h2 harus paling atas)" "edit $NGINX_CONF: pindahkan ~^h2\$ & ~^h2,http/1\\.1\$ ke paling atas blok map"
+  fi
+else
+  f "$NGINX_CONF tidak ada" "jalankan install.sh"
+fi
+
+# 4. 9443 TANPA http2, 8444 ssl http2
+if grep -qE 'listen[[:space:]]+127\.0\.0\.1:9443[[:space:]]+ssl([^;]*)' "$SITE_CONF" 2>/dev/null; then
+  if grep -qE 'listen[[:space:]]+127\.0\.0\.1:9443[[:space:]]+ssl[^;]*http2' "$SITE_CONF" 2>/dev/null; then
+    f "9443 memakai http2 (harus TANPA)" "hapus 'http2' pada baris 'listen 127.0.0.1:9443 ssl;' di $SITE_CONF"
+  else
+    p "9443 tanpa http2"
+  fi
+else
+  f "listener 9443 tidak ada di $SITE_CONF" "bash /root/configure-final-443.sh"
+fi
+if grep -qE 'listen[[:space:]]+127\.0\.0\.1:8444[[:space:]]+ssl[^;]*http2' "$SITE_CONF" 2>/dev/null; then
+  p "8444 ssl http2"
+else
+  f "8444 tidak 'ssl http2' di $SITE_CONF" "bash /root/configure-final-443.sh  # tambah server 8444"
+fi
+
+# 5. listener 8444 & 9443 hidup
+if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:)8444$'; then p "listener 8444 ada"
+else f "listener 8444 tidak listen" "systemctl restart nginx; ss -tlnp | grep :8444"; fi
+if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:)9443$'; then p "listener 9443 ada"
+else f "listener 9443 tidak listen" "systemctl restart nginx; ss -tlnp | grep :9443"; fi
+
+# 6. ALPN: h2 -> :443 dan h2,http/1.1 mendarat di 8444
+CONNECT="${DOMAIN:-$IP}"
+if [ -n "$CONNECT" ] && command -v openssl >/dev/null 2>&1; then
+  ALPN_H2=$(echo | timeout 8 openssl s_client -alpn h2 -connect "${CONNECT}:443" -servername "${DOMAIN:-$CONNECT}" 2>/dev/null | grep -i 'ALPN protocol' | awk -F': ' '{print $2}' | tr -d '\r')
+  if [ "$ALPN_H2" = "h2" ]; then p "ALPN h2 ke :443 = h2"
+  else f "ALPN h2 ke :443 = '${ALPN_H2:-none}' (harus h2)" "cek: map stream h2 -> 8444 & 8444 ssl http2"; fi
+  # h2,http/1.1 mendarat di 8444: pakai ss saat koneksi aktif
+  ( echo | timeout 6 openssl s_client -alpn h2,http/1.1 -connect "127.0.0.1:443" -servername "${DOMAIN:-$CONNECT}" >/dev/null 2>&1 & ) 2>/dev/null
+  sleep 1
+  if ss -tn state established 2>/dev/null | awk '{print $3, $4}' | grep -qE '127\.0\.0\.1:8444'; then
+    p "ALPN h2,http/1.1 mendarat di 8444"
+  else
+    _r "${YELLOW}SKIP${RESET}  ALPN h2,http/1.1 -> 8444 (tak ada koneksi terdeteksi saat cek)"
+  fi
+else
+  _r "${YELLOW}SKIP${RESET}  uji ALPN (domain/IP atau openssl tidak tersedia)"
+fi
+
+# 7. WS 101 untuk /vmess /vless /trojan (HTTP/1.1)
+if command -v curl >/dev/null 2>&1 && [ -n "$CONNECT" ]; then
+  for path in vmess vless trojan; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --http1.1 -m 8 -k \
+      -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+      -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+      "https://${CONNECT}:443/${path}" 2>/dev/null)
+    if [ "$code" = "101" ]; then p "WS /${path} @443 = 101"
+    else f "WS /${path} @443 = ${code:-none} (harus 101)" "cek listener 9443 & blok WS di $SITE_CONF"; fi
+  done
+else
+  _r "${YELLOW}SKIP${RESET}  uji WS (curl/alamat tidak tersedia)"
+fi
+
+# 8. SSH-WS + SSH-TLS
+if command -v curl >/dev/null 2>&1 && [ -n "$CONNECT" ]; then
+  code=$(curl -s -o /dev/null -w '%{http_code}' --http1.1 -m 8 -k \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    "https://${CONNECT}:443/ssh-ws" 2>/dev/null)
+  if [ "$code" = "101" ]; then p "SSH-WS /ssh-ws = 101"
+  else f "SSH-WS /ssh-ws = ${code:-none} (harus 101)" "cek location /ssh-ws di mytunnel-locations.inc + 10004"; fi
+fi
+SSH_TLS_PORT="${SSH_TLS_PORT:-444}"
+if timeout 5 bash -c "echo > /dev/tcp/127.0.0.1/${SSH_TLS_PORT}" 2>/dev/null; then p "SSH-TLS :${SSH_TLS_PORT} terbuka"
+else f "SSH-TLS :${SSH_TLS_PORT} tertutup" "systemctl status stunnel4; systemctl restart stunnel4"; fi
+if timeout 5 bash -c "echo > /dev/tcp/127.0.0.1/22" 2>/dev/null; then p "SSH :22 terbuka"
+else _r "${YELLOW}SKIP${RESET}  SSH :22 (open-ssh mungkin di port lain)"; fi
+
+# 9. sertifikat valid (tanggal expired)
+if [ -f "$CERT" ] && command -v openssl >/dev/null 2>&1; then
+  END=$(openssl x509 -enddate -noout -in "$CERT" 2>/dev/null | cut -d= -f2)
+  if [ -n "$END" ]; then
+    END_EPOCH=$(date -d "$END" +%s 2>/dev/null || echo 0)
+    NOW=$(date +%s)
+    DAYS=$(( (END_EPOCH - NOW) / 86400 ))
+    if [ "$END_EPOCH" -gt "$NOW" ]; then p "sertifikat valid (expired: $END, ${DAYS} hari lagi)"
+    else f "sertifikat EXPIRED ($END)" "bash /etc/mytunnel/setup/cert.sh  # atau renew acme.sh"; fi
+  else
+    f "tidak bisa membaca tanggal expired cert" "openssl x509 -enddate -noout -in $CERT"
+  fi
+else
+  _r "${YELLOW}SKIP${RESET}  sertifikat ($CERT tidak ada)"
+fi
+
+# ------------------------------------------------------------- ringkasan
+echo
+if [ "$FAIL" -eq 0 ]; then
+  printf '%b\n' "${GREEN}SEMUA LULUS${RESET}  (${PASS} PASS, 0 FAIL)"
+  exit 0
+else
+  printf '%b\n' "${RED}GAGAL: ${FAIL} item${RESET}  (${PASS} PASS, ${FAIL} FAIL)"
+  printf '%b\n' "${YELLOW}Item gagal:${RESET}"
+  for it in "${FAILED_ITEMS[@]}"; do echo "  - $it"; done
+  echo -e "${YELLOW}Perintah perbaikan:${RESET}"
+  for fx in "${FIXES[@]}"; do echo "  - $fx"; done
+  exit 1
+fi
+__EMBED_VERIFY_EOF__
+chmod 755 "$ETC/verify.sh"
 cat > "$ETC/config/expiry.txt" << '__EMBED_EOF__'
 NEVER
 
@@ -15516,4 +15836,10 @@ echo -e "    ${CYAN}curl -fsSL -o install.sh https://raw.githubusercontent.com/E
 echo -e "    ${DIM}Override expiry: MYTUNNEL_EXPIRY=2099-12-31 bash install.sh${RESET}"
 echo -e "    ${DIM}MYTUNNEL_DOMAIN=example.com MYTUNNEL_YES=1 bash install.sh  # non-interaktif${RESET}"
 echo ""
+# Verifikasi otomatis di akhir install (WS/gRPC/SSH/cert/map). Non-fatal: ringkas saja.
+if [ -z "$BASE" ] && [ -f "$ETC/verify.sh" ]; then
+  echo -e "${CYAN}[verify] menjalankan cek kesehatan...${RESET}"
+  bash "$ETC/verify.sh" --quiet || echo -e "${YELLOW}  (ada item verify yang gagal di atas — jalankan: bash $ETC/verify.sh)${RESET}"
+  echo ""
+fi
 _log "install selesai: domain=$DOMAIN brand=$BRAND ver=$VER"
